@@ -1,0 +1,53 @@
+{{ define "content" }}
+<div class="login-container">
+    <div class="login-box">
+        <div class="login-header">
+            <h2>Figma Bridge</h2>
+            <p>界面二次定义工具</p>
+        </div>
+        <el-tabs v-model="activeTab" class="login-tabs">
+            <el-tab-pane label="登录" name="login">
+                <el-form ref="loginForm" :model="loginForm" :rules="loginRules" label-width="0px">
+                    <el-form-item prop="username">
+                        <el-input v-model="loginForm.username" prefix-icon="el-icon-user" placeholder="用户名"></el-input>
+                    </el-form-item>
+                    <el-form-item prop="password">
+                        <el-input v-model="loginForm.password" prefix-icon="el-icon-lock" placeholder="密码" show-password></el-input>
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button type="primary" @click="handleLogin" :loading="loading" class="login-button">登录</el-button>
+                    </el-form-item>
+                </el-form>
+            </el-tab-pane>
+            <el-tab-pane label="注册" name="register">
+                <el-form ref="registerForm" :model="registerForm" :rules="registerRules" label-width="0px">
+                    <el-form-item prop="username">
+                        <el-input v-model="registerForm.username" prefix-icon="el-icon-user" placeholder="用户名"></el-input>
+                    </el-form-item>
+                    <el-form-item prop="password">
+                        <el-input v-model="registerForm.password" prefix-icon="el-icon-lock" placeholder="密码" show-password></el-input>
+                    </el-form-item>
+                    <el-form-item prop="confirmPassword">
+                        <el-input v-model="registerForm.confirmPassword" prefix-icon="el-icon-lock" placeholder="确认密码" show-password></el-input>
+                    </el-form-item>
+                    <el-form-item prop="figmaToken">
+                        <el-input v-model="registerForm.figmaToken" prefix-icon="el-icon-key" placeholder="Figma Private Token"></el-input>
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button type="primary" @click="handleRegister" :loading="loading" class="login-button">注册</el-button>
+                    </el-form-item>
+                </el-form>
+            </el-tab-pane>
+        </el-tabs>
+    </div>
+</div>
+{{ end }}
+
+{{ define "scripts" }}
+<!-- 引入登录页面专用脚本 -->
+<script src="/static/js/login.js?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}"></script>
+{{ end }}
+
+{{ define "styles" }}
+<link rel="stylesheet" href="/static/css/login.css?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}">
+{{ end }}

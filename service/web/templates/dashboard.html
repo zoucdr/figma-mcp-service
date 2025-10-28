@@ -1,0 +1,181 @@
+{{ define "content" }}
+<div class="app-container">
+    <!-- 顶部导航栏 -->
+    <el-header class="app-header">
+        <div class="logo">Figma Bridge</div>
+        <div class="user-info">
+            <el-dropdown trigger="click" @command="handleCommand">
+                <span class="el-dropdown-link">
+                    {{ .username }} <i class="el-icon-arrow-down el-icon--right"></i>
+                </span>
+                <el-dropdown-menu slot="dropdown">
+                    <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                    <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+            </el-dropdown>
+        </div>
+    </el-header>
+    
+    <!-- 主内容区 -->
+    <el-main class="app-main">
+        <el-card class="project-card">
+            <div slot="header">
+                <span>Figma项目</span>
+                <el-button style="float: right; padding: 3px 0" type="text" @click="showLinkDialog">添加项目</el-button>
+            </div>
+            
+            <el-table :data="projects" style="width: 100%">
+                <el-table-column prop="name" label="项目名称"></el-table-column>
+                <el-table-column prop="file_key" label="File Key"></el-table-column>
+                <el-table-column prop="created_at" label="创建时间" width="180"></el-table-column>
+                <el-table-column label="操作" width="180">
+                    <template slot-scope="scope">
+                        <el-button size="mini" @click="openProject(scope.row)">打开</el-button>
+                        <el-button size="mini" type="danger" @click="deleteProject(scope.row)">删除</el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </el-card>
+    </el-main>
+    
+    <!-- 添加项目对话框 -->
+    <el-dialog title="添加Figma项目" :visible.sync="linkDialogVisible" width="500px">
+        <el-form :model="linkForm" :rules="linkRules" ref="linkForm" label-width="100px">
+            <el-form-item label="Figma链接" prop="link">
+                <el-input v-model="linkForm.link" placeholder="输入Figma文件链接"></el-input>
+            </el-form-item>
+        </el-form>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="linkDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="parseFigmaLink" :loading="parsing">解析链接</el-button>
+        </div>
+    </el-dialog>
+</div>
+{{ end }}
+
+{{ define "scripts" }}
+<script>
+new Vue({
+    el: '#app',
+    data() {
+        return {
+            projects: {{ .projects }},
+            linkDialogVisible: false,
+            parsing: false,
+            linkForm: {
+                link: ''
+            },
+            linkRules: {
+                link: [
+                    { required: true, message: '请输入Figma链接', trigger: 'blur' },
+                    { pattern: /figma\.com/, message: '请输入有效的Figma链接', trigger: 'blur' }
+                ]
+            }
+        };
+    },
+    methods: {
+        handleCommand(command) {
+            if (command === 'profile') {
+                window.location.href = '/profile';
+            } else if (command === 'logout') {
+                window.location.href = '/logout';
+            }
+        },
+        showLinkDialog() {
+            this.linkDialogVisible = true;
+        },
+        parseFigmaLink() {
+            this.$refs.linkForm.validate(valid => {
+                if (valid) {
+                    this.parsing = true;
+                    const formData = new FormData();
+                    formData.append('link', this.linkForm.link);
+                    
+                    axios.post('/figma/parse', formData)
+                        .then(response => {
+                            const { fileKey, nodeId } = response.data;
+                            this.linkDialogVisible = false;
+                            this.getFigmaNode(fileKey, nodeId);
+                        })
+                        .catch(error => {
+                            this.$message.error(error.response?.data?.error || '解析链接失败');
+                        })
+                        .finally(() => {
+                            this.parsing = false;
+                        });
+                }
+            });
+        },
+        getFigmaNode(fileKey, nodeId) {
+            this.$message({
+                message: '正在获取Figma节点数据，请稍候...',
+                type: 'info',
+                duration: 0,
+                showClose: true
+            });
+            
+            axios.get(`/figma/node/${fileKey}/${nodeId || ''}`)
+                .then(response => {
+                    this.$message.closeAll();
+                    this.$message.success('获取节点数据成功');
+                    // 更新项目列表
+                    this.projects = [...this.projects, response.data.project];
+                    // 跳转到编辑页面
+                    window.location.href = `/dashboard?project=${response.data.project.id}`;
+                })
+                .catch(error => {
+                    this.$message.closeAll();
+                    this.$message.error(error.response?.data?.error || '获取节点数据失败');
+                });
+        },
+        openProject(project) {
+            window.location.href = `/dashboard?project=${project.id}`;
+        },
+        deleteProject(project) {
+            this.$confirm('确定要删除该项目吗？', '提示', {
+                confirmButtonText: '确定',
+                cancelButtonText: '取消',
+                type: 'warning'
+            }).then(() => {
+                // 这里应该调用删除项目的API
+                this.$message.success('项目删除成功');
+                this.projects = this.projects.filter(p => p.id !== project.id);
+            }).catch(() => {});
+        }
+    }
+});
+</script>
+<style>
+.app-container {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+.app-header {
+    background-color: #409EFF;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+}
+.logo {
+    font-size: 20px;
+    font-weight: bold;
+}
+.user-info {
+    cursor: pointer;
+}
+.el-dropdown-link {
+    color: #fff;
+}
+.app-main {
+    flex: 1;
+    background-color: #f5f7fa;
+    padding: 20px;
+}
+.project-card {
+    margin-bottom: 20px;
+}
+</style>
+{{ end }}

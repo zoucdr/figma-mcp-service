@@ -1,0 +1,23 @@
+{{ define "content" }}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h1 class="text-center">Figma Bridge</h1>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-success">
+                        {{ .message }}
+                    </div>
+                    <p class="lead">Figma Bridge 是一个用于重定义和导出 Figma 界面的工具。</p>
+                    <hr>
+                    <div class="d-grid gap-2">
+                        <a href="/login" class="btn btn-primary">登录 / 注册</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ end }}

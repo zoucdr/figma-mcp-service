@@ -1,0 +1,69 @@
+/**
+ * Figma Bridge 登录页面样式
+ */
+
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: #f5f7fa;
+    background-image: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
+
+.login-box {
+    width: 400px;
+    padding: 30px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.login-box:hover {
+    box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.15);
+    transform: translateY(-5px);
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.login-header h2 {
+    margin: 0;
+    font-size: 28px;
+    color: #409EFF;
+    font-weight: 500;
+}
+
+.login-header p {
+    margin: 10px 0 0;
+    font-size: 14px;
+    color: #909399;
+}
+
+.login-button {
+    width: 100%;
+    margin-top: 10px;
+    font-size: 16px;
+    height: 42px;
+}
+
+.el-tabs__nav {
+    width: 100%;
+    display: flex;
+}
+
+.el-tabs__item {
+    flex: 1;
+    text-align: center;
+}
+
+.el-form-item {
+    margin-bottom: 22px;
+}
+
+.el-input__inner {
+    height: 42px;
+}

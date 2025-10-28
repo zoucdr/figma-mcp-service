@@ -1,0 +1,38 @@
+# Go 编译生成的二进制文件
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go 测试文件
+*.test
+
+# Go 覆盖率工具生成的文件
+*.out
+
+# 依赖目录
+/vendor/
+
+# 本地配置文件
+*.env
+!config.example.env
+
+# 临时目录
+/temp/
+/tmp/
+
+# 数据和导出目录
+/data/
+/exports/
+
+# IDE 和编辑器文件
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
