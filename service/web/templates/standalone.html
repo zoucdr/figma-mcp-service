@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ .csrf_token }}">
+    <link rel="icon" href="/static/img/favicon.ico" type="image/x-icon">
+    <link rel="shortcut icon" href="/static/img/favicon.ico" type="image/x-icon">
+    <title>{{ .title }}</title>
+    <!-- 引入Element UI (本地) -->
+    <link rel="stylesheet" href="/static/lib/element-ui/theme-chalk/index.min.css">
+    <!-- 引入自定义样式 -->
+    <link rel="stylesheet" href="/static/css/style.css?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}">
+    <!-- 引入字体图标 (本地) -->
+    <link rel="stylesheet" href="/static/css/iconfont.css">
+    <!-- 页面特定样式 -->
+    {{ if eq .template "dashboard" }}
+        {{ template "dashboard_styles" . }}
+    {{ else if eq .template "projects" }}
+        {{ template "projects_styles" . }}
+    {{ else if eq .template "profile" }}
+        {{ template "profile_styles" . }}
+    {{ else }}
+        {{ block "styles" . }}{{ end }}
+    {{ end }}
+</head>
+<body>
+    <div id="app">
+        {{ if eq .template "dashboard" }}
+            {{ template "dashboard_content" . }}
+        {{ else if eq .template "projects" }}
+            {{ template "projects_content" . }}
+        {{ else if eq .template "profile" }}
+            {{ template "profile_content" . }}
+        {{ else }}
+            {{ template "content" . }}
+        {{ end }}
+    </div>
+
+    <!-- 引入Vue.js (本地) -->
+    <script src="/static/lib/vue/vue.min.js"></script>
+    <!-- 引入Element UI (本地) -->
+    <script src="/static/lib/element-ui/index.min.js"></script>
+    <!-- 引入Axios (本地) -->
+    <script src="/static/lib/axios/axios.min.js"></script>
+    <!-- 引入自定义脚本 -->
+    <script src="/static/js/main.js?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}"></script>
+    {{ if eq .template "dashboard" }}
+        {{ template "dashboard_scripts" . }}
+    {{ else if eq .template "projects" }}
+        {{ template "projects_scripts" . }}
+    {{ else if eq .template "profile" }}
+        {{ template "profile_scripts" . }}
+    {{ else }}
+        {{ block "scripts" . }}{{ end }}
+    {{ end }}
+</body>
+</html>

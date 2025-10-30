@@ -46,6 +46,15 @@ func main() {
 
 	// 设置会话存储
 	store := cookie.NewStore([]byte(getEnv("SESSION_SECRET", "figma-bridge-secret")))
+
+	// 配置会话选项
+	store.Options(sessions.Options{
+		Path:     "/",   // 所有路径都可以访问
+		MaxAge:   86400, // 1天有效期
+		HttpOnly: true,  // 防止JavaScript访问
+		Secure:   false, // 开发环境不需要HTTPS
+	})
+
 	r.Use(sessions.Sessions("figma-bridge-session", store))
 
 	// 添加CSRF中间件
@@ -65,16 +74,8 @@ func main() {
 		c.Next()
 	})
 
-	// 测试路由
-	r.GET("/", func(c *gin.Context) {
-		log.Println("访问首页路由")
-		c.HTML(http.StatusOK, "layout.html", gin.H{
-			"title":     "Figma Bridge",
-			"message":   "欢迎使用Figma Bridge！应用程序已成功启动。",
-			"timestamp": time.Now().Unix(),
-		})
-		log.Println("首页渲染成功")
-	})
+	// 首页路由
+	r.GET("/", controllers.Home)
 
 	// 登录页面
 	r.GET("/login", func(c *gin.Context) {
@@ -96,11 +97,20 @@ func main() {
 		} else {
 			log.Printf("使用现有CSRF令牌: %s", csrfToken)
 		}
-		
-		c.HTML(http.StatusOK, "layout.html", gin.H{
+
+		// 检查用户是否已登录
+		userID := session.Get("user_id")
+		if userID != nil {
+			// 已登录，重定向到项目列表
+			c.Redirect(http.StatusFound, "/projects")
+			return
+		}
+
+		c.HTML(http.StatusOK, "standalone.html", gin.H{
 			"title":      "登录 - Figma Bridge",
 			"timestamp":  time.Now().Unix(),
 			"csrf_token": csrfToken,
+			"template":   "login", // 指定要使用的内容模板
 		})
 		log.Println("登录页面渲染成功")
 	})
@@ -114,22 +124,15 @@ func main() {
 	// 登出API
 	r.GET("/logout", controllers.Logout)
 
-	// 仪表盘页面 - 需要登录
+	// 项目列表页面 - 需要登录
+	projectsGroup := r.Group("/projects")
+	projectsGroup.Use(middleware.RequireLogin())
+	projectsGroup.GET("", controllers.Projects)
+
+	// 项目编辑页面（仪表盘）- 需要登录
 	dashboardGroup := r.Group("/dashboard")
 	dashboardGroup.Use(middleware.RequireLogin())
-	dashboardGroup.GET("", func(c *gin.Context) {
-		log.Println("访问仪表盘页面")
-		session := sessions.Default(c)
-		username := session.Get("username").(string)
-
-		c.HTML(http.StatusOK, "layout.html", gin.H{
-			"title":     "仪表盘 - Figma Bridge",
-			"username":  username,
-			"projects":  []interface{}{}, // 空项目列表
-			"timestamp": time.Now().Unix(),
-		})
-		log.Println("仪表盘页面渲染成功")
-	})
+	dashboardGroup.GET("", controllers.Dashboard)
 
 	// 公开的个人资料更新接口 - 用于注册
 	r.POST("/profile/update", controllers.UpdateProfile)
@@ -137,7 +140,73 @@ func main() {
 	// 个人资料页面 - 需要登录
 	profileGroup := r.Group("/profile")
 	profileGroup.Use(middleware.RequireLogin())
-	profileGroup.GET("", controllers.Profile)
+	profileGroup.GET("", func(c *gin.Context) {
+		// 确保CSRF令牌存在
+		session := sessions.Default(c)
+		csrfToken := session.Get("csrf_token")
+		if csrfToken == nil {
+			// 如果会话中没有CSRF令牌，则生成一个
+			token, err := middleware.GenerateRandomString(32)
+			if err != nil {
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+			session.Set("csrf_token", token)
+			session.Save()
+			csrfToken = token
+			log.Printf("个人资料页面 - 生成新的CSRF令牌: %s", csrfToken)
+		} else {
+			log.Printf("个人资料页面 - 使用现有CSRF令牌: %s", csrfToken)
+		}
+
+		controllers.Profile(c)
+	})
+
+	// Figma API路由
+	figmaGroup := r.Group("/figma")
+	figmaGroup.Use(middleware.RequireLogin())
+
+	// 解析Figma链接
+	figmaGroup.POST("/parse", controllers.ParseFigmaLink)
+
+	// 获取Figma节点 - 旧API，保留兼容
+	figmaGroup.GET("/node/:file_key/:node_id", controllers.GetFigmaNode)
+	figmaGroup.GET("/node/:file_key", controllers.GetFigmaNode)
+
+	// 新API - 通过项目ID和节点ID获取节点信息
+	figmaGroup.GET("/project/:project_id/nodes", controllers.GetFigmaNodeInfo)
+
+	// 节点设置 - 新API
+	figmaGroup.GET("/project/:project_id/node/:node_id/settings", controllers.GetNodeSettings)
+	figmaGroup.POST("/project/:project_id/node/:node_id/settings", controllers.UpdateNodeSettings)
+	figmaGroup.DELETE("/project/:project_id/node/:node_id/settings", controllers.DeleteNodeSettings)
+
+	// 节点设置 - 旧API，保留兼容
+	figmaGroup.GET("/node/:file_key/:node_id/settings", controllers.GetNodeSettings)
+	figmaGroup.POST("/node/:file_key/:node_id/settings", controllers.UpdateNodeSettings)
+
+	// 获取Figma图片
+	figmaGroup.GET("/image/:project_id/:node_id", controllers.GetFigmaImage)
+
+	// 批量获取Figma过滤预览图片（返回节点ID到图片路径的映射）
+	figmaGroup.GET("/images/:project_id/:node_id", controllers.GetFigmaImages)
+
+	// 项目管理
+	figmaGroup.PUT("/project/:project_id", controllers.UpdateProject)
+	figmaGroup.DELETE("/project/:project_id", controllers.DeleteProject)
+
+	// 获取Figma节点树和节点修改信息
+	figmaGroup.GET("/project/:project_id/node-tree", controllers.GetFigmaNodeTree)
+	figmaGroup.GET("/project/:project_id/node-tree/refresh", controllers.RefreshFigmaNodeTree)
+	figmaGroup.GET("/project/:project_id/node-modifys", controllers.GetProjectNodeModifys)
+
+	// 清除项目图片缓存
+	figmaGroup.POST("/project/:project_id/clear-cache", controllers.ClearProjectImageCache)
+
+	// 导出功能
+	figmaGroup.POST("/project/:project_id/export", controllers.ExportFigmaDesign)
+	figmaGroup.GET("/export/:job_id", controllers.GetExportStatus)
+	figmaGroup.GET("/export/:job_id/download", controllers.DownloadExport)
 
 	// 启动服务器
 	port := getEnv("PORT", "8080")

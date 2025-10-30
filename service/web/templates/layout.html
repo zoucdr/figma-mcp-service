@@ -7,11 +7,11 @@
     <link rel="icon" href="/static/img/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/static/img/favicon.ico" type="image/x-icon">
     <title>{{ .title }}</title>
-    <!-- 引入Element UI -->
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.14/theme-chalk/index.min.css">
+    <!-- 引入Element UI (本地) -->
+    <link rel="stylesheet" href="/static/lib/element-ui/theme-chalk/index.min.css">
     <!-- 引入自定义样式 -->
     <link rel="stylesheet" href="/static/css/style.css?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}">
-    <!-- 引入字体图标 -->
+    <!-- 引入字体图标 (本地) -->
     <link rel="stylesheet" href="/static/css/iconfont.css">
     <!-- 页面特定样式 -->
     {{ block "styles" . }}{{ end }}
@@ -21,12 +21,12 @@
         {{ template "content" . }}
     </div>
 
-    <!-- 引入Vue.js -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/vue/2.6.14/vue.min.js"></script>
-    <!-- 引入Element UI -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.14/index.min.js"></script>
-    <!-- 引入Axios -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/axios/0.21.1/axios.min.js"></script>
+    <!-- 引入Vue.js (本地) -->
+    <script src="/static/lib/vue/vue.min.js"></script>
+    <!-- 引入Element UI (本地) -->
+    <script src="/static/lib/element-ui/index.min.js"></script>
+    <!-- 引入Axios (本地) -->
+    <script src="/static/lib/axios/axios.min.js"></script>
     <!-- 引入自定义脚本 -->
     <script src="/static/js/main.js?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}"></script>
     {{ block "scripts" . }}{{ end }}

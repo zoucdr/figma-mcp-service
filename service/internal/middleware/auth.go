@@ -3,6 +3,7 @@ package middleware
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"log"
 	"net/http"
 
 	"github.com/gin-contrib/sessions"
@@ -14,18 +15,24 @@ func RequireLogin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session := sessions.Default(c)
 		userID := session.Get("user_id")
+		log.Printf("RequireLogin中间件: 路径=%s, userID=%v", c.Request.URL.Path, userID)
+
 		if userID == nil {
 			// 如果是API请求，返回401状态码
 			if c.Request.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+				log.Println("API请求未登录，返回401")
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 				c.Abort()
 				return
 			}
 			// 否则重定向到登录页面
+			log.Println("页面请求未登录，重定向到/login")
 			c.Redirect(http.StatusFound, "/login")
 			c.Abort()
 			return
 		}
+
+		log.Printf("用户已登录，userID=%v，继续处理请求", userID)
 		c.Next()
 	}
 }
@@ -55,10 +62,15 @@ func CSRF() gin.HandlerFunc {
 				requestToken = c.PostForm("_csrf")
 			}
 
+			log.Printf("请求CSRF令牌: %s, 会话CSRF令牌: %s", requestToken, csrfToken)
+
 			if requestToken != csrfToken {
+				log.Printf("CSRF验证失败: 令牌不匹配")
 				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF验证失败"})
 				c.Abort()
 				return
+			} else {
+				log.Printf("CSRF验证成功")
 			}
 		}
 

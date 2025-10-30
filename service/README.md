@@ -1,112 +1,52 @@
 # Figma Bridge
 
-Figma Bridge 是一个基于Go语言后端、MySQL数据库和H5前端的应用，用于对Figma界面进行二次定义。
+Figma Bridge是一个用于连接Figma设计和开发工具的应用程序。它允许用户导入Figma设计，查看节点树，并对节点进行修改。
 
-## 功能特点
+## 新增功能
 
-- 用户管理：支持用户注册、登录、退出，数据隔离保护
-- Figma链接解析：输入链接，自动解析filekey和node
-- 节点树预览：左侧展示树型预览图，直观查看节点结构
-- 节点预览：中间展示节点选中预览图，所见即所得
-- 节点属性编辑：右侧属性面板，灵活配置节点属性
-  - 节点类型选择
-  - 图片下载方式
-  - 元素可视选择
-  - 界面布局锚点调整
-  - 节点图片文件重命名
-  - 图片排除节点列表
-- 界面导出：一键导出优化后的界面元数据和图片
+### Figma节点树加载
 
-## 技术栈
+现在，当访问`http://127.0.0.1:8080/dashboard?project=1`时，应用程序会：
 
-- 后端：Go + Gin框架
-- 数据库：MySQL + GORM
-- 前端：HTML5 + Vue.js + Element UI
-- API集成：Figma API
+1. 从Figma API获取对应项目的节点树
+2. 从数据库加载该项目的所有节点修改信息
+3. 将修改信息叠加到节点树上
+4. 在界面左侧显示完整的节点树
 
-## 项目结构
+### API端点
 
-```
-figma-bridge/
-├── cmd/                    # 命令行入口
-│   └── main.go             # 主程序入口
-├── configs/                # 配置文件
-│   └── config.example.env  # 环境变量示例
-├── internal/               # 内部包
-│   ├── controllers/        # 控制器
-│   ├── middleware/         # 中间件
-│   ├── models/             # 数据模型
-│   └── services/           # 业务逻辑服务
-└── web/                    # Web资源
-    ├── static/             # 静态资源
-    │   ├── css/            # CSS样式
-    │   ├── js/             # JavaScript脚本
-    │   └── img/            # 图片资源
-    └── templates/          # HTML模板
-```
+新增了两个API端点：
 
-## 安装与运行
+- `GET /figma/project/:project_id/node-tree`：获取Figma节点树
+- `GET /figma/project/:project_id/node-modifys`：获取项目的节点修改信息
 
-### 前提条件
+### 界面更新
 
-- Go 1.16+
-- MySQL 5.7+
-- Node.js 14+ (用于前端开发)
+- 树形节点显示更加直观，包括图标和标签
+- 已修改的节点会以不同的样式显示
+- 添加了刷新按钮，可以重新加载节点树
+- 预览区域显示当前选中节点的名称和类型
 
-### 安装步骤
+## 使用方法
 
-1. 克隆仓库
+1. 启动服务器：`go run cmd/main.go`
+2. 访问：`http://localhost:8080`
+3. 登录后，创建或选择一个Figma项目
+4. 在项目编辑页面，左侧会显示完整的节点树
+5. 点击节点可以查看和修改节点属性
 
-```bash
-git clone https://github.com/yourusername/figma-bridge.git
-cd figma-bridge
-```
+## 技术实现
 
-2. 复制环境配置文件
+- 前端：Vue.js + Element UI
+- 后端：Go + Gin + GORM
+- 数据存储：MySQL
+- 外部API：Figma API
 
-```bash
-cp configs/config.example.env .env
-```
+## 数据流程
 
-3. 修改环境配置
-
-编辑 `.env` 文件，设置数据库连接信息和其他配置。
-
-4. 初始化数据库
-
-```bash
-# 创建数据库
-mysql -u root -p -e "CREATE DATABASE figma_bridge CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-5. 构建并运行
-
-```bash
-go build -o figma-bridge ./cmd
-./figma-bridge
-```
-
-6. 访问应用
-
-打开浏览器，访问 http://localhost:8080
-
-## 使用说明
-
-1. 注册/登录：使用用户名和Figma Private Token注册
-2. 添加项目：在仪表盘页面，点击"添加项目"，输入Figma链接
-3. 编辑节点：在项目页面，左侧选择节点，右侧编辑属性
-4. 导出设计：点击底部"导出设计"按钮，下载优化后的界面
-
-## 贡献指南
-
-欢迎贡献代码！请遵循以下步骤：
-
-1. Fork 仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
-## 许可证
-
-本项目采用 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
+1. 用户访问项目编辑页面
+2. 前端调用`/figma/project/:project_id/node-tree`获取节点树
+3. 前端调用`/figma/project/:project_id/node-modifys`获取修改信息
+4. 前端将修改信息叠加到节点树上
+5. 用户选择节点时，显示节点属性和预览
+6. 用户修改节点属性，保存到数据库

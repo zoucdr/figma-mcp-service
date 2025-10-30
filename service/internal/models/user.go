@@ -14,6 +14,7 @@ type User struct {
 	Username     string         `gorm:"size:50;uniqueIndex;" json:"username"` // 移除not null约束
 	PasswordHash string         `gorm:"size:255;not null" json:"-"`
 	FigmaToken   string         `gorm:"size:255" json:"-"`
+	CompTypes    string         `gorm:"size:1000" json:"comp_types"` // 控件类型列表，逗号分隔
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	Projects     []FigmaProject `gorm:"foreignKey:UserID" json:"projects,omitempty"`
@@ -44,6 +45,19 @@ func (u *User) CheckPassword(password string) bool {
 func FindUserByUsername(username string) (*User, error) {
 	var user User
 	result := DB.Where("username = ?", username).First(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, errors.New("用户不存在")
+		}
+		return nil, result.Error
+	}
+	return &user, nil
+}
+
+// FindUserByID 通过用户ID查找用户
+func FindUserByID(id uint) (*User, error) {
+	var user User
+	result := DB.First(&user, id)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, errors.New("用户不存在")
@@ -101,14 +115,56 @@ func (u *User) UpdateUsername(username string) error {
 }
 
 // UpdateProfile 更新用户资料
-func (u *User) UpdateProfile(username, figmaToken string) error {
+func (u *User) UpdateProfile(username, figmaToken, compTypes string) error {
 	// 更新用户名
 	if err := u.UpdateUsername(username); err != nil {
 		return err
 	}
 
-	// 更新Figma Token
-	u.FigmaToken = figmaToken
+	// 仅当figmaToken不为空时，才更新Figma Token
+	if figmaToken != "" {
+		u.FigmaToken = figmaToken
+	}
+
+	// 更新控件类型列表
+	u.CompTypes = compTypes
+
+	// 保存所有更新
 	result := DB.Save(u)
 	return result.Error
+}
+
+// EnsureUserExists 确保用户存在，如果不存在则创建一个临时用户
+func EnsureUserExists(userID uint) (*User, error) {
+	var user User
+	result := DB.First(&user, userID)
+	if result.Error == nil {
+		return &user, nil
+	}
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		// 创建临时用户
+		tempUsername := "temp_user_" + time.Now().Format("20060102150405")
+		tempPassword := "temp_password_" + time.Now().Format("20060102150405")
+
+		user := User{
+			ID:       userID, // 指定ID
+			Username: tempUsername,
+		}
+
+		// 设置密码
+		if err := user.SetPassword(tempPassword); err != nil {
+			return nil, err
+		}
+
+		// 创建用户
+		result = DB.Create(&user)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+
+		return &user, nil
+	}
+
+	return nil, result.Error
 }

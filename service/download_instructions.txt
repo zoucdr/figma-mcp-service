@@ -1,0 +1,26 @@
+请下载以下文件并放置到相应目录：
+
+1. Vue.js (2.6.14)
+   下载地址: https://cdn.bootcdn.net/ajax/libs/vue/2.6.14/vue.min.js
+   保存位置: web/static/lib/vue/vue.min.js
+
+2. Element UI JavaScript (2.15.14)
+   下载地址: https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.14/index.min.js
+   保存位置: web/static/lib/element-ui/index.min.js
+
+3. Element UI CSS (2.15.14)
+   下载地址: https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.14/theme-chalk/index.min.css
+   保存位置: web/static/lib/element-ui/theme-chalk/index.min.css
+
+4. Element UI 字体文件
+   下载地址: https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.14/theme-chalk/fonts/element-icons.woff
+   保存位置: web/static/lib/element-ui/theme-chalk/fonts/element-icons.woff
+   
+   下载地址: https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.14/theme-chalk/fonts/element-icons.ttf
+   保存位置: web/static/lib/element-ui/theme-chalk/fonts/element-icons.ttf
+
+5. Axios (0.21.1)
+   下载地址: https://cdn.bootcdn.net/ajax/libs/axios/0.21.1/axios.min.js
+   保存位置: web/static/lib/axios/axios.min.js
+
+下载完成后，登录界面应该会加载更快，因为所有资源都将从本地加载，而不是从外部CDN。

@@ -30,7 +30,7 @@ new Vue({
             },
             loginRules: {
                 username: [
-                    // 允许用户名为空
+                    { required: true, message: '请输入用户名', trigger: 'blur' }
                 ],
                 password: [
                     { required: true, message: '请输入密码', trigger: 'blur' },
@@ -39,7 +39,7 @@ new Vue({
             },
             registerRules: {
                 username: [
-                    // 允许用户名为空
+                    { required: true, message: '请输入用户名', trigger: 'blur' }
                 ],
                 password: [
                     { required: true, message: '请输入密码', trigger: 'blur' },
@@ -64,19 +64,14 @@ new Vue({
                     formData.append('username', this.loginForm.username);
                     formData.append('password', this.loginForm.password);
                     
-                    // 添加CSRF令牌
-                    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-                    formData.append('_csrf', csrfToken);
+                    // CSRF令牌已由main.js中的axios拦截器自动添加
+                    // 无需在此手动添加
                     
                     axios.post('/login', formData)
                         .then(response => {
                             this.$message.success('登录成功');
-                            // 如果用户名为空，跳转到个人资料页面完成注册
-                            if (this.loginForm.username === '') {
-                                window.location.href = '/profile';
-                            } else {
-                                window.location.href = '/dashboard';
-                            }
+                            // 登录成功后直接跳转到仪表盘
+                            window.location.href = '/dashboard';
                         })
                         .catch(error => {
                             this.$message.error(error.response?.data?.error || '登录失败');
@@ -96,9 +91,8 @@ new Vue({
                     formData.append('password', this.registerForm.password);
                     formData.append('figma_token', this.registerForm.figmaToken);
                     
-                    // 添加CSRF令牌
-                    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-                    formData.append('_csrf', csrfToken);
+                    // CSRF令牌已由main.js中的axios拦截器自动添加
+                    // 无需在此手动添加
                     
                     axios.post('/register', formData)
                         .then(response => {

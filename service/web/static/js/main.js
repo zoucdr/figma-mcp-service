@@ -8,6 +8,29 @@ const config = {
     debug: false
 };
 
+// 配置Axios全局CSRF令牌
+document.addEventListener('DOMContentLoaded', function() {
+    // 从meta标签获取CSRF令牌
+    const metaTag = document.querySelector('meta[name="csrf-token"]');
+    if (metaTag) {
+        const csrfToken = metaTag.getAttribute('content');
+        console.log('全局CSRF令牌:', csrfToken);
+        
+        // 为所有请求添加CSRF令牌
+        axios.defaults.headers.common['X-CSRF-Token'] = csrfToken;
+        
+        // 为表单提交添加CSRF令牌
+        axios.interceptors.request.use(function(config) {
+            if (config.data instanceof FormData) {
+                config.data.append('_csrf', csrfToken);
+            }
+            return config;
+        });
+    } else {
+        console.error('找不到CSRF令牌meta标签');
+    }
+});
+
 // 全局工具函数
 const utils = {
     /**

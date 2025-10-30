@@ -1,4 +1,4 @@
-{{ define "content" }}
+{{ define "profile_content" }}
 <div class="app-container">
     <!-- 顶部导航栏 -->
     <el-header class="app-header">
@@ -34,107 +34,72 @@
                         <span>您可以在Figma账户设置中生成个人访问令牌</span>
                     </div>
                 </el-form-item>
+                <el-form-item label="控件类型列表" prop="compTypes">
+                    <el-input v-model="profileForm.compTypes" type="textarea" :rows="4" placeholder="输入控件类型列表，用逗号分隔"></el-input>
+                    <div class="form-tip">
+                        <i class="el-icon-info"></i>
+                        <span>请输入控件类型列表，多个类型用英文逗号分隔，如：Button,Input,Select,Switch</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <el-button type="text" @click="showUnityExamples">🧩 Unity 常用控件示例</el-button>
+                        <el-button type="text" @click="showAndroidExamples">🤖 Android 常用控件示例</el-button>
+                        <el-button type="text" @click="showIOSExamples">🍎 iOS 常用控件示例</el-button>
+                    </div>
+                </el-form-item>
                 <el-form-item>
                     <el-button type="primary" @click="updateProfile" :loading="loading">保存设置</el-button>
                 </el-form-item>
             </el-form>
         </el-card>
     </el-main>
+    
+    <!-- Unity控件示例对话框 -->
+    <el-dialog title="🧩 Unity 常用控件示例" :visible.sync="unityDialogVisible" width="600px">
+        <div class="examples-content">
+            <p>Button, Toggle, Slider, Dropdown, InputField, Text, Image, RawImage, ScrollView, Scrollbar, ToggleGroup, Canvas, Panel, Mask, EventSystem, GridLayoutGroup, VerticalLayoutGroup, HorizontalLayoutGroup, ContentSizeFitter, RectTransform, Animator, AudioSource, Camera, Light</p>
+        </div>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="unityDialogVisible = false">关闭</el-button>
+            <el-button type="primary" @click="useUnityExamples">使用这些控件</el-button>
+        </div>
+    </el-dialog>
+    
+    <!-- Android控件示例对话框 -->
+    <el-dialog title="🤖 Android 常用控件示例" :visible.sync="androidDialogVisible" width="600px">
+        <div class="examples-content">
+            <p>TextView, EditText, Button, ImageView, CheckBox, RadioButton, Switch, ToggleButton, SeekBar, ProgressBar, Spinner, ListView, GridView, RecyclerView, ScrollView, WebView, LinearLayout, RelativeLayout, FrameLayout, ConstraintLayout, ViewPager, Toolbar, CardView, ImageButton, AutoCompleteTextView, RatingBar, SearchView, SurfaceView, VideoView</p>
+        </div>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="androidDialogVisible = false">关闭</el-button>
+            <el-button type="primary" @click="useAndroidExamples">使用这些控件</el-button>
+        </div>
+    </el-dialog>
+    
+    <!-- iOS控件示例对话框 -->
+    <el-dialog title="🍎 iOS (UIKit) 常用控件示例" :visible.sync="iosDialogVisible" width="600px">
+        <div class="examples-content">
+            <p>UILabel, UITextField, UIButton, UIImageView, UISwitch, UISlider, UIProgressView, UIActivityIndicatorView, UISegmentedControl, UITableView, UICollectionView, UITextView, UIScrollView, UIStackView, UINavigationBar, UITabBar, UIPageControl, UIPickerView, UIDatePicker, UIWebView (旧), WKWebView, UIVisualEffectView, UISearchBar, UIAlertController, UIStepper</p>
+        </div>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="iosDialogVisible = false">关闭</el-button>
+            <el-button type="primary" @click="useIOSExamples">使用这些控件</el-button>
+        </div>
+    </el-dialog>
 </div>
 {{ end }}
 
-{{ define "scripts" }}
+{{ define "profile_scripts" }}
 <script>
-new Vue({
-    el: '#app',
-    data() {
-        return {
-            loading: false,
-            profileForm: {
-                username: '{{ .username }}',
-                figmaToken: '{{ .figmaToken }}'
-            },
-            profileRules: {
-                username: [
-                    // 用户名可以为空
-                ],
-                figmaToken: [
-                    { required: true, message: '请输入Figma Private Token', trigger: 'blur' }
-                ]
-            }
-        };
-    },
-    methods: {
-        handleCommand(command) {
-            if (command === 'dashboard') {
-                window.location.href = '/dashboard';
-            } else if (command === 'logout') {
-                window.location.href = '/logout';
-            }
-        },
-        updateProfile() {
-            this.$refs.profileForm.validate(valid => {
-                if (valid) {
-                    this.loading = true;
-                    const formData = new FormData();
-                    formData.append('username', this.profileForm.username);
-                    formData.append('figma_token', this.profileForm.figmaToken);
-                    // 添加CSRF令牌
-                    formData.append('_csrf', '{{ .csrf_token }}');
-                    
-                    axios.post('/profile/update', formData)
-                        .then(response => {
-                            this.$message.success('个人资料更新成功');
-                        })
-                        .catch(error => {
-                            this.$message.error(error.response?.data?.error || '更新失败');
-                        })
-                        .finally(() => {
-                            this.loading = false;
-                        });
-                }
-            });
-        }
-    }
-});
+// 初始数据
+window.profileData = {
+    username: '{{ .username }}',
+    figmaToken: '{{ .figmaToken }}',
+    compTypes: '{{ .compTypes }}'
+};
 </script>
-<style>
-.app-container {
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-}
-.app-header {
-    background-color: #409EFF;
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 20px;
-}
-.logo {
-    font-size: 20px;
-    font-weight: bold;
-}
-.user-info {
-    cursor: pointer;
-}
-.el-dropdown-link {
-    color: #fff;
-}
-.app-main {
-    flex: 1;
-    background-color: #f5f7fa;
-    padding: 20px;
-}
-.profile-card {
-    max-width: 600px;
-    margin: 0 auto;
-}
-.form-tip {
-    font-size: 12px;
-    color: #909399;
-    margin-top: 5px;
-}
-</style>
+<script src="/static/js/profile.js?v={{ .timestamp }}"></script>
+{{ end }}
+
+{{ define "profile_styles" }}
+<link rel="stylesheet" href="/static/css/profile.css?v={{ .timestamp }}">
 {{ end }}

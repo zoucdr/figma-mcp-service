@@ -21,10 +21,11 @@ func Login(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
 
-	// 如果用户名为空，允许使用任意用户名登录
+	// 如果用户名为空，不允许登录
 	if username == "" {
-		// 使用profile/update接口进行注册
-		c.Redirect(http.StatusFound, "/profile/update")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "用户名不能为空",
+		})
 		return
 	}
 
@@ -36,6 +37,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// 添加密码验证
 	if !user.CheckPassword(password) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "密码错误",
@@ -47,8 +49,15 @@ func Login(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Set("user_id", user.ID)
 	session.Set("username", user.Username)
-	session.Save()
+	err = session.Save()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "会话保存失败: " + err.Error(),
+		})
+		return
+	}
 
+	// 打印会话信息
 	c.JSON(http.StatusOK, gin.H{
 		"message": "登录成功",
 		"user": gin.H{
@@ -64,19 +73,42 @@ func Register(c *gin.Context) {
 	password := c.PostForm("password")
 	figmaToken := c.PostForm("figma_token")
 
-	// 如果用户名不为空，检查是否已存在
-	if username != "" {
-		_, err := models.FindUserByUsername(username)
-		if err == nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "用户名已存在",
-			})
-			return
-		}
+	// 验证必要字段
+	if username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "用户名不能为空",
+		})
+		return
+	}
+
+	if password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "密码不能为空",
+		})
+		return
+	}
+
+	// 验证figmaToken不能为空
+	if figmaToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Figma Token不能为空",
+		})
+		return
+	}
+
+	// 检查用户名是否已存在
+	_, err := models.FindUserByUsername(username)
+	if err == nil {
+		// 用户已存在，不允许自动登录，需要输入密码
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "用户名已存在，请使用登录功能",
+		})
+		return
 	}
 
 	// 创建新用户
-	user, err := models.CreateUser(username, password, figmaToken)
+	var user *models.User
+	user, err = models.CreateUser(username, password, figmaToken)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -112,15 +144,19 @@ func Profile(c *gin.Context) {
 	session := sessions.Default(c)
 	userID := session.Get("user_id").(uint)
 	username := session.Get("username").(string)
+	csrfToken := session.Get("csrf_token")
 
 	var user models.User
 	models.DB.First(&user, userID)
 
-	c.HTML(http.StatusOK, "profile.html", gin.H{
+	c.HTML(http.StatusOK, "standalone.html", gin.H{
 		"title":      "个人资料 - Figma Bridge",
 		"username":   username,
 		"figmaToken": user.FigmaToken,
+		"compTypes":  user.CompTypes,
 		"timestamp":  time.Now().Unix(),
+		"csrf_token": csrfToken,
+		"template":   "profile",
 	})
 }
 
@@ -130,9 +166,46 @@ func UpdateProfile(c *gin.Context) {
 	userID := session.Get("user_id")
 	username := c.PostForm("username")
 	figmaToken := c.PostForm("figma_token")
+	compTypes := c.PostForm("comp_types")
+
+	// 如果用户名不为空，检查是否已存在
+	if username != "" {
+		existingUser, err := models.FindUserByUsername(username)
+		if err == nil && (userID == nil || existingUser.ID != userID.(uint)) {
+			// 用户已存在，直接登录
+			session.Set("user_id", existingUser.ID)
+			session.Set("username", existingUser.Username)
+			session.Save()
+
+			c.JSON(http.StatusOK, gin.H{
+				"message": "用户已存在，已自动登录",
+				"user": gin.H{
+					"id":       existingUser.ID,
+					"username": existingUser.Username,
+				},
+			})
+			return
+		}
+	}
 
 	// 如果是新用户（从登录页空用户名跳转过来）
 	if userID == nil {
+		// 验证figmaToken不能为空
+		if figmaToken == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Figma Token不能为空",
+			})
+			return
+		}
+
+		// 验证用户名不能为空
+		if username == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "用户名不能为空",
+			})
+			return
+		}
+
 		// 创建新用户，使用随机密码
 		password := generateRandomPassword()
 		user, err := models.CreateUser(username, password, figmaToken)
@@ -142,6 +215,10 @@ func UpdateProfile(c *gin.Context) {
 			})
 			return
 		}
+
+		// 更新控件类型列表
+		user.CompTypes = compTypes
+		models.DB.Save(&user)
 
 		// 设置会话
 		session.Set("user_id", user.ID)
@@ -169,7 +246,7 @@ func UpdateProfile(c *gin.Context) {
 	}
 
 	// 更新用户资料
-	err := user.UpdateProfile(username, figmaToken)
+	err := user.UpdateProfile(username, figmaToken, compTypes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),

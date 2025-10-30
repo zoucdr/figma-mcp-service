@@ -1,0 +1,168 @@
+{{ define "projects_content" }}
+<!-- 项目列表页面 -->
+<div id="project-list-app" class="app-container">
+    <!-- 顶部导航栏 -->
+    <el-header class="app-header">
+        <div class="logo">Figma Bridge</div>
+        <div class="user-info">
+            <el-dropdown trigger="click" @command="handleCommand">
+                <span class="el-dropdown-link">
+                    <div class="user-avatar">{{ if .username }}{{ slice .username 0 1 }}{{ else }}U{{ end }}</div>
+                    {{ .username }} <i class="el-icon-arrow-down el-icon--right"></i>
+                </span>
+                <el-dropdown-menu slot="dropdown">
+                    <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                    <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+            </el-dropdown>
+        </div>
+    </el-header>
+    
+    <!-- 主内容区 -->
+    <el-main class="app-main">
+        <el-card class="project-card">
+            <div slot="header" class="project-header">
+                <span>Figma项目</span>
+                <div class="project-actions">
+                    <!-- 搜索框 -->
+                    <div class="search-box">
+                        <el-input
+                            placeholder="搜索项目..."
+                            v-model="searchQuery"
+                            clearable
+                            @clear="clearSearch"
+                            prefix-icon="el-icon-search">
+                        </el-input>
+                    </div>
+                    
+                    <!-- 排序按钮 -->
+                    <el-tooltip :content="{{`sortOrder === 'desc' ? '当前：时间降序' : '当前：时间升序'`}}" placement="top">
+                        <el-button 
+                            type="text" 
+                            @click="toggleSortOrder" 
+                            class="sort-btn">
+                            <i :class="{{`['el-icon-sort', sortOrder === 'desc' ? 'el-icon-sort-desc' : 'el-icon-sort-asc']`}}"></i>
+                            {{`{{ sortOrder === 'desc' ? '最新在前' : '最早在前' }}`}}
+                        </el-button>
+                    </el-tooltip>
+                    
+                    <el-button class="add-project-btn" type="primary" @click="showLinkDialog">添加项目</el-button>
+                </div>
+            </div>
+            
+            <template v-if="processedProjects && processedProjects.length > 0">
+                <el-table :data="processedProjects" style="width: 100%">
+                    <!-- 序号列 -->
+                    <el-table-column type="index" label="序号" width="80" align="center"></el-table-column>
+                    
+                    <el-table-column label="项目名称">
+                        <template slot-scope="scope">
+                            <span class="project-name-link" 
+                                  @click="openProject(scope.row)"
+                                  style="color: #409EFF; cursor: pointer; text-decoration: none;"
+                                  @mouseover="$event.target.style.textDecoration='underline'"
+                                  @mouseout="$event.target.style.textDecoration='none'">
+                                {{`{{ scope.row.name }}`}}
+                            </span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="file_key" label="File Key"></el-table-column>
+                    <el-table-column prop="root_node_id" label="Root Node ID"></el-table-column>
+                    <el-table-column label="创建时间" width="180">
+                        <template slot-scope="scope">
+                            {{`{{ formatDate(scope.row.created_at) }}`}}
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="240">
+                        <template slot-scope="scope">
+                            <el-button v-if="scope.row.figma_url" 
+                                       class="figma-link-btn" 
+                                       size="mini" 
+                                       circle 
+                                       icon="el-icon-link"
+                                       @click="openFigmaLink(scope.row.figma_url)"
+                                       title="在Figma中打开">
+                            </el-button>
+                            <el-button size="mini" type="primary" @click="showEditDialog(scope.row)">编辑</el-button>
+                            <el-button size="mini" type="danger" @click="deleteProject(scope.row)">删除</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </template>
+            <div v-else-if="projects && projects.length > 0 && processedProjects.length === 0" class="no-result">
+                <i class="el-icon-search"></i>
+                <p>没有找到符合搜索条件的项目</p>
+            </div>
+            <div v-else class="project-empty">
+                <i class="el-icon-folder-opened"></i>
+                <p>暂无项目，请点击右上角“添加项目”按钮</p>
+            </div>
+        </el-card>
+    </el-main>
+    
+    <!-- 添加项目对话框 -->
+    <el-dialog title="添加Figma项目" :visible.sync="linkDialogVisible" width="500px" class="custom-dialog">
+        <el-form :model="linkForm" :rules="linkRules" ref="linkForm" label-width="100px">
+            <el-form-item label="项目名称" prop="name">
+                <el-input v-model="linkForm.name" placeholder="输入项目名称"></el-input>
+            </el-form-item>
+            <el-form-item label="Figma链接" prop="link">
+                <el-input v-model="linkForm.link" placeholder="输入Figma文件链接"></el-input>
+                <div class="form-tip">
+                    <i class="el-icon-info"></i>
+                    <span>例如: https://www.figma.com/file/abcdefg/FileName?node-id=0%3A1</span>
+                </div>
+            </el-form-item>
+        </el-form>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="linkDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="parseFigmaLink" :loading="parsing">解析链接</el-button>
+        </div>
+    </el-dialog>
+    
+    <!-- 编辑项目对话框 -->
+    <el-dialog title="编辑项目" :visible.sync="editDialogVisible" width="500px" class="custom-dialog">
+        <el-form :model="editForm" label-width="100px">
+            <el-form-item label="项目名称" prop="name">
+                <el-input v-model="editForm.name" placeholder="输入项目名称"></el-input>
+            </el-form-item>
+            <el-form-item label="设计图链接" prop="figma_url">
+                <el-input v-model="editForm.figma_url" placeholder="输入Figma设计图链接"></el-input>
+            </el-form-item>
+            <el-form-item label="File Key">
+                <el-input v-model="editForm.file_key" disabled></el-input>
+            </el-form-item>
+            <el-form-item label="Root Node ID">
+                <el-input v-model="editForm.root_node_id" disabled></el-input>
+            </el-form-item>
+        </el-form>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="editDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="updateProject">保存</el-button>
+        </div>
+    </el-dialog>
+</div>
+{{ end }}
+
+{{ define "projects_styles" }}
+<link rel="stylesheet" href="/static/css/projects.css?v={{ .timestamp }}">
+{{ end }}
+
+{{ define "projects_scripts" }}
+<script>
+// 初始数据
+window.initialData = {
+    projects: {{ if .projects }}{{ .projects }}{{ else }}[]{{ end }}
+};
+</script>
+<script src="/static/js/projects.js?v={{ .timestamp }}"></script>
+<script>
+// 确保Vue实例能正确初始化
+document.addEventListener('DOMContentLoaded', function() {
+    if (window.ProjectListApp) {
+        new Vue(window.ProjectListApp).$mount('#project-list-app');
+    }
+});
+</script>
+{{ end }}
+

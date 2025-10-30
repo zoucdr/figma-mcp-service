@@ -6,23 +6,25 @@ import (
 
 // FigmaProject Figma项目模型
 type FigmaProject struct {
-	ID        uint        `gorm:"primaryKey" json:"id"`
-	UserID    uint        `gorm:"index" json:"user_id"`
-	FileKey   string      `gorm:"size:100;not null" json:"file_key"`
-	Name      string      `gorm:"size:255" json:"name"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
-	Nodes     []FigmaNode `gorm:"foreignKey:ProjectID" json:"nodes,omitempty"`
+	ID         uint        `gorm:"primaryKey" json:"id"`
+	UserID     uint        `gorm:"index" json:"user_id"`
+	FileKey    string      `gorm:"size:100;not null" json:"file_key"`
+	RootNodeID string      `gorm:"size:100" json:"root_node_id"`
+	Name       string      `gorm:"size:255" json:"name"`
+	FigmaURL   string      `gorm:"size:500" json:"figma_url"` // Figma设计图地址
+	CreatedAt  time.Time   `json:"created_at"`
+	UpdatedAt  time.Time   `json:"updated_at"`
+	Nodes      []FigmaNode `gorm:"foreignKey:ProjectID" json:"nodes,omitempty"`
 }
 
-// 为FileKey和UserID创建联合唯一索引，确保每个用户的每个文件只有一个项目
+// 为FileKey、RootNodeID和UserID创建联合唯一索引，允许每个用户的每个文件有多个项目（不同RootNodeID）
 func (FigmaProject) TableName() string {
 	return "figma_projects"
 }
 
 func (FigmaProject) Indexes() [][]interface{} {
 	return [][]interface{}{
-		{"idx_user_file", "user_id", "file_key"},
+		{"idx_user_file_node", "user_id", "file_key", "root_node_id"},
 	}
 }
 
@@ -61,13 +63,25 @@ type ExportJob struct {
 	Status    string    `gorm:"size:50;default:'pending'" json:"status"` // pending, processing, completed, failed
 	Progress  int       `gorm:"default:0" json:"progress"`               // 0-100
 	FilePath  string    `gorm:"size:255" json:"file_path"`               // 导出文件路径
+	Format    string    `gorm:"size:10;default:'png'" json:"format"`     // 导出图片格式：png, jpg, svg, pdf
 	Error     string    `gorm:"type:text" json:"error"`                  // 错误信息
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // GetProjectByFileKey 通过FileKey获取项目
-func GetProjectByFileKey(userID uint, fileKey string) (*FigmaProject, error) {
+// GetProjectByFileKey 通过文件键获取项目
+func GetProjectByFileKey(fileKey string) (*FigmaProject, error) {
+	var project FigmaProject
+	result := DB.Where("file_key = ?", fileKey).First(&project)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &project, nil
+}
+
+// GetProjectByUserAndFileKey 通过用户ID和文件键获取项目
+func GetProjectByUserAndFileKey(userID uint, fileKey string) (*FigmaProject, error) {
 	var project FigmaProject
 	result := DB.Where("user_id = ? AND file_key = ?", userID, fileKey).First(&project)
 	if result.Error != nil {
@@ -76,26 +90,43 @@ func GetProjectByFileKey(userID uint, fileKey string) (*FigmaProject, error) {
 	return &project, nil
 }
 
-// CreateOrUpdateProject 创建或更新项目
-func CreateOrUpdateProject(userID uint, fileKey, name string) (*FigmaProject, error) {
+// GetProjectByUserFileKeyAndRootNodeID 通过用户ID、文件键和根节点ID获取项目
+func GetProjectByUserFileKeyAndRootNodeID(userID uint, fileKey string, rootNodeID string) (*FigmaProject, error) {
 	var project FigmaProject
-	result := DB.Where("user_id = ? AND file_key = ?", userID, fileKey).First(&project)
-
+	result := DB.Where("user_id = ? AND file_key = ? AND root_node_id = ?", userID, fileKey, rootNodeID).First(&project)
 	if result.Error != nil {
-		// 创建新项目
-		project = FigmaProject{
-			UserID:  userID,
-			FileKey: fileKey,
-			Name:    name,
+		return nil, result.Error
+	}
+	return &project, nil
+}
+
+// CreateOrUpdateProject 创建或更新项目
+func CreateOrUpdateProject(userID uint, fileKey, rootNodeID, name, figmaURL string) (*FigmaProject, error) {
+	var project FigmaProject
+
+	// 如果提供了rootNodeID，先尝试精确匹配
+	if rootNodeID != "" {
+		result := DB.Where("user_id = ? AND file_key = ? AND root_node_id = ?", userID, fileKey, rootNodeID).First(&project)
+		if result.Error == nil {
+			// 找到精确匹配，更新名称和URL
+			project.Name = name
+			project.FigmaURL = figmaURL
+			DB.Save(&project)
+			return &project, nil
 		}
-		result = DB.Create(&project)
-		if result.Error != nil {
-			return nil, result.Error
-		}
-	} else {
-		// 更新项目名称
-		project.Name = name
-		DB.Save(&project)
+	}
+
+	// 如果没有找到精确匹配，则创建新项目
+	project = FigmaProject{
+		UserID:     userID,
+		FileKey:    fileKey,
+		RootNodeID: rootNodeID,
+		Name:       name,
+		FigmaURL:   figmaURL,
+	}
+	result := DB.Create(&project)
+	if result.Error != nil {
+		return nil, result.Error
 	}
 
 	return &project, nil
@@ -116,6 +147,16 @@ func SaveNode(node *FigmaNode) error {
 	return DB.Save(&existingNode).Error
 }
 
+// FindNodeByProjectAndNodeID 通过项目ID和节点ID查找节点
+func FindNodeByProjectAndNodeID(projectID uint, nodeID string) (*FigmaNode, error) {
+	var node FigmaNode
+	result := DB.Where("project_id = ? AND node_id = ?", projectID, nodeID).First(&node)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &node, nil
+}
+
 // GetNodeModifys 获取节点修改信息
 func GetNodeModifys(projectID uint, nodeID string) (string, error) {
 	var node FigmaNode
@@ -124,6 +165,37 @@ func GetNodeModifys(projectID uint, nodeID string) (string, error) {
 		return "", result.Error
 	}
 	return node.Modifys, nil
+}
+
+// GetProjectByID 通过ID获取项目
+func GetProjectByID(projectID uint) (*FigmaProject, error) {
+	var project FigmaProject
+	result := DB.First(&project, projectID)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &project, nil
+}
+
+// DeleteProject 删除项目
+func DeleteProject(projectID uint) error {
+	// 删除项目关联的节点
+	if err := DB.Where("project_id = ?", projectID).Delete(&FigmaNode{}).Error; err != nil {
+		return err
+	}
+
+	// 删除项目
+	return DB.Delete(&FigmaProject{}, projectID).Error
+}
+
+// GetExportJob 获取导出任务
+func GetExportJob(jobID uint) (*ExportJob, error) {
+	var job ExportJob
+	result := DB.First(&job, jobID)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &job, nil
 }
 
 // SaveNodeModifys 保存节点修改信息
@@ -146,8 +218,13 @@ func SaveNodeModifys(projectID uint, nodeID string, modifys string) error {
 	return DB.Save(&node).Error
 }
 
+// DeleteNodeModifys 删除节点修改信息
+func DeleteNodeModifys(projectID uint, nodeID string) error {
+	return DB.Where("project_id = ? AND node_id = ?", projectID, nodeID).Delete(&FigmaNode{}).Error
+}
+
 // CreateExportJob 创建导出任务
-func CreateExportJob(userID, projectID uint) (*ExportJob, error) {
+func CreateExportJob(userID, projectID uint, path, format string) (*ExportJob, error) {
 	job := ExportJob{
 		UserID:    userID,
 		ProjectID: projectID,
@@ -171,14 +248,4 @@ func UpdateExportJobStatus(jobID uint, status string, progress int, filePath str
 		"file_path": filePath,
 		"error":     errorMsg,
 	}).Error
-}
-
-// GetExportJob 获取导出任务
-func GetExportJob(jobID uint) (*ExportJob, error) {
-	var job ExportJob
-	result := DB.First(&job, jobID)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return &job, nil
 }
