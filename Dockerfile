@@ -61,7 +61,7 @@ WORKDIR /app
 COPY --from=builder /app/figma-deliver-service .
 
 # 复制配置文件模板
-COPY --from=builder /app/configs/config.example.env ./configs/
+COPY --from=builder /app/configs/config.env ./configs/
 
 # 复制Web静态资源和模板
 COPY --from=builder /app/web ./web
@@ -80,7 +80,7 @@ RUN mkdir -p logs exports temp data && \
     chmod 770 /app/temp && \
     chmod 770 /app/data && \
     chmod 500 /app/figma-deliver-service && \
-    chmod 440 /app/configs/config.example.env
+    chmod 440 /app/configs/config.env
 
 # 切换到非root用户
 USER appuser
