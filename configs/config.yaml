@@ -2,7 +2,7 @@
 
 # 应用配置
 app:
-  port: 8080
+  port: 80
   gin_mode: debug
   session_secret: figma-deliver-secret-key-change-this
 
