@@ -1,5 +1,5 @@
 /**
- * Figma Bridge 项目编辑器样式
+ * Figma Deliver 项目编辑器样式
  */
 
 /* 基础布局 */
@@ -29,6 +29,337 @@
 .breadcrumb {
     flex: 1;
     margin-left: 20px;
+    display: flex;
+    align-items: center;
+}
+
+/* 面包屑整体对齐 */
+.breadcrumb .el-breadcrumb {
+    display: flex;
+    align-items: center;
+    line-height: 1;
+}
+
+/* 项目选择器样式 */
+.project-selector {
+    display: inline-block;
+    position: relative;
+}
+
+.project-select {
+    min-width: 220px;
+    max-width: 300px;
+}
+
+/* 让下拉框看起来像面包屑的一部分，但有精致的边框 */
+.project-select .el-input__inner {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-weight: 500;
+    font-size: 14px;
+    height: 32px;
+    line-height: 30px;
+    padding-left: 12px;
+    padding-right: 30px;
+    box-shadow: none;
+    border-radius: 6px;
+    transition: all 0.3s ease;
+}
+
+.project-select .el-input__inner:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.4);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.project-select .el-input__inner:focus {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.6);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+/* 下拉箭头样式 */
+.project-select .el-input__suffix {
+    color: rgba(255, 255, 255, 0.8);
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.project-select .el-input__suffix:hover {
+    color: #fff;
+}
+
+.project-select .el-input__suffix .el-input__suffix-inner {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+.project-select .el-select__caret {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 14px;
+    transition: all 0.3s ease;
+}
+
+.project-select .el-select__caret:hover {
+    color: #fff;
+}
+
+.project-select .el-select__caret.is-reverse {
+    transform: rotate(180deg);
+}
+
+/* 下拉选项样式 */
+.project-select .el-select-dropdown {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    margin-top: 8px;
+    background-color: #fff;
+    backdrop-filter: blur(10px);
+}
+
+.project-select .el-select-dropdown__item {
+    padding: 10px 16px;
+    line-height: 1.4;
+    font-size: 14px;
+    color: #606266;
+    position: relative;
+}
+
+.project-select .el-select-dropdown__item:hover {
+    background-color: #f5f7fa;
+}
+
+.project-select .el-select-dropdown__item.selected {
+    background-color: #409EFF;
+    color: #fff;
+    font-weight: 500;
+}
+
+.project-select .el-select-dropdown__item.selected::after {
+    content: '✓';
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-weight: bold;
+}
+
+/* 面包屑项目对齐 */
+.breadcrumb .el-breadcrumb__item {
+    display: flex;
+    align-items: center;
+    line-height: 1;
+}
+
+.breadcrumb .el-breadcrumb__item .el-breadcrumb__inner {
+    display: flex;
+    align-items: center;
+    line-height: 1;
+    font-size: 14px;
+    height: 32px;
+}
+
+/* 面包屑导航中的项目选择器特殊样式 */
+.breadcrumb .el-breadcrumb__item:last-child .el-breadcrumb__inner {
+    color: inherit;
+    height: auto;
+}
+
+.breadcrumb .el-breadcrumb__item:last-child {
+    display: flex;
+    align-items: center;
+}
+
+/* 面包屑分隔符调整 */
+.breadcrumb .el-breadcrumb__separator {
+    color: rgba(255, 255, 255, 0.6);
+    margin: 0 8px;
+    display: flex;
+    align-items: center;
+    line-height: 1;
+}
+
+/* 项目ID显示样式 - 居中显示 */
+.project-id-display {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #fff;
+    white-space: nowrap;
+    backdrop-filter: blur(5px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.project-id-label {
+    color: rgba(255, 255, 255, 0.8);
+    margin-right: 6px;
+}
+
+.project-id-value {
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.project-key-info {
+    margin-left: 8px;
+    color: rgba(255, 255, 255, 0.9);
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.project-key-info:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+.project-key-info:active {
+    transform: scale(0.98);
+}
+
+.project-key-info i {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.project-key-info:hover i {
+    opacity: 1;
+}
+
+/* 项目选择器在面包屑中的对齐 */
+.breadcrumb .project-selector {
+    display: flex;
+    align-items: center;
+    min-height: 32px;
+}
+
+/* 下拉选项内容布局 */
+.project-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    min-height: 20px;
+}
+
+.project-option-name {
+    flex: 1;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 12px;
+}
+
+.project-option-time {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: #8492a6;
+    opacity: 0.8;
+}
+
+/* 选中状态下的时间颜色 */
+.project-select .el-select-dropdown__item.selected .project-option-time {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* 悬停状态下的时间颜色 */
+.project-select .el-select-dropdown__item:hover .project-option-time {
+    color: #606266;
+}
+
+.project-select .el-select-dropdown__item.selected:hover .project-option-time {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* 加载状态样式 */
+.project-select.is-loading .el-input__inner {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.15);
+    cursor: wait;
+}
+
+.project-select .el-input__inner::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* 禁用状态样式 */
+.project-select.is-disabled .el-input__inner {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+    cursor: not-allowed;
+}
+
+/* 聚焦时的发光效果 */
+.project-select .el-input.is-focus .el-input__inner {
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .project-select {
+        min-width: 150px;
+        max-width: 200px;
+    }
+    
+    .project-option-name {
+        margin-right: 8px;
+    }
+    
+    .project-option-time {
+        font-size: 11px;
+    }
+}
+
+/* 下拉框动画 */
+.project-select .el-select-dropdown {
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 优化选中项的显示 */
+.project-select .el-select-dropdown__item.selected::after {
+    content: '✓';
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-weight: bold;
+    font-size: 14px;
 }
 
 /* Figma URL 链接样式 */
@@ -121,12 +452,47 @@
     flex: 1;
     height: 0; /* 配合flex: 1使用，确保正确计算高度 */
     min-height: 0; /* 允许flex子元素缩小 */
-    margin-right: 320px; /* 为右侧固定属性面板留出空间 */
+    position: relative;
+    transition: margin-right 0.2s ease;
+}
+
+/* 拖动分隔条 */
+.resizer {
+    width: 5px;
+    background-color: #e6e6e6;
+    cursor: col-resize;
+    flex-shrink: 0;
+    position: relative;
+    transition: background-color 0.2s ease;
+}
+
+.resizer:hover {
+    background-color: #409EFF;
+}
+
+.resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -2px;
+    right: -2px;
+    /* 扩大可拖动区域 */
+}
+
+/* 拖动时的样式 */
+body.resizing {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+.resizer.active {
+    background-color: #409EFF;
 }
 
 /* 左侧树形图 */
 .tree-panel {
-    width: 280px;
+    flex-shrink: 0;
     background-color: #fff;
     border-right: 1px solid #e6e6e6;
     padding: 10px;
@@ -147,10 +513,46 @@
     align-items: center;
 }
 
+.tree-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
 .tree-content {
     flex: 1;
     overflow-y: auto;
     position: relative;
+    /* 禁用整个树形结构的文本选择 */
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+/* 重置按钮容器 - 固定在右下角 */
+.tree-reset-button-container {
+    position: absolute;
+    bottom: 30px;
+    left: 15px;
+    z-index: 10;
+}
+
+.tree-reset-button {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* 重置模式菜单 */
+.reset-mode-menu {
+    position: fixed;
+    background-color: #fff;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+    z-index: 10002; /* 比layer-menu更高的z-index */
+    padding: 5px 0;
+    min-width: 200px;
+    pointer-events: auto;
+    font-size: 13px;
 }
 
 .tree-loading-container {
@@ -188,6 +590,11 @@
     font-size: 14px;
     padding-right: 8px;
     cursor: pointer;
+    /* 禁用文本选择，避免多选时出现文本选中效果 */
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 .custom-tree-node i {
@@ -206,14 +613,65 @@
     text-decoration: line-through;
 }
 
+.custom-tree-node .cutout-node {
+    color: #E6A23C;
+    font-weight: bold;
+    text-decoration: line-through;
+}
+
 .custom-tree-node .el-tag {
     margin-left: 5px;
 }
 
+/* 节点图标容器样式 */
+.node-icons-container {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.node-icons-container i {
+    font-size: 14px;
+    flex-shrink: 0;
+}
 
 .custom-tree-node:hover {
     background-color: #f5f7fa;
     border-radius: 4px;
+}
+
+/* 批量选择状态样式 */
+.custom-tree-node.selected-node {
+    background-color: #e6f7ff;
+    border: 1px solid #409EFF;
+    border-radius: 4px;
+    box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+}
+
+.custom-tree-node.selected-node:hover {
+    background-color: #d1ecf1;
+}
+
+/* Element UI 树形组件禁用文本选择 */
+.el-tree {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+.el-tree-node {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+.el-tree-node__content {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 /* 中间预览区域 */
@@ -366,6 +824,33 @@
     box-shadow: 0 0 0 2px #409EFF, 0 0 10px rgba(0, 0, 0, 0.2);
 }
 
+/* 依赖节点标识标签 */
+.ref-node-label {
+    position: absolute;
+    top: -24px;
+    left: 0;
+    font-size: 12px;
+    color: #409EFF;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 2px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.ref-node-label i {
+    margin-right: 4px;
+}
+
+/* 依赖节点预览图片 - 与主节点预览图使用相同的样式 */
+.ref-preview-image {
+    position: relative;
+    object-fit: contain;
+    width: 100%;
+    height: 100%;
+}
+
 /* 移除选中容器的z-index提升，保持原有层级顺序 */
 .selected-container {
     /* 保持原有层级顺序，不设置z-index */
@@ -461,6 +946,227 @@
     border-top: none;
 }
 
+/* 选中节点名称显示（在顶部外面） */
+.selection-node-name {
+    position: absolute;
+    top: -38px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, #409EFF 0%, #66b1ff 100%);
+    color: #fff;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1);
+    z-index: 101;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    position: relative;
+}
+
+/* 添加向下箭头指示器 */
+.selection-node-name::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid #409EFF;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.1));
+}
+
+/* 选中节点信息显示（尺寸和位置） */
+.selection-info {
+    position: absolute;
+    bottom: -60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    z-index: 101;
+    white-space: nowrap;
+    backdrop-filter: blur(4px);
+}
+
+.selection-info .info-item {
+    display: flex;
+    align-items: center;
+    margin: 2px 0;
+    line-height: 1.4;
+}
+
+.selection-info .info-item:first-child {
+    margin-top: 0;
+}
+
+.selection-info .info-item:last-child {
+    margin-bottom: 0;
+}
+
+.selection-info .info-label {
+    color: rgba(255, 255, 255, 0.8);
+    margin-right: 6px;
+    font-weight: 500;
+}
+
+.selection-info .info-value {
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+}
+
+/* 测量线样式 */
+.measurement-line {
+    position: absolute;
+    pointer-events: none;
+    z-index: 102;
+}
+
+/* 宽度测量线（节点底部外面，向外扩展） */
+.measurement-line.width-line {
+    bottom: -25px;
+    left: 0;
+    width: 100%;
+    height: 20px;
+}
+
+/* 高度测量线（右侧垂直线） */
+.measurement-line.height-line {
+    right: -25px;
+    top: 0;
+    width: 20px;
+    height: 100%;
+}
+
+/* 测量线路径（虚线） */
+.measurement-line-path {
+    position: absolute;
+    background: repeating-linear-gradient(
+        to right,
+        #409EFF 0px,
+        #409EFF 4px,
+        transparent 4px,
+        transparent 8px
+    );
+}
+
+.width-line .measurement-line-path {
+    bottom: 9px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+}
+
+.height-line .measurement-line-path {
+    right: 9px;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: repeating-linear-gradient(
+        to bottom,
+        #409EFF 0px,
+        #409EFF 4px,
+        transparent 4px,
+        transparent 8px
+    );
+}
+
+/* 测量线端点 */
+.measurement-endpoint {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background-color: #409EFF;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(64, 158, 255, 0.5);
+}
+
+/* 宽度测量线端点 */
+.width-line .left-endpoint {
+    left: -4px;
+    bottom: 6px;
+}
+
+.width-line .right-endpoint {
+    right: -4px;
+    bottom: 6px;
+}
+
+/* 高度测量线端点 */
+.height-line .top-endpoint {
+    right: 6px;
+    top: -4px;
+}
+
+.height-line .bottom-endpoint {
+    right: 6px;
+    bottom: -4px;
+}
+
+/* 测量线标签 */
+.measurement-label {
+    position: absolute;
+    background-color: rgba(64, 158, 255, 0.95);
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    z-index: 103;
+}
+
+/* 宽度标签（在底部中间，向内收一点） */
+.width-line .width-label {
+    left: 50%;
+    bottom: 8px;
+    transform: translateX(-50%);
+    min-width: 30px;
+    text-align: center;
+}
+
+/* 高度标签（在右侧中间，横向显示） */
+.height-line .height-label {
+    right: -35px;
+    top: 50%;
+    transform: translateY(-50%);
+    min-width: 30px;
+    text-align: center;
+}
+
+/* 当节点太小时，调整测量线位置以避免重叠 */
+.selection-overlay {
+    min-width: 50px;
+    min-height: 50px;
+}
+
+/* 确保测量线在节点很小时仍然可见 */
+.measurement-line.width-line {
+    min-width: 50px;
+}
+
+.measurement-line.height-line {
+    min-height: 50px;
+    min-width: 20px;
+}
+
 /* 加载中效果 */
 .preview-loading-overlay {
     position: absolute;
@@ -511,6 +1217,83 @@
     }
     100% {
         border-color: rgba(64, 158, 255, 0.8);
+    }
+}
+
+/* 导出中效果 */
+.preview-exporting-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 6; /* 比加载中效果层级更高 */
+}
+
+.preview-exporting-border {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 2px dashed #67C23A;
+    box-sizing: border-box;
+    animation: border-dash-export 1.5s linear infinite;
+}
+
+.preview-exporting-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    background-color: rgba(255, 255, 255, 0.95);
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+}
+
+.preview-exporting-spinner {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.preview-exporting-spinner i {
+    font-size: 24px;
+    color: #67C23A;
+    animation: rotate 1s linear infinite;
+}
+
+.preview-exporting-text {
+    font-size: 14px;
+    color: #67C23A;
+    font-weight: 500;
+}
+
+@keyframes border-dash-export {
+    0% {
+        border-color: rgba(103, 194, 58, 0.8);
+    }
+    50% {
+        border-color: rgba(103, 194, 58, 0.3);
+    }
+    100% {
+        border-color: rgba(103, 194, 58, 0.8);
+    }
+}
+
+@keyframes rotate {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
     }
 }
 
@@ -659,7 +1442,7 @@
     right: auto; /* 取消右侧定位 */
     background-color: rgba(250, 250, 250, 0.97); /* 略微不同的背景色 */
     border-color: #d1e5ff; /* 蓝色边框以区分 */
-    display: block !important; /* 强制显示 */
+    display: none !important; /* 隐藏过滤预览小框框 */
     z-index: 1001; /* 确保在原缩略图上方 */
     border-width: 2px; /* 加粗边框 */
     box-shadow: 0 2px 12px 0 rgba(0, 0, 255, 0.1); /* 蓝色阴影 */
@@ -945,7 +1728,10 @@
 
 /* 右侧属性面板 - 固定在屏幕右侧 */
 .property-panel {
-    width: 320px;
+    position: fixed;
+    top: 60px; /* 顶部导航栏高度 */
+    right: 0;
+    bottom: 70px; /* 底部控制栏高度 */
     background-color: #fff;
     border-left: 1px solid #e6e6e6;
     padding: 10px;
@@ -953,12 +1739,8 @@
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    position: fixed;
-    top: 60px; /* 顶部导航栏高度 */
-    right: 0;
-    bottom: 70px; /* 底部控制栏高度 */
     z-index: 1000;
-    flex-shrink: 0; /* 不允许缩小，保持固定宽度 */
+    transition: width 0.2s ease;
 }
 
 .property-panel-header {
@@ -1084,6 +1866,27 @@
     color: #333;
 }
 
+.json-viewer-content .json-textarea {
+    width: 100%;
+}
+
+.json-viewer-content .json-textarea .el-textarea__inner {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #333;
+    background-color: #fafafa;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    padding: 10px;
+    resize: vertical;
+}
+
+.json-viewer-content .json-textarea .el-textarea__inner:focus {
+    border-color: #409EFF;
+    background-color: #fff;
+}
+
 /* JSON预览按钮样式 */
 .json-preview-button {
     display: flex;
@@ -1130,6 +1933,62 @@
     align-items: center;
     z-index: 1001;
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+    /* 确保子元素的层叠上下文不受影响 */
+}
+
+/* 底部控制区右侧容器 */
+/* 清除缓存按钮 - 特殊形状样式 */
+.clear-cache-btn {
+    margin-right: 10px;
+    border-radius: 20px 4px 20px 4px !important; /* 不对称圆角，形成特殊形状 */
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.clear-cache-btn::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transform: rotate(45deg);
+    transition: all 0.5s;
+    opacity: 0;
+}
+
+.clear-cache-btn:hover::before {
+    opacity: 1;
+    animation: shine 1.5s infinite;
+}
+
+.clear-cache-btn:hover {
+    transform: translateY(-2px) scale(1.05);
+    box-shadow: 0 4px 12px rgba(230, 162, 60, 0.4);
+}
+
+.clear-cache-btn:active {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 2px 6px rgba(230, 162, 60, 0.3);
+}
+
+@keyframes shine {
+    0% {
+        left: -50%;
+    }
+    100% {
+        left: 150%;
+    }
+}
+
+.export-options-right {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    padding-left: 20px;
+    padding-right: 40px;
 }
 
 /* 原有的导出面板样式保留，以防其他地方使用 */
@@ -1147,6 +2006,132 @@
     display: flex;
     gap: 10px;
     align-items: center;
+    position: relative;
+}
+
+/* 图文导出按钮样式 */
+.export-project-btn {
+    margin-right: 10px;
+}
+
+.export-project-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(103, 194, 58, 0.3);
+}
+
+.export-project-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 4px rgba(103, 194, 58, 0.2);
+}
+
+/* 优化配置按钮样式 */
+.api-download-btn {
+    margin-left: 15px;
+}
+
+.api-download-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(103, 194, 58, 0.3);
+}
+
+.api-download-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 4px rgba(103, 194, 58, 0.2);
+}
+
+.api-download-btn:disabled {
+    cursor: not-allowed;
+}
+
+.api-download-btn:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+/* 下载按钮右键菜单样式 */
+.download-context-menu {
+    position: fixed;
+    background-color: #fff;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+    z-index: 999999; /* 进一步提高z-index，确保显示在所有元素之上 */
+    padding: 5px 0;
+    min-width: 200px;
+    pointer-events: auto;
+    font-size: 13px;
+    border: 1px solid #e6e6e6; /* 添加边框增强可见性 */
+}
+
+/* 下载级别选择器样式 */
+.download-level-selector {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.level-selector-title {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.level-options {
+    display: flex;
+    gap: 6px;
+    justify-content: space-between;
+}
+
+.level-option {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 4px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background-color: #fafafa;
+}
+
+.level-option:hover {
+    border-color: #409EFF;
+    background-color: #ecf5ff;
+}
+
+.level-option.active {
+    border-color: #409EFF;
+    background-color: #409EFF;
+    color: #fff;
+}
+
+.level-option.active .level-number {
+    color: #fff;
+    font-weight: bold;
+}
+
+.level-option.active .level-desc {
+    color: #fff;
+}
+
+.level-number {
+    font-size: 16px;
+    font-weight: 600;
+    color: #409EFF;
+    margin-bottom: 2px;
+}
+
+.level-desc {
+    font-size: 11px;
+    color: #666;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.layer-menu-divider {
+    height: 1px;
+    background-color: #f0f0f0;
+    margin: 5px 0;
 }
 
 .export-progress {
@@ -1171,24 +2156,22 @@
         width: 240px;
     }
     
-    .property-panel {
-        width: 280px;
-    }
-    
-    .editor-container {
-        margin-right: 280px; /* 调整右边距以适应较小的属性面板 */
-    }
 }
 
 @media (max-width: 992px) {
     .editor-container {
         flex-direction: column;
         height: auto;
-        margin-right: 0; /* 移动端取消右边距 */
+        margin-right: 0 !important; /* 移动端取消右边距 */
+    }
+    
+    /* 移动端隐藏拖动条 */
+    .resizer {
+        display: none;
     }
     
     .tree-panel {
-        width: 100%;
+        width: 100% !important;
         height: 200px;
         border: none;
         border-bottom: 1px solid #e6e6e6;
@@ -1196,11 +2179,11 @@
     }
     
     .property-panel {
-        position: relative; /* 移动端改为相对定位 */
-        top: auto;
-        right: auto;
-        bottom: auto;
-        width: 100%;
+        position: relative !important; /* 移动端改为相对定位 */
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        width: 100% !important;
         height: 300px;
         border: none;
         border-top: 1px solid #e6e6e6;
@@ -1215,4 +2198,312 @@
     .app-main {
         padding-bottom: 70px; /* 保持底部控制栏空间 */
     }
+}
+
+/* 表单项提示文本样式 */
+.form-item-tip {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #909399;
+    line-height: 1.4;
+}
+
+.form-item-tip small {
+    color: #909399;
+}
+
+/* 内联表单项样式 - 标签和输入框在同一行 */
+.inline-form-item .el-form-item__label {
+    display: inline-block !important;
+    vertical-align: middle;
+    margin-right: 8px;
+    line-height: 32px;
+}
+
+.inline-form-item .el-form-item__content {
+    display: inline-block !important;
+    vertical-align: middle;
+    margin-left: 0 !important;
+}
+
+/* ========== MCP面板样式 ========== */
+.mcp-panel {
+    padding: 20px 20px 0 20px;
+    height: calc(100vh - 140px); /* 减去drawer标题和底部提示词区域的高度 */
+    display: flex;
+    flex-direction: column;
+}
+
+.mcp-logs-card {
+    flex: 1; /* 让日志卡片占据剩余空间 */
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0; /* 移除底部边距，因为有sticky底部区域 */
+}
+
+.mcp-logs-card .el-card__body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden; /* 确保卡片内容不会溢出 */
+}
+
+.mcp-status {
+    margin-bottom: 15px;
+}
+
+.mcp-connection-info {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #666;
+}
+
+.mcp-connection-info p {
+    margin: 5px 0;
+}
+
+.mcp-actions {
+    text-align: center;
+}
+
+.mcp-functions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mcp-logs {
+    flex: 1; /* 让日志区域占据卡片的剩余空间 */
+    overflow-y: auto;
+    min-height: 200px; /* 设置最小高度 */
+    padding: 20px; /* 恢复内边距 */
+}
+
+.mcp-tools {
+    flex: 1; /* 让工具说明区域占据卡片的剩余空间 */
+    overflow-y: auto;
+    min-height: 200px; /* 设置最小高度 */
+    padding: 20px; /* 恢复内边距 */
+}
+
+.mcp-tool-item {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: all 0.2s ease;
+}
+
+.mcp-tool-item:hover {
+    background: #f1f3f4;
+    border-color: #409eff;
+    box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+}
+
+.mcp-tool-item:last-child {
+    margin-bottom: 0;
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.tool-header i {
+    font-size: 16px;
+    color: #409eff;
+    margin-right: 8px;
+}
+
+.tool-name {
+    font-weight: 600;
+    color: #303133;
+    font-size: 14px;
+}
+
+.tool-description {
+    color: #606266;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-left: 24px; /* 与图标对齐 */
+}
+
+.no-logs {
+    text-align: center;
+    color: #999;
+    padding: 20px;
+    font-style: italic;
+}
+
+.logs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.log-item {
+    padding: 10px;
+    border: 1px solid #e4e7ed;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.log-method {
+    font-weight: bold;
+    color: #409EFF;
+}
+
+.log-time {
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 5px;
+}
+
+.log-error {
+    font-size: 12px;
+    color: #F56C6C;
+    background-color: #fef0f0;
+    padding: 5px;
+    border-radius: 3px;
+    border-left: 3px solid #F56C6C;
+}
+
+.log-request,
+.log-response {
+    font-size: 12px;
+    color: #666;
+    margin-top: 5px;
+    padding: 5px;
+    background-color: #f5f7fa;
+    border-radius: 3px;
+    word-break: break-all;
+}
+
+.logs-count {
+    font-size: 12px;
+    color: #909399;
+    font-weight: normal;
+}
+
+/* MCP界面描述编辑区域 */
+.mcp-interface-description {
+    position: sticky;
+    bottom: 60px; /* 在提示词拷贝按钮上方 */
+    background-color: #fff;
+    border-top: 1px solid #e4e7ed;
+    border-bottom: 1px solid #e4e7ed;
+    padding: 15px 20px;
+    margin: 0 -20px;
+    z-index: 9; /* 在提示词区域下方 */
+}
+
+.interface-description-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.interface-description-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #303133;
+}
+
+.interface-description-title i {
+    color: #409eff;
+    font-size: 16px;
+}
+
+.interface-description-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.interface-description-content {
+    margin-top: 10px;
+}
+
+.interface-description-textarea .el-textarea__inner {
+    border-radius: 6px;
+    border-color: #dcdfe6;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 60px !important;
+}
+
+.interface-description-textarea .el-textarea__inner:focus {
+    border-color: #409eff;
+    box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
+}
+
+.interface-description-textarea .el-textarea__inner::placeholder {
+    color: #c0c4cc;
+    font-size: 13px;
+}
+
+/* MCP 提示词拷贝功能样式 */
+.mcp-prompt-bottom {
+    position: sticky;
+    bottom: 0;
+    background-color: #fff;
+    border-top: 1px solid #e4e7ed;
+    padding: 10px 20px;
+    margin: 0 -20px -20px -20px;
+}
+
+.mcp-prompt-card {
+    margin-bottom: 0;
+}
+
+.mcp-prompt-section {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.prompt-description {
+    color: #606266;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.prompt-description p {
+    margin: 0;
+}
+
+.prompt-actions {
+    display: flex;
+    justify-content: center;
+}
+
+.prompt-preview {
+    margin-top: 10px;
+}
+
+.prompt-textarea {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+}
+
+.prompt-textarea .el-textarea__inner {
+    background-color: #f5f7fa;
+    border: 1px solid #e4e7ed;
+    color: #303133;
+    resize: none;
 }

@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP调用记录 - Figma Deliver</title>
+    <link rel="stylesheet" href="/static/lib/element-ui/theme-chalk/index.min.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .mcp-logs-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .mcp-logs-header {
+            padding: 20px;
+            border-bottom: 1px solid #e4e7ed;
+            background: #fafafa;
+        }
+        .mcp-logs-content {
+            padding: 20px;
+            min-height: calc(100vh - 200px);
+        }
+        .log-item {
+            border: 1px solid #e4e7ed;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            margin-bottom: 8px;
+        }
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .log-header:hover {
+            background-color: #f0f2f5;
+        }
+        .log-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .log-header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .log-sequence {
+            background: #409eff;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            min-width: 20px;
+            text-align: center;
+        }
+        .log-expand-icon {
+            font-size: 12px;
+            color: #909399;
+            transition: transform 0.2s;
+        }
+        .log-expand-icon.expanded {
+            transform: rotate(90deg);
+        }
+        .log-details {
+            padding: 0 10px 10px 10px;
+            border-top: 1px solid #e4e7ed;
+            background-color: #fafafa;
+        }
+        .log-details > div {
+            margin-bottom: 8px;
+        }
+        .log-details strong {
+            color: #303133;
+        }
+        .log-error {
+            color: #f56c6c;
+        }
+        .log-request, .log-response {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            background: #f8f8f8;
+            padding: 8px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="mcp-logs-container">
+            <div class="mcp-logs-header">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h2 style="margin: 0; color: #303133;">MCP调用记录</h2>
+                        <p style="margin: 5px 0 0 0; color: #909399;" v-if="project">
+                            项目: {{ "{{" }} project.name {{ "}}" }} (ID: {{ "{{" }} project.id {{ "}}" }})
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span v-if="logs.length > 0" style="color: #909399;">共 {{ "{{" }} logs.length {{ "}}" }} 条记录</span>
+                        <el-button type="primary" size="small" @click="refreshLogs" :loading="loading">
+                            刷新
+                        </el-button>
+                        <el-button type="danger" size="small" @click="clearLogs" v-if="logs.length > 0">
+                            清理
+                        </el-button>
+                        <el-button size="small" @click="window.close()">
+                            关闭
+                        </el-button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mcp-logs-content">
+                <div v-if="loading" style="text-align: center; padding: 40px;">
+                    <i class="el-icon-loading" style="font-size: 24px; color: #409eff;"></i>
+                    <p style="margin-top: 10px; color: #909399;">加载中...</p>
+                </div>
+                
+                <div v-else-if="logs.length === 0" style="text-align: center; padding: 40px;">
+                    <i class="el-icon-document" style="font-size: 48px; color: #c0c4cc;"></i>
+                    <p style="margin-top: 10px; color: #909399;">暂无调用记录</p>
+                </div>
+                
+                <div v-else>
+                    <div v-for="(log, index) in logs" :key="log.id" class="log-item">
+                        <div class="log-header" @click="toggleLogExpand(log.id)">
+                            <div class="log-header-left">
+                                <span class="log-sequence">{{ "{{" }} logs.length - index {{ "}}" }}</span>
+                                <i :class="['el-icon-arrow-right', 'log-expand-icon', { 'expanded': expandedLogs[log.id] }]"></i>
+                                <span class="log-method">{{ "{{" }} log.method {{ "}}" }}</span>
+                                <el-tag :type="log.status === 'success' ? 'success' : 'danger'" size="mini">
+                                    {{ "{{" }} log.status {{ "}}" }}
+                                </el-tag>
+                            </div>
+                            <div class="log-header-right">
+                                <el-button type="text" size="mini" @click.stop="resendMCPCall(log)" :loading="resendingLogs[log.id]">
+                                    <i class="el-icon-refresh"></i> 重发
+                                </el-button>
+                                <div class="log-time">{{ "{{" }} formatTime(log.created_at) {{ "}}" }}</div>
+                            </div>
+                        </div>
+                        <div v-show="expandedLogs[log.id]" class="log-details">
+                            <div v-if="log.error_message" class="log-error">
+                                <strong>错误:</strong> {{ "{{" }} log.error_message {{ "}}" }}
+                            </div>
+                            <div v-if="log.request_data" class="log-request">
+                                <strong>请求:</strong> {{ "{{" }} log.request_data {{ "}}" }}
+                            </div>
+                            <div v-if="log.response_data" class="log-response">
+                                <strong>响应:</strong> {{ "{{" }} log.response_data {{ "}}" }}
+                            </div>
+                            <div class="log-duration" v-if="log.duration">
+                                <strong>耗时:</strong> {{ "{{" }} log.duration {{ "}}" }}ms
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/lib/vue/vue.min.js"></script>
+    <script src="/static/lib/element-ui/index.min.js"></script>
+    <script>
+        new Vue({
+            el: '#app',
+            data() {
+                return {
+                    project: {{ if .project }}{{ .project }}{{ else }}null{{ end }},
+                    csrfToken: '{{ .csrf_token }}',
+                    logs: [],
+                    expandedLogs: {},
+                    resendingLogs: {},
+                    loading: false
+                };
+            },
+            mounted() {
+                this.refreshLogs();
+            },
+            methods: {
+                async refreshLogs() {
+                    if (!this.project) {
+                        this.$message.error('项目信息不存在');
+                        return;
+                    }
+                    
+                    this.loading = true;
+                    try {
+                        const response = await fetch(`/mcp-api/logs/${this.project.id}?limit=100&offset=0`, {
+                            credentials: 'include'
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.logs = data.logs || [];
+                            // 等待DOM更新后滚动到底部
+                            this.$nextTick(() => {
+                                this.scrollToBottom();
+                            });
+                        } else {
+                            this.$message.error('获取调用记录失败');
+                        }
+                    } catch (error) {
+                        console.error('获取MCP调用记录失败:', error);
+                        this.$message.error('获取调用记录失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                toggleLogExpand(logId) {
+                    this.$set(this.expandedLogs, logId, !this.expandedLogs[logId]);
+                },
+                
+                async clearLogs() {
+                    this.$confirm('确定要清理所有调用记录吗？', '确认清理', {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }).then(async () => {
+                        try {
+                            const response = await fetch(`/mcp-api/logs/${this.project.id}/clear`, {
+                                method: 'DELETE',
+                                credentials: 'include',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                }
+                            });
+                            
+                            if (response.ok) {
+                                this.logs = [];
+                                this.expandedLogs = {};
+                                this.$message.success('调用记录已清理');
+                            } else {
+                                this.$message.error('清理失败');
+                            }
+                        } catch (error) {
+                            console.error('清理MCP调用记录失败:', error);
+                            this.$message.error('清理失败: ' + error.message);
+                        }
+                    }).catch(() => {
+                        // 用户取消操作
+                    });
+                },
+                
+                scrollToBottom() {
+                    try {
+                        const container = document.querySelector('.mcp-logs-content');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    } catch (error) {
+                        console.error('滚动到底部失败:', error);
+                    }
+                },
+                
+                formatTime(timeStr) {
+                    if (!timeStr) return '';
+                    const date = new Date(timeStr);
+                    return date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    });
+                },
+                
+                async resendMCPCall(log) {
+                    if (!log || !log.request_data) {
+                        this.$message.error('无法重发：缺少请求数据');
+                        return;
+                    }
+                    
+                    // 调试信息
+                    console.log('======= 重发调试信息 =======');
+                    console.log('日志ID:', log.id);
+                    console.log('方法:', log.method);
+                    console.log('请求数据类型:', typeof log.request_data);
+                    console.log('请求数据内容:', log.request_data);
+                    if (typeof log.request_data === 'string' && log.request_data.length > 0) {
+                        console.log('前20个字符:', log.request_data.substring(0, 20));
+                        console.log('前20个字符的ASCII码:', Array.from(log.request_data.substring(0, 20)).map((c, i) => `[${i}]=${c.charCodeAt(0)}(${c})`).join(', '));
+                    }
+                    console.log('==========================');
+                    
+                    this.$set(this.resendingLogs, log.id, true);
+                    
+                    try {
+                        // 解析原始请求数据
+                        let requestData;
+                        
+                        if (typeof log.request_data === 'object' && log.request_data !== null) {
+                            // 如果已经是对象，直接使用
+                            requestData = log.request_data;
+                        } else if (typeof log.request_data === 'string') {
+                            // 清理可能的空白字符和BOM
+                            let cleanData = log.request_data.trim();
+                            
+                            // 检查是否为空
+                            if (!cleanData) {
+                                this.$message.error('请求数据为空');
+                                this.$set(this.resendingLogs, log.id, false);
+                                return;
+                            }
+                            
+                            // 尝试多次解析（处理双重JSON编码的情况）
+                            try {
+                                requestData = JSON.parse(cleanData);
+                                
+                                // 如果解析结果是字符串，尝试再次解析
+                                if (typeof requestData === 'string') {
+                                    console.log('检测到双重JSON编码，尝试第二次解析');
+                                    requestData = JSON.parse(requestData);
+                                }
+                            } catch (parseError) {
+                                console.error('JSON解析错误:', parseError);
+                                console.error('原始数据长度:', log.request_data.length);
+                                console.error('原始数据(前100字符):', log.request_data.substring(0, 100));
+                                console.error('清理后数据(前100字符):', cleanData.substring(0, 100));
+                                console.error('前10个字符编码:', Array.from(cleanData.substring(0, 10)).map(c => c.charCodeAt(0)));
+                                
+                                this.$message.error('请求数据格式错误，无法解析JSON: ' + parseError.message);
+                                this.$set(this.resendingLogs, log.id, false);
+                                return;
+                            }
+                        } else {
+                            this.$message.error('请求数据格式不正确: ' + typeof log.request_data);
+                            this.$set(this.resendingLogs, log.id, false);
+                            return;
+                        }
+                        
+                        // 发送重新调用请求
+                        const response = await fetch(`/mcp-api/resend/${this.project.id}`, {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                log_id: log.id,
+                                method: log.method,
+                                request_data: requestData
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.$message.success('MCP调用重发成功');
+                            
+                            // 刷新日志列表以显示新的调用记录
+                            await this.refreshLogs();
+                        } else {
+                            const error = await response.json();
+                            this.$message.error('重发失败: ' + (error.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('重发MCP调用失败:', error);
+                        this.$message.error('重发失败: ' + error.message);
+                    } finally {
+                        this.$set(this.resendingLogs, log.id, false);
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

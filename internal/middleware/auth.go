@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -55,6 +56,12 @@ func CSRF() gin.HandlerFunc {
 			csrfToken = token
 		}
 
+		// 跳过MCP路径的CSRF验证
+		if strings.HasPrefix(c.Request.URL.Path, "/mcp/") || strings.HasPrefix(c.Request.URL.Path, "/mcp-api/") {
+			c.Next()
+			return
+		}
+
 		// 对于非GET请求，验证CSRF令牌
 		if c.Request.Method != "GET" && c.Request.Method != "HEAD" && c.Request.Method != "OPTIONS" {
 			requestToken := c.Request.Header.Get("X-CSRF-Token")
@@ -91,6 +98,33 @@ func GenerateRandomString(length int) (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// RequireLoginNoCSRF 检查用户是否已登录，但不进行CSRF验证
+func RequireLoginNoCSRF() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		session := sessions.Default(c)
+		userID := session.Get("user_id")
+		log.Printf("RequireLoginNoCSRF中间件: 路径=%s, userID=%v", c.Request.URL.Path, userID)
+
+		if userID == nil {
+			// 如果是API请求，返回401状态码
+			if c.Request.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+				log.Println("API请求未登录，返回401")
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+				c.Abort()
+				return
+			}
+			// 否则返回JSON错误（因为MCP API都是AJAX请求）
+			log.Println("MCP API请求未登录，返回401")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+			c.Abort()
+			return
+		}
+
+		log.Printf("用户已登录，userID=%v，继续处理请求（无CSRF验证）", userID)
+		c.Next()
+	}
+}
+
 // GetUserID 从会话中获取用户ID
 func GetUserID(c *gin.Context) uint {
 	session := sessions.Default(c)
@@ -99,4 +133,19 @@ func GetUserID(c *gin.Context) uint {
 		return 0
 	}
 	return userID.(uint)
+}
+
+// GetUserIDOptional 从会话中获取用户ID（可选，不要求登录）
+func GetUserIDOptional(c *gin.Context) uint {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		return 0
+	}
+	
+	if id, ok := userID.(uint); ok {
+		return id
+	}
+	
+	return 0
 }

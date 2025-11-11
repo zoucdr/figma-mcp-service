@@ -1,5 +1,5 @@
 /**
- * Figma Bridge 项目列表脚本
+ * Figma Deliver 项目列表脚本
  */
 
 // 项目列表页面
@@ -13,7 +13,9 @@ const ProjectListApp = {
             currentEditProject: null,
             parsing: false,
             searchQuery: '',
-            sortOrder: 'desc',  // 默认按时间降序排列（最新的在前面）
+            sortOrder: 'desc',  // 默认按降序排列
+            sortField: 'time',  // 默认按时间排序
+            expandedGroups: {}, // 分组展开状态，key为fileKey，value为boolean
             linkForm: {
                 name: '',
                 link: ''
@@ -38,7 +40,7 @@ const ProjectListApp = {
     
     // 计算属性
     computed: {
-        // 处理过的项目列表（排序和筛选）
+        // 处理过的项目列表（按FileKey分组）
         processedProjects() {
             // 首先进行搜索过滤
             let result = this.projects;
@@ -51,19 +53,84 @@ const ProjectListApp = {
                 });
             }
             
-            // 然后进行排序
-            result = [...result].sort((a, b) => {
-                const dateA = new Date(a.created_at);
-                const dateB = new Date(b.created_at);
-                
-                if (this.sortOrder === 'asc') {
-                    return dateA - dateB;
-                } else {
-                    return dateB - dateA;
+            // 按FileKey分组
+            const groupedProjects = {};
+            result.forEach(project => {
+                const fileKey = project.file_key || '未知文件';
+                if (!groupedProjects[fileKey]) {
+                    groupedProjects[fileKey] = [];
                 }
+                groupedProjects[fileKey].push(project);
             });
             
-            return result;
+            // 对每个分组内的项目进行排序
+            Object.keys(groupedProjects).forEach(fileKey => {
+                groupedProjects[fileKey].sort((a, b) => {
+                    if (this.sortField === 'time') {
+                        const dateA = new Date(a.created_at);
+                        const dateB = new Date(b.created_at);
+                        
+                        if (this.sortOrder === 'asc') {
+                            return dateA - dateB;
+                        } else {
+                            return dateB - dateA;
+                        }
+                    } else if (this.sortField === 'name') {
+                        const nameA = a.name.toLowerCase();
+                        const nameB = b.name.toLowerCase();
+                        
+                        if (this.sortOrder === 'asc') {
+                            return nameA.localeCompare(nameB);
+                        } else {
+                            return nameB.localeCompare(nameA);
+                        }
+                    }
+                    
+                    // 默认按时间排序
+                    return this.sortOrder === 'asc' ? 
+                        new Date(a.created_at) - new Date(b.created_at) : 
+                        new Date(b.created_at) - new Date(a.created_at);
+                });
+            });
+            
+            // 对分组按FileKey排序
+            const sortedGroups = Object.keys(groupedProjects).sort((a, b) => {
+                if (this.sortField === 'fileKey') {
+                    if (this.sortOrder === 'asc') {
+                        return a.localeCompare(b);
+                    } else {
+                        return b.localeCompare(a);
+                    }
+                }
+                // 默认按FileKey升序排序
+                return a.localeCompare(b);
+            });
+            
+            // 返回分组后的数据结构
+            return sortedGroups.map(fileKey => {
+                const projects = groupedProjects[fileKey];
+                let displayName;
+                
+                if (projects.length === 1) {
+                    // 只有一个项目时直接显示项目名
+                    displayName = projects[0].name;
+                } else if (projects.length <= 3) {
+                    // 3个或以下项目时显示所有项目名
+                    displayName = projects.map(p => p.name).join('、');
+                } else {
+                    // 超过3个项目时显示前2个项目名 + "等N个项目"
+                    const firstTwo = projects.slice(0, 2).map(p => p.name).join('、');
+                    displayName = `${firstTwo}等${projects.length}个项目`;
+                }
+                
+                return {
+                    fileKey: fileKey,
+                    projects: projects,
+                    projectCount: projects.length,
+                    displayName: displayName, // 项目名组合
+                    expanded: this.expandedGroups[fileKey] === true // 默认收起，除非明确设置为true
+                };
+            });
         }
     },
     
@@ -83,6 +150,8 @@ const ProjectListApp = {
         handleCommand(command) {
             if (command === 'profile') {
                 window.location.href = '/profile';
+            } else if (command === 'about') {
+                window.location.href = '/about';
             } else if (command === 'logout') {
                 window.location.href = '/logout';
             }
@@ -212,8 +281,15 @@ const ProjectListApp = {
         },
         
         // 切换排序方式
-        toggleSortOrder() {
-            this.sortOrder = this.sortOrder === 'desc' ? 'asc' : 'desc';
+        toggleSortOrder(field) {
+            // 如果点击的是当前排序字段，则切换排序顺序
+            if (field === this.sortField) {
+                this.sortOrder = this.sortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                // 如果点击的是新字段，设置为该字段并使用降序排序
+                this.sortField = field;
+                this.sortOrder = 'desc';
+            }
         },
         
         // 搜索项目
@@ -237,6 +313,77 @@ const ProjectListApp = {
                 hour: '2-digit',
                 minute: '2-digit'
             });
+        },
+        
+        // 切换分组展开状态
+        toggleGroupExpanded(fileKey) {
+            this.$set(this.expandedGroups, fileKey, !this.expandedGroups[fileKey]);
+        },
+        
+        // 点击分组标题跳转到第一个项目的dashboard
+        navigateToFirstProject(group) {
+            if (group.projects && group.projects.length > 0) {
+                const firstProject = group.projects[0];
+                window.location.href = `/dashboard?project=${firstProject.id}`;
+            }
+        },
+        
+        // 展开所有分组
+        expandAllGroups() {
+            this.processedProjects.forEach(group => {
+                this.$set(this.expandedGroups, group.fileKey, true);
+            });
+        },
+        
+        // 收起所有分组
+        collapseAllGroups() {
+            this.processedProjects.forEach(group => {
+                this.$set(this.expandedGroups, group.fileKey, false);
+            });
+        },
+        
+        // 复制 FileKey
+        copyFileKey(fileKey) {
+            if (!fileKey) return;
+            
+            // 使用 Clipboard API 复制
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(fileKey).then(() => {
+                    this.$message.success('FileKey 已复制到剪贴板');
+                }).catch(err => {
+                    console.error('复制失败:', err);
+                    this.fallbackCopyFileKey(fileKey);
+                });
+            } else {
+                // 降级方案：使用传统方法
+                this.fallbackCopyFileKey(fileKey);
+            }
+        },
+        
+        // 降级复制方法
+        fallbackCopyFileKey(fileKey) {
+            const textArea = document.createElement('textarea');
+            textArea.value = fileKey;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    this.$message.success('FileKey 已复制到剪贴板');
+                } else {
+                    this.$message.error('复制失败，请手动复制');
+                }
+            } catch (err) {
+                console.error('复制失败:', err);
+                this.$message.error('复制失败，请手动复制');
+            }
+            
+            document.body.removeChild(textArea);
         }
     }
 };

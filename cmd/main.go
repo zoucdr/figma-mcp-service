@@ -44,6 +44,9 @@ func main() {
 	// 创建Gin路由
 	r := gin.Default()
 
+	// 添加CORS中间件，支持Figma插件
+	r.Use(middleware.CORSMiddleware())
+
 	// 设置会话存储
 	store := cookie.NewStore([]byte(getEnv("SESSION_SECRET", "figma-bridge-secret")))
 
@@ -77,6 +80,18 @@ func main() {
 	// 首页路由
 	r.GET("/", controllers.Home)
 
+	// 健康检查路由 - 无需验证
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "ok",
+			"timestamp": time.Now().Unix(),
+			"service":   "figma-deliver",
+		})
+	})
+
+	// 关于页面 - 公开访问
+	r.GET("/about", controllers.About)
+
 	// 登录页面
 	r.GET("/login", func(c *gin.Context) {
 		log.Println("访问登录页面")
@@ -107,7 +122,7 @@ func main() {
 		}
 
 		c.HTML(http.StatusOK, "standalone.html", gin.H{
-			"title":      "登录 - Figma Bridge",
+			"title":      "登录 - Figma Deliver",
 			"timestamp":  time.Now().Unix(),
 			"csrf_token": csrfToken,
 			"template":   "login", // 指定要使用的内容模板
@@ -117,6 +132,9 @@ func main() {
 
 	// 登录API
 	r.POST("/login", controllers.Login)
+
+	// Figma插件登录API - 返回JWT令牌
+	r.POST("/plugin/login", controllers.PluginLogin)
 
 	// 注册API
 	r.POST("/register", controllers.Register)
@@ -134,12 +152,34 @@ func main() {
 	dashboardGroup.Use(middleware.RequireLogin())
 	dashboardGroup.GET("", controllers.Dashboard)
 
+	// MCP调用记录页面 - 需要登录
+	r.GET("/mcp-logs", middleware.RequireLogin(), controllers.MCPLogs)
+
 	// 公开的个人资料更新接口 - 用于注册
 	r.POST("/profile/update", controllers.UpdateProfile)
+
+	// 提示词分享页面 - 公开访问
+	shareGroup := r.Group("/share")
+	shareGroup.GET("", controllers.SharePage)
+
+	// 提示词分享 API
+	shareAPIGroup := shareGroup.Group("/api")
+	// 公开接口 - 不需要登录
+	shareAPIGroup.GET("/shares", controllers.GetPromptShares)
+
+	// 需要登录的接口
+	shareAPIGroup.POST("/shares", middleware.RequireLogin(), controllers.CreatePromptShare)
+	shareAPIGroup.DELETE("/shares/:id", middleware.RequireLogin(), controllers.DeletePromptShare)
+	shareAPIGroup.POST("/shares/:id/like", middleware.RequireLogin(), controllers.LikePromptShare)
+	shareAPIGroup.POST("/shares/:id/unlike", middleware.RequireLogin(), controllers.UnlikePromptShare)
+	shareAPIGroup.GET("/shares/:id/like-status", middleware.RequireLogin(), controllers.CheckLikeStatus)
+	shareAPIGroup.GET("/my-shares", middleware.RequireLogin(), controllers.GetMyShares)
 
 	// 个人资料页面 - 需要登录
 	profileGroup := r.Group("/profile")
 	profileGroup.Use(middleware.RequireLogin())
+	profileGroup.POST("/generate-mcp-token", controllers.GenerateMCPToken)
+	profileGroup.POST("/revoke-mcp-token", controllers.RevokeMCPToken)
 	profileGroup.GET("", func(c *gin.Context) {
 		// 确保CSRF令牌存在
 		session := sessions.Default(c)
@@ -181,6 +221,12 @@ func main() {
 	figmaGroup.POST("/project/:project_id/node/:node_id/settings", controllers.UpdateNodeSettings)
 	figmaGroup.DELETE("/project/:project_id/node/:node_id/settings", controllers.DeleteNodeSettings)
 
+	// 删除项目的所有节点修改（支持子树重置）
+	figmaGroup.DELETE("/project/:project_id/modifications", controllers.DeleteProjectModifications)
+
+	// 重置项目根节点及其子树的修改（新增）
+	figmaGroup.DELETE("/project/:project_id/settings", controllers.DeleteProjectNodeSettings)
+
 	// 节点设置 - 旧API，保留兼容
 	figmaGroup.GET("/node/:file_key/:node_id/settings", controllers.GetNodeSettings)
 	figmaGroup.POST("/node/:file_key/:node_id/settings", controllers.UpdateNodeSettings)
@@ -193,12 +239,27 @@ func main() {
 
 	// 项目管理
 	figmaGroup.PUT("/project/:project_id", controllers.UpdateProject)
+	figmaGroup.PUT("/project/:project_id/settings", controllers.UpdateProjectSettings)
 	figmaGroup.DELETE("/project/:project_id", controllers.DeleteProject)
 
+	// 获取相同file_key下的所有项目
+	figmaGroup.GET("/projects-by-filekey", controllers.GetProjectsByFileKey)
+
 	// 获取Figma节点树和节点修改信息
-	figmaGroup.GET("/project/:project_id/node-tree", controllers.GetFigmaNodeTree)
+	// 注意：更具体的路由应该先注册
 	figmaGroup.GET("/project/:project_id/node-tree/refresh", controllers.RefreshFigmaNodeTree)
+	figmaGroup.GET("/project/:project_id/node-tree", controllers.GetFigmaNodeTree)
 	figmaGroup.GET("/project/:project_id/node-modifys", controllers.GetProjectNodeModifys)
+
+	// 依赖节点管理
+	figmaGroup.GET("/project/:project_id/ref-nodes", controllers.GetRefNodes)
+	figmaGroup.POST("/project/:project_id/ref-nodes", controllers.AddRefNode)
+	figmaGroup.DELETE("/project/:project_id/ref-nodes/:node_id", controllers.RemoveRefNode)
+	figmaGroup.GET("/project/:project_id/ref-nodes/details", controllers.GetRefNodeDetails)
+
+	// 界面描述管理
+	figmaGroup.GET("/project/:project_id/interface-description", controllers.GetInterfaceDescription)
+	figmaGroup.PUT("/project/:project_id/interface-description", controllers.UpdateInterfaceDescription)
 
 	// 清除项目图片缓存
 	figmaGroup.POST("/project/:project_id/clear-cache", controllers.ClearProjectImageCache)
@@ -207,6 +268,39 @@ func main() {
 	figmaGroup.POST("/project/:project_id/export", controllers.ExportFigmaDesign)
 	figmaGroup.GET("/export/:job_id", controllers.GetExportStatus)
 	figmaGroup.GET("/export/:job_id/download", controllers.DownloadExport)
+
+	// Cursor MCP HTTP接口 - 无需认证，通过connection_id验证
+	// 支持 /mcp/connection_id 格式的URL访问
+	cursorMCPGroup := r.Group("/mcp")
+
+	// Cursor MCP核心功能 - 使用connection_id认证
+	cursorMCPGroup.GET("/:connection_id", controllers.CursorMCPHandler)
+	cursorMCPGroup.POST("/:connection_id", controllers.CursorMCPHandler)
+	cursorMCPGroup.PUT("/:connection_id", controllers.CursorMCPHandler)
+	cursorMCPGroup.DELETE("/:connection_id", controllers.CursorMCPHandler)
+
+	// MCP API路由 - 保留用于Web界面查看调用记录
+	mcpAPIGroup := r.Group("/mcp-api")
+	mcpAPIGroup.Use(middleware.RequireLogin()) // 需要登录验证
+	// 只保留调用记录查询接口，供Web界面使用
+	mcpAPIGroup.GET("/logs/:project_id", controllers.MCPGetCallLogsByProject)
+	mcpAPIGroup.DELETE("/logs/:project_id/clear", controllers.MCPClearCallLogsByProject)
+	mcpAPIGroup.POST("/resend/:project_id", controllers.MCPResendCall)
+
+	// API服务模块 - 无需认证，通过MCP token验证
+	apiGroup := r.Group("/api")
+	// 通过MCP token反查用户ID
+	apiGroup.GET("/:mcptoken", controllers.APIGetUserByToken)
+	// 获取优化后的节点数据（支持3档简化级别）
+	apiGroup.GET("/:mcptoken/optimized_nodes", controllers.APIGetOptimizedNodes)
+	// 获取项目节点列表
+	apiGroup.GET("/:mcptoken/project_nodes", controllers.APIGetProjectNodes)
+	// 清除节点缓存
+	apiGroup.POST("/:mcptoken/clear_cache", controllers.APIClearNodeCache)
+	// 清除临时文件
+	apiGroup.POST("/:mcptoken/clear_temp_files", controllers.APIClearTempFiles)
+	// 下载Figma图片
+	apiGroup.GET("/:mcptoken/download_image", controllers.APIDownloadFigmaImage)
 
 	// 启动服务器
 	port := getEnv("PORT", "8080")

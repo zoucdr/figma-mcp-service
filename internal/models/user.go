@@ -2,6 +2,7 @@ package models
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -14,7 +15,9 @@ type User struct {
 	Username     string         `gorm:"size:50;uniqueIndex;" json:"username"` // 移除not null约束
 	PasswordHash string         `gorm:"size:255;not null" json:"-"`
 	FigmaToken   string         `gorm:"size:255" json:"-"`
+	MCPToken     string         `gorm:"size:255" json:"mcp_token"`   // MCP Token
 	CompTypes    string         `gorm:"size:1000" json:"comp_types"` // 控件类型列表，逗号分隔
+	Prompts      string         `gorm:"type:text" json:"prompts"`    // 修饰提示词，用于MCP节点修饰
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	Projects     []FigmaProject `gorm:"foreignKey:UserID" json:"projects,omitempty"`
@@ -132,6 +135,57 @@ func (u *User) UpdateProfile(username, figmaToken, compTypes string) error {
 	// 保存所有更新
 	result := DB.Save(u)
 	return result.Error
+}
+
+// UpdateProfileWithPrompts 更新用户资料（包含提示词）
+func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts string) error {
+	// 更新用户名
+	if err := u.UpdateUsername(username); err != nil {
+		return err
+	}
+
+	// 仅当figmaToken不为空时，才更新Figma Token
+	if figmaToken != "" {
+		u.FigmaToken = figmaToken
+	}
+
+	// 更新控件类型列表
+	u.CompTypes = compTypes
+
+	// 更新提示词
+	u.Prompts = prompts
+
+	// 保存所有更新
+	result := DB.Save(u)
+	return result.Error
+}
+
+// UpdateMCPToken 更新用户的MCP Token
+func (u *User) UpdateMCPToken(token string) error {
+	u.MCPToken = token
+	result := DB.Save(u)
+	return result.Error
+}
+
+// GenerateNewMCPToken 生成新的MCP Token
+func (u *User) GenerateNewMCPToken() (string, error) {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	tokenLength := 32
+	result := make([]byte, tokenLength)
+
+	for i := 0; i < tokenLength; i++ {
+		result[i] = chars[time.Now().UnixNano()%int64(len(chars))]
+		time.Sleep(time.Nanosecond)
+	}
+
+	newToken := fmt.Sprintf("mcp_%s", string(result))
+
+	// 更新用户的MCP Token
+	if err := u.UpdateMCPToken(newToken); err != nil {
+		return "", err
+	}
+
+	return newToken, nil
 }
 
 // EnsureUserExists 确保用户存在，如果不存在则创建一个临时用户

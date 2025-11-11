@@ -15,6 +15,12 @@
     font-size: 20px;
     font-weight: bold;
 }
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
 .user-info {
     cursor: pointer;
 }
@@ -26,9 +32,97 @@
     background-color: #f5f7fa;
     padding: 20px;
 }
-.profile-card {
-    max-width: 600px;
+
+/* 分栏布局容器 */
+.profile-container {
+    display: flex;
+    gap: 20px;
+    max-width: 1200px;
     margin: 0 auto;
+}
+
+/* 左侧栏 */
+.profile-left {
+    flex: 0 0 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* 右侧栏 */
+.profile-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.profile-card {
+    width: 100%;
+}
+
+.mcp-card {
+    flex: 1;
+}
+
+/* 保存按钮区域 */
+.save-actions {
+    text-align: center;
+    margin-top: 30px;
+    padding: 20px;
+    background: #fff;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px 0 rgba(0,0,0,.1);
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* 响应式设计 */
+@media (max-width: 1024px) {
+    .profile-container {
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .profile-left {
+        flex: none;
+    }
+    
+    .profile-right {
+        flex: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .app-main {
+        padding: 15px;
+    }
+    
+    .profile-container {
+        gap: 10px;
+    }
+    
+    .save-actions {
+        margin-top: 20px;
+        padding: 15px;
+    }
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.card-header .header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.card-header span i {
+    margin-right: 8px;
+    color: #409EFF;
 }
 .form-tip {
     font-size: 12px;
@@ -47,4 +141,81 @@
     margin: 0;
     white-space: pre-wrap;
     word-break: break-all;
+}
+
+/* 控件示例按钮样式 */
+.control-examples {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.control-examples .el-button {
+    padding: 4px 8px;
+    font-size: 12px;
+    border-radius: 12px;
+    background-color: #f0f9ff;
+    border: 1px solid #e1f5fe;
+    color: #0277bd;
+}
+
+.control-examples .el-button:hover {
+    background-color: #e3f2fd;
+    border-color: #81d4fa;
+}
+
+/* MCP Token 管理样式 */
+.mcp-token-section {
+    margin-top: 10px;
+}
+
+.token-display {
+    margin-bottom: 15px;
+}
+
+.no-token {
+    color: #999;
+    font-style: italic;
+    margin-bottom: 15px;
+}
+
+.token-actions {
+    margin-bottom: 20px;
+}
+
+.token-actions .el-button {
+    margin-right: 10px;
+}
+
+.cursor-config-tip {
+    background-color: #f5f7fa;
+    border: 1px solid #e4e7ed;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 15px;
+}
+
+.cursor-config-tip p {
+    margin: 0 0 10px 0;
+    font-weight: bold;
+    color: #303133;
+}
+
+.cursor-config-tip pre {
+    background-color: #2d3748;
+    color: #e2e8f0;
+    padding: 12px;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-x: auto;
+    margin: 0;
+}
+
+.cursor-config-tip .no-config {
+    color: #909399;
+    font-style: italic;
+    margin: 0;
 }

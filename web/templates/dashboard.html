@@ -3,12 +3,44 @@
 <div id="project-editor-app" class="app-container">
     <!-- 顶部导航栏 -->
     <el-header class="app-header">
-        <div class="logo">Figma Bridge</div>
+        <div class="logo">Figma Deliver</div>
         <div class="breadcrumb">
             <el-breadcrumb separator="/">
                 <el-breadcrumb-item @click.native="backToProjectList" style="cursor: pointer;">项目列表</el-breadcrumb-item>
-                <el-breadcrumb-item v-text="project.name"></el-breadcrumb-item>
+                <el-breadcrumb-item>
+                    <div class="project-selector">
+                        <el-select 
+                            v-model="selectedProjectId" 
+                            @change="switchProject" 
+                            placeholder="选择项目"
+                            :loading="loadingSiblingProjects"
+                            class="project-select">
+                            <el-option
+                                v-for="proj in siblingProjects"
+                                :key="proj.id"
+                                :label="proj.name"
+                                :value="proj.id">
+                                <div class="project-option">
+                                    <div class="project-option-name">{{`{{ proj.name }}`}}</div>
+                                    <div class="project-option-time">{{`{{ formatDate(proj.created_at) }}`}}</div>
+                                </div>
+                            </el-option>
+                        </el-select>
+                    </div>
+                </el-breadcrumb-item>
             </el-breadcrumb>
+        </div>
+        <!-- 项目ID显示 - 居中显示 -->
+        <div class="project-id-display" v-if="project && project.id">
+            <span class="project-id-label">项目ID:</span>
+            <span class="project-id-value">{{`{{ project.id }}`}}</span>
+            <span v-if="project.file_key && project.root_node_id" 
+                  class="project-key-info" 
+                  @click.stop="[project.file_key, project.root_node_id]"
+                  :title="'点击复制: ' + project.file_key + ':' + project.root_node_id">
+                <i class="el-icon-document-copy"></i>
+                ({{`{{ project.file_key }}`}}:{{`{{ project.root_node_id }}`}})
+            </span>
         </div>
         <!-- Figma URL 链接 -->
         <div class="figma-link" v-if="project && project.figma_url">
@@ -25,6 +57,7 @@
                 </span>
                 <el-dropdown-menu slot="dropdown">
                     <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                    <el-dropdown-item command="about">关于</el-dropdown-item>
                     <el-dropdown-item command="logout">退出登录</el-dropdown-item>
                 </el-dropdown-menu>
             </el-dropdown>
@@ -33,16 +66,35 @@
     
     <!-- 主内容区 -->
     <el-main class="app-main">
-        <div class="editor-container">
+        <div class="editor-container" :style="{ marginRight: propertyPanelWidth + 'px' }">
             <!-- 左侧树形图 -->
-            <div class="tree-panel">
+            <div class="tree-panel" :style="{ width: treePanelWidth + 'px' }">
                 <div class="tree-header">
                     <span>节点树</span>
-                    <el-tooltip content="刷新节点树" placement="top">
-                        <el-button icon="el-icon-refresh" size="mini" circle @click="loadProjectData(true)" :loading="loading"></el-button>
-                    </el-tooltip>
+                    <div class="tree-header-actions">
+                        <!-- 搜索框 -->
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                            <el-input
+                                v-model="nodeSearchKeyword"
+                                placeholder="搜索节点"
+                                size="mini"
+                                clearable
+                                prefix-icon="el-icon-search"
+                                @input="handleNodeSearch"
+                                @clear="clearNodeSearch"
+                                @keyup.enter.native="handleSearchKeyEnter"
+                                style="width: 140px;">
+                            </el-input>
+                            <span v-if="searchMatchedNodes.length > 0" style="font-size: 12px; color: #909399; white-space: nowrap;">
+                                {{`{{ currentSearchIndex + 1 }}`}}/{{`{{ searchMatchedNodes.length }}`}}
+                            </span>
+                        </div>
+                        <el-tooltip content="刷新节点树" placement="top">
+                            <el-button icon="el-icon-refresh" size="mini" circle @click="loadProjectData(true)" :loading="loading"></el-button>
+                        </el-tooltip>
+                    </div>
                 </div>
-                <div class="tree-content">
+                <div class="tree-content" @contextmenu.prevent="showTreeEmptyAreaContextMenu($event)">
                     <!-- 加载中状态显示 -->
                     <div v-if="loading" class="tree-loading-container">
                         <el-skeleton :rows="10" animated />
@@ -62,20 +114,36 @@
                         node-key="id"
                         :expand-on-click-node="false"
                         :default-expanded-keys="expandedKeys">
-                        <span class="custom-tree-node" slot-scope="{ node, data }" @click="handleTreeNodeClick(data.id)" @contextmenu.prevent="showTreeNodeContextMenu($event, data.id)">
+                        <span class="custom-tree-node" slot-scope="{ node, data }" @click="handleTreeNodeClick(data.id, $event)" @contextmenu.prevent="showTreeNodeContextMenu($event, data.id)" :class="{ 'selected-node': isNodeSelected(data.id) }">
                             <!-- 根据节点类型显示不同图标 -->
-                            <i v-if="data.type === 'FRAME'" class="el-icon-picture-outline"></i>
-                            <i v-else-if="data.type === 'GROUP'" class="el-icon-folder"></i>
-                            <i v-else-if="data.type === 'COMPONENT'" class="el-icon-s-grid"></i>
-                            <i v-else-if="data.type === 'INSTANCE'" class="el-icon-copy-document"></i>
-                            <i v-else-if="data.type === 'TEXT'" class="el-icon-document"></i>
+                            <!-- 依赖节点分组图标 -->
+                            <i v-if="data.type === 'REF_GROUP'" class="el-icon-link" style="color: #E6A23C;"></i>
+                            <!-- 依赖节点特殊状态图标 -->
+                            <i v-else-if="data.isRefNode && data.notFound" class="el-icon-warning" style="color: #F56C6C;" title="依赖节点未找到"></i>
+                            <i v-else-if="data.isRefNode && data.error" class="el-icon-circle-close" style="color: #F56C6C;" title="依赖节点加载错误"></i>
+                            <i v-else-if="data.isRefNode && data.isRefChild" class="el-icon-paperclip" style="color: #909399;" title="依赖节点子节点"></i>
+                            <!-- 普通节点图标（包括依赖节点中的普通类型） -->
+                            <i v-else-if="data.type === 'FRAME'" class="el-icon-picture-outline" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <i v-else-if="data.type === 'GROUP'" class="el-icon-folder" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <i v-else-if="data.type === 'COMPONENT'" class="el-icon-s-grid" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <i v-else-if="data.type === 'INSTANCE'" class="el-icon-copy-document" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <i v-else-if="data.type === 'TEXT'" class="el-icon-document" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <!-- 依赖节点通用图标（当没有具体类型时） -->
+                            <i v-else-if="data.isRefNode" class="el-icon-connection" style="color: #409EFF;" title="依赖节点"></i>
+                            <!-- 默认图标 -->
                             <i v-else class="el-icon-tickets"></i>
                             
-                            <!-- 显示节点名称，如果有修改则使用自定义名称，如果被忽略则显示为红色 -->
+                            <!-- 显示节点名称，如果有修改则使用自定义名称，如果被忽略则显示为红色，如果res_mode为cutout则显示黄色删除线 -->
                             <span :class="{
-                                'modified-node': data.modifys && !data.modifys.ignore, 
-                                'ignored-node': data.modifys && data.modifys.ignore
-                            }" v-text="node.label"></span>
+                                'modified-node': hasNodeModifys(data.modifys) && !data.modifys.ignore, 
+                                'ignored-node': data.modifys && data.modifys.ignore,
+                                'cutout-node': data.modifys && data.modifys.res_mode === 'cutout'
+                            }">
+                                {{`{{ node.label }}`}}
+                                <span v-if="data.name && node.label && node.label !== data.name" style="color: #909399; font-size: 12px; margin-left: 4px;">
+                                    ({{`{{ data.name }}`}})
+                                </span>
+                            </span>
                             
                             <!-- 如果节点有修改，显示一个标记 -->
                             <el-tag v-if="data.modifys?.nodeType && data.modifys.nodeType !== 'default'" 
@@ -84,12 +152,51 @@
                             <!-- 添加弹性空间，将图标推到最右侧 -->
                             <span style="flex: 1;"></span>
                             
-                            <!-- 如果节点有图片名称，显示图片图标 -->
-                            <i v-if="data.modifys?.img_name" class="el-icon-picture-outline-round" style="color: #67C23A;"></i>
+                            <!-- 图标容器，支持多个图标排列 -->
+                            <span class="node-icons-container">
+                                <!-- 如果节点有修改信息且配置了父级ID，显示链接图标 -->
+                                <i v-if="data.modifys && data.modifys.parent_id" class="el-icon-link" style="color: #E6A23C; margin-right: 4px;" title="已配置父级ID"></i>
+                                
+                                <!-- 如果节点存在修改且资源模式是sprite/slice/texture，根据是否有img_id显示不同图标 -->
+                                <i v-if="data.modifys && ['sprite', 'slice', 'texture'].includes(data.modifys.res_mode) && data.modifys.img_id" class="el-icon-picture" style="color: #67C23A; margin-right: 4px;" title="图片资源 (已配置图片ID)"></i>
+                                <i v-else-if="data.modifys && ['sprite', 'slice', 'texture'].includes(data.modifys.res_mode)" class="el-icon-picture-outline-round" style="color: #67C23A; margin-right: 4px;" title="图片资源"></i>
+                                
+                                <!-- 如果节点类型是TEXT且资源模式为attach或未设置，显示文本图标 -->
+                                <i v-if="data.type === 'TEXT' && (!data.modifys || !data.modifys.res_mode || data.modifys.res_mode === 'attach')" class="el-icon-document" style="color: #409EFF;" title="文本节点"></i>
                         </span>
                     </el-tree>
+                    <!-- 重置按钮 - 固定在右下角 -->
+                    <div class="tree-reset-button-container">
+                        <el-tooltip content="重置所有节点修改" placement="left">
+                            <el-button 
+                                icon="el-icon-refresh-left" 
+                                size="small" 
+                                circle 
+                                type="warning"
+                                @click="showResetConfirmDialog"
+                                @contextmenu.prevent.native="showResetModeMenu($event)"
+                                class="tree-reset-button">
+                            </el-button>
+                        </el-tooltip>
+                    </div>
+                    
+                    <!-- 重置模式菜单 -->
+                    <div v-if="resetModeMenuVisible" class="reset-mode-menu" :style="resetModeMenuStyle" @click.stop>
+                        <div class="layer-menu-title">重置模式</div>
+                        <div class="layer-menu-function-item" @click.stop="showResetConfirmDialog('smart')">
+                            <i class="el-icon-magic-stick"></i>
+                            <span>智能重置 (基于节点树)</span>
+                        </div>
+                        <div class="layer-menu-function-item" @click.stop="showResetConfirmDialog('full')">
+                            <i class="el-icon-refresh-left"></i>
+                            <span>完全重置 (数据库清理)</span>
+                        </div>
+                    </div>
                 </div>
             </div>
+            
+            <!-- 左侧拖动分隔条 -->
+            <div class="resizer left-resizer" @mousedown="startResize($event, 'left')"></div>
             
             <!-- 中间预览区域 -->
             <div class="preview-panel">
@@ -120,7 +227,7 @@
                 </div>
                 <div class="preview-content" ref="previewContainer" @mousedown="handleMouseDown" @mouseup="handlePreviewMouseUp" @mousemove="handlePreviewMouseMove" @contextmenu.prevent="handleContextMenu" @wheel.prevent="handleMouseWheel">
                     <!-- 预加载的节点占位区域 -->
-                    <div v-if="preloadedNodes.length > 0" class="preview-container">
+                    <div v-if="preloadedNodes.length > 0 || refPreviewImages.length > 0" class="preview-container">
                         <!-- 占位区域 -->
                         <!-- 只显示未加载的占位区域 -->
                         <div 
@@ -155,6 +262,17 @@
                                 </div>
                             </div>
                             
+                            <!-- 导出中效果 -->
+                            <div v-if="exportingNodeId === image.nodeId" class="preview-exporting-overlay">
+                                <div class="preview-exporting-border"></div>
+                                <div class="preview-exporting-content">
+                                    <div class="preview-exporting-spinner">
+                                        <i class="el-icon-loading"></i>
+                                    </div>
+                                    <div class="preview-exporting-text">正在导出...</div>
+                                </div>
+                            </div>
+                            
                             <!-- 图片 -->
                             <img 
                                 :class="['preview-image', {'selected-image': image.nodeId === currentNode?.id}]" 
@@ -163,11 +281,51 @@
                                 :data-node-id="image.nodeId">
                         </div>
                         
+                        <!-- 依赖节点预览图片 -->
+                        <div 
+                            v-for="(refImage, refIndex) in refPreviewImages" 
+                            :key="'ref-image-' + refIndex"
+                            :class="['preview-image-container', 'ref-preview-container', {'selected-container': refImage.nodeId === currentNode?.id}]" 
+                            :style="refImage.style"
+                            :data-node-id="refImage.nodeId"
+                            @mouseenter="handleNodeMouseEnter"
+                            @mouseleave="handleNodeMouseLeave"
+                            @click.stop="handleNodeClick(refImage.nodeId)"
+                            @mousedown.stop>
+                            
+                            <!-- 依赖节点标识（仅选中时显示） -->
+                            <div v-if="refImage.nodeId === currentNode?.id" class="ref-node-label">
+                                <i class="el-icon-connection"></i>
+                                <span>{{`{{ refImage.nodeName || refImage.nodeId }}`}}</span>
+                            </div>
+                            
+                            <!-- 加载中效果 -->
+                            <div v-if="refImage.loading" class="preview-loading-overlay">
+                                <div class="preview-loading-border"></div>
+                                <div class="preview-loading-spinner">
+                                    <i class="el-icon-loading"></i>
+                                </div>
+                            </div>
+                            
+                            <!-- 图片（如果有的话） -->
+                            <img 
+                                v-if="refImage.src"
+                                :class="['preview-image', 'ref-preview-image', {'selected-image': refImage.nodeId === currentNode?.id}]" 
+                                :src="refImage.src" 
+                                :alt="refImage.nodeName || refImage.nodeId"
+                                :data-node-id="refImage.nodeId">
+                        </div>
+                        
                         <!-- 选中节点的高层级预览层 -->
                         <div 
                             v-if="currentNode && selectionOverlayStyle" 
                             class="selection-overlay"
                             :style="selectionOverlayStyle">
+                            <!-- 节点名称显示（在顶部外面） -->
+                            <div class="selection-node-name" v-if="currentNode">
+                                {{`{{ getCurrentNodeDisplayName() }}`}}
+                            </div>
+                            
                             <!-- 选中节点轮廓效果 -->
                             <div class="selection-outline"></div>
                             <!-- 四角标记 -->
@@ -175,6 +333,46 @@
                             <div class="corner-indicator top-right"></div>
                             <div class="corner-indicator bottom-left"></div>
                             <div class="corner-indicator bottom-right"></div>
+                            
+                            <!-- 宽度测量线（顶部） -->
+                            <div class="measurement-line width-line" v-if="currentNode && currentNode.absoluteRenderBounds">
+                                <!-- 左侧端点 -->
+                                <div class="measurement-endpoint left-endpoint"></div>
+                                <!-- 测量线 -->
+                                <div class="measurement-line-path"></div>
+                                <!-- 右侧端点 -->
+                                <div class="measurement-endpoint right-endpoint"></div>
+                                <!-- 尺寸标签 -->
+                                <div class="measurement-label width-label">
+                                    {{`{{ formatSize(currentNode.absoluteRenderBounds.width) }}`}}
+                                </div>
+                            </div>
+                            
+                            <!-- 高度测量线（左侧） -->
+                            <div class="measurement-line height-line" v-if="currentNode && currentNode.absoluteRenderBounds">
+                                <!-- 顶部端点 -->
+                                <div class="measurement-endpoint top-endpoint"></div>
+                                <!-- 测量线 -->
+                                <div class="measurement-line-path"></div>
+                                <!-- 底部端点 -->
+                                <div class="measurement-endpoint bottom-endpoint"></div>
+                                <!-- 尺寸标签 -->
+                                <div class="measurement-label height-label">
+                                    {{`{{ formatSize(currentNode.absoluteRenderBounds.height) }}`}}
+                                </div>
+                            </div>
+                            
+                            <!-- 尺寸和位置信息显示 -->
+                            <div class="selection-info" v-if="currentNode && currentNode.absoluteRenderBounds">
+                                <div class="info-item">
+                                    <span class="info-label">尺寸:</span>
+                                    <span class="info-value">{{`{{ formatSize(currentNode.absoluteRenderBounds.width) }}`}} × {{`{{ formatSize(currentNode.absoluteRenderBounds.height) }}`}}</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">位置:</span>
+                                    <span class="info-value">X: {{`{{ formatPosition(currentNode.absoluteRenderBounds.x) }}`}}, Y: {{`{{ formatPosition(currentNode.absoluteRenderBounds.y) }}`}}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div v-else class="preview-placeholder">
@@ -187,6 +385,9 @@
                     <div :class="['minimap-container', 'filtered-minimap', { collapsed: !isFilteredPreviewExpanded }]" v-if="currentNode && previewImages.length > 0" @contextmenu.prevent="handleMinimapContextMenu($event, 'filtered')" @click.stop @mousedown.stop @mousemove.stop @mouseup.stop>
                         <div class="minimap-title">
                             过滤预览
+                            <el-tooltip content="过滤预览功能需要在Figma环境中使用Figma Plugin" placement="top">
+                                <i class="el-icon-info" style="margin-left: 5px; color: #409EFF; font-size: 12px;"></i>
+                            </el-tooltip>
                             <span v-if="isFilteredPreviewExpanded && filteredImagesList.length > 0" class="image-counter">
                                 (<span v-text="currentFilteredImageIndex + 1"></span>/<span v-text="filteredImagesList.length"></span>)
                             </span>
@@ -274,7 +475,7 @@
                     </div>
                     
                     <!-- 原有缩略图 -->
-                    <div :class="['minimap-container', { collapsed: !isCurrentPreviewExpanded }]" v-if="currentNode && previewImages.length > 0" @contextmenu.prevent="handleMinimapContextMenu($event, 'current')" @click.stop @mousedown.stop @mousemove.stop @mouseup.stop>
+                    <div :class="['minimap-container', { collapsed: !isCurrentPreviewExpanded }]" v-if="currentNode && (previewImages.length > 0 || (currentNode.isRefNodeSelected && refPreviewImages.length > 0))" @contextmenu.prevent="handleMinimapContextMenu($event, 'current')" @click.stop @mousedown.stop @mousemove.stop @mouseup.stop>
                         <div class="minimap-title">
                             当前预览
                             <button class="expand-toggle-btn" @click.stop="toggleCurrentPreview" :title="isCurrentPreviewExpanded ? '收起' : '展开'">
@@ -334,14 +535,56 @@
                         
                         <!-- 节点树右键菜单：节点修改 -->
                         <template v-else-if="contextMenuSource === 'tree'">
-                            <div class="layer-menu-title">节点菜单</div>
+                            <!-- 空白区域右键菜单 -->
+                            <template v-if="contextMenuIsEmptyArea">
+                                <div class="layer-menu-title">依赖节点管理</div>
+                                <div class="layer-menu-function-item" @click.stop="addRefNode">
+                                    <i class="el-icon-plus"></i>
+                                    <span>添加依赖节点</span>
+                                </div>
+                            </template>
                             
-                            <!-- 功能菜单区 -->
-                            <div v-if="contextMenuNodeId" class="layer-menu-functions">
+                            <!-- 依赖节点右键菜单 -->
+                            <template v-else-if="contextMenuIsRefNode">
+                                <div class="layer-menu-title">依赖节点</div>
+                                <div class="layer-menu-function-item" @click.stop="removeRefNode(contextMenuNodeId)">
+                                    <i class="el-icon-delete"></i>
+                                    <span>移除依赖节点</span>
+                                </div>
+                            </template>
+                            
+                            <!-- 依赖节点分组右键菜单 -->
+                            <template v-else-if="contextMenuIsRefGroup">
+                                <div class="layer-menu-title">依赖节点分组</div>
+                                <div class="layer-menu-function-item" @click.stop="addRefNode">
+                                    <i class="el-icon-plus"></i>
+                                    <span>添加依赖节点</span>
+                                </div>
+                            </template>
+                            
+                            <!-- 依赖节点子节点右键菜单 -->
+                            <template v-else-if="contextMenuIsRefChild">
+                                <div class="layer-menu-title">依赖节点子节点</div>
+                                <div class="layer-menu-function-item" @click.stop="handleNodeSelect(contextMenuNodeId)">
+                                    <i class="el-icon-view"></i>
+                                    <span>查看节点</span>
+                                </div>
+                            </template>
+                            
+                            <!-- 普通节点右键菜单 -->
+                            <template v-else>
+                                <div class="layer-menu-title">
+                                    <span v-if="selectedNodes.length > 1">批量操作 ({{`{{ selectedNodes.length }}`}}个节点)</span>
+                                    <span v-else>节点菜单</span>
+                                </div>
+                                
+                                <!-- 功能菜单区 -->
+                                <div v-if="contextMenuNodeId" class="layer-menu-functions">
                                 <!-- Disable选项 -->
-                                <div class="layer-menu-function-item" @click.stop="toggleNodeIgnore(contextMenuNodeId)">
+                                <div class="layer-menu-function-item" @click.stop="batchToggleNodeIgnore()">
                                     <i class="el-icon-close"></i>
-                                    <span>Disable: {{`{{ nodeModifys[contextMenuNodeId]?.ignore ? '已忽略' : '未忽略' }}`}}</span>
+                                    <span v-if="selectedNodes.length > 1">批量 Disable/Enable</span>
+                                    <span v-else>Disable: {{`{{ nodeModifys[contextMenuNodeId]?.ignore ? '已忽略' : '未忽略' }}`}}</span>
                                 </div>
                                 
                                 <!-- Rename选项 -->
@@ -350,40 +593,54 @@
                                     <span>Rename</span>
                                 </div>
                                 
-                                <!-- Anchor子菜单 -->
+                                <!-- 水平约束子菜单 -->
                                 <div class="layer-menu-submenu">
                                     <div class="layer-menu-function-item">
-                                        <i class="el-icon-position"></i>
-                                        <span>Anchor</span>
+                                        <i class="el-icon-sort"></i>
+                                        <span>水平约束</span>
                                         <i class="el-icon-arrow-right submenu-arrow"></i>
                                     </div>
                                     <div class="layer-submenu">
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'top_left')">
-                                            <span>TopLeft</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeHorizontal('LEFT')">
+                                            <span>左对齐</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'top_center')">
-                                            <span>TopCenter</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeHorizontal('CENTER')">
+                                            <span>水平居中</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'top_right')">
-                                            <span>TopRight</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeHorizontal('RIGHT')">
+                                            <span>右对齐</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'middle_left')">
-                                            <span>MiddleLeft</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeHorizontal('LEFT_RIGHT')">
+                                            <span>左右拉伸</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'middle_center')">
-                                            <span>MiddleCenter</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeHorizontal('SCALE')">
+                                            <span>缩放</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'middle_right')">
-                                            <span>MiddleRight</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 垂直约束子菜单 -->
+                                <div class="layer-menu-submenu">
+                                    <div class="layer-menu-function-item">
+                                        <i class="el-icon-sort"></i>
+                                        <span>垂直约束</span>
+                                        <i class="el-icon-arrow-right submenu-arrow"></i>
+                                    </div>
+                                    <div class="layer-submenu">
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeVertical('TOP')">
+                                            <span>顶部对齐</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'bottom_left')">
-                                            <span>BottomLeft</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeVertical('CENTER')">
+                                            <span>垂直居中</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'bottom_center')">
-                                            <span>BottomCenter</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeVertical('BOTTOM')">
+                                            <span>底部对齐</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeAnchor(contextMenuNodeId, 'bottom_right')">
-                                            <span>BottomRight</span>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeVertical('TOP_BOTTOM')">
+                                            <span>上下拉伸</span>
+                                        </div>
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeVertical('SCALE')">
+                                            <span>缩放</span>
                                         </div>
                                     </div>
                                 </div>
@@ -396,19 +653,19 @@
                                         <i class="el-icon-arrow-right submenu-arrow"></i>
                                     </div>
                                     <div class="layer-submenu">
-                                        <div class="layer-menu-function-item" @click.stop="setNodeResMode(contextMenuNodeId, 'attach')">
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeResMode('attach')">
                                             <span>Attach 跟随父级</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeResMode(contextMenuNodeId, 'sprite')">
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeResMode('sprite')">
                                             <span>Sprite 精灵</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeResMode(contextMenuNodeId, 'slise')">
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeResMode('slice')">
                                             <span>Slice 九宫格</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeResMode(contextMenuNodeId, 'texture')">
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeResMode('texture')">
                                             <span>Texture 大图</span>
                                         </div>
-                                        <div class="layer-menu-function-item" @click.stop="setNodeResMode(contextMenuNodeId, 'cutout')">
+                                        <div class="layer-menu-function-item" @click.stop="batchSetNodeResMode('cutout')">
                                             <span>Cutout 层级剔除</span>
                                         </div>
                                     </div>
@@ -424,25 +681,69 @@
                                     <div class="layer-submenu">
                                         <div v-for="compType in compTypesList" :key="compType" 
                                              class="layer-menu-function-item" 
-                                             @click.stop="setNodeComponent(contextMenuNodeId, compType)">
+                                             @click.stop="batchSetNodeComponent(compType)">
                                             <span>{{`{{ compType }}`}}</span>
                                         </div>
                                     </div>
                                 </div>
+                                
+                                <!-- 分隔线 -->
+                                <div class="layer-menu-divider"></div>
+                                
+                                <!-- 展开/收起子树 -->
+                                <div v-if="selectedNodes.length === 1" class="layer-menu-function-item" @click.stop="toggleNodeSubtree(contextMenuNodeId)">
+                                    <i :class="isNodeSubtreeExpanded(contextMenuNodeId) ? 'el-icon-sort' : 'el-icon-sort'"></i>
+                                    <span>{{`{{ isNodeSubtreeExpanded(contextMenuNodeId) ? '收起子树' : '展开子树' }}`}}</span>
+                                </div>
+                                
+                                <!-- 重置修改 -->
+                                <div class="layer-menu-function-item" @click.stop="batchResetNodeModifications()">
+                                    <i class="el-icon-refresh-left"></i>
+                                    <span v-if="selectedNodes.length > 1">批量重置修改</span>
+                                    <span v-else>重置子树修改</span>
+                                </div>
+                                
+                                <!-- 批量操作分隔线 -->
+                                <div v-if="selectedNodes.length > 1" class="layer-menu-divider"></div>
+                                
+                                <!-- 清空选择 -->
+                                <div v-if="selectedNodes.length > 1" class="layer-menu-function-item" @click.stop="clearSelection()">
+                                    <i class="el-icon-circle-close"></i>
+                                    <span>清空选择</span>
+                                </div>
                             </div>
+                            </template>
                         </template>
                     </div>
             </div>
-            
-            <!-- 右侧属性面板 -->
-            <div class="property-panel">
+        </div>
+        
+        <!-- 右侧属性面板 - 固定在最右边 -->
+        <div class="property-panel" :style="{ width: propertyPanelWidth + 'px' }">
                 <template v-if="currentNode">
                     <div style="height: calc(100% - 20px); overflow-y: auto; padding-bottom: 20px;">
                         <el-form :model="propertyForm" label-position="top" size="small">
                         <!-- 属性面板标题 -->
                         <div class="property-panel-header">
-                            <span>属性面板<span v-if="currentNode" class="node-id-small"> (ID: <span v-text="currentNode.id"></span>)</span></span>
-                            <div class="title-buttons">
+                            <span v-if="currentNode && currentNode.isRefNodeSelected">
+                                依赖节点信息
+                                <span class="node-id-small"> (ID: <span v-text="currentNode.id"></span>)</span>
+                                <span v-if="currentNode.refRootNodeId" class="node-id-small"> (来源: <span v-text="currentNode.refRootNodeId"></span>)</span>
+                            </span>
+                            <span v-else>
+                                属性面板<span v-if="currentNode" class="node-id-small"> (ID: <span v-text="currentNode.id"></span>)</span>
+                            </span>
+                            
+                            <div class="title-buttons" v-if="!currentNode || !currentNode.isRefNodeSelected">
+                                <!-- 节点启用开关 -->
+                                <el-switch
+                                    v-if="hasNodeModifications || showCustomSettings"
+                                    v-model="nodeEnabled"
+                                    active-text="启用"
+                                    inactive-text="禁用"
+                                    size="small"
+                                    @change="onNodeEnabledChange">
+                                </el-switch>
                                 <el-button 
                                     type="text" 
                                     size="mini" 
@@ -450,17 +751,36 @@
                                     v-if="!hasNodeModifications && !showCustomSettings">
                                     <i class="el-icon-edit"></i> 自定义设置
                                 </el-button>
-                                <el-button 
-                                    type="primary" 
-                                    size="mini" 
-                                    @click.stop="saveNodeSettings" 
-                                    v-if="hasNodeModifications || showCustomSettings">
-                                    <i class="el-icon-check"></i> 保存设置
-                                </el-button>
                             </div>
                         </div>
                         
-                        <div class="property-section">
+                        <!-- 依赖节点信息显示 -->
+                        <div v-if="currentNode && currentNode.isRefNodeSelected" class="property-section">
+                            <div class="property-section-title">
+                                依赖节点详情
+                            </div>
+                            <div class="property-section-content">
+                                <el-form-item label="节点ID：" label-width="80px">
+                                    <el-input :value="currentNode.id" readonly size="small"></el-input>
+                                </el-form-item>
+                                <el-form-item label="节点名称：" label-width="80px">
+                                    <el-input :value="currentNode.name || '未命名'" readonly size="small"></el-input>
+                                </el-form-item>
+                                <el-form-item label="节点类型：" label-width="80px">
+                                    <el-input :value="currentNode.type || 'UNKNOWN'" readonly size="small"></el-input>
+                                </el-form-item>
+                                <el-form-item v-if="currentNode.refRootNodeId" label="来源节点：" label-width="80px">
+                                    <el-input :value="currentNode.refRootNodeId" readonly size="small"></el-input>
+                                </el-form-item>
+                                <div class="ref-node-notice">
+                                    <i class="el-icon-info"></i>
+                                    <span>依赖节点为只读模式，不支持修改属性</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 普通节点属性设置 -->
+                        <div v-else class="property-section">
                             <div class="property-section-title" @click="toggleSection('controlSettings')">
                                 1.控件设置
                                 <div class="title-buttons">
@@ -477,45 +797,9 @@
                             
                             <div class="property-section-content" v-show="sectionExpanded.controlSettings">
                                 <div v-if="hasNodeModifications || showCustomSettings">
-
-                                    <el-form-item>
-                                        <el-switch
-                                            v-model="propertyForm.ignore"
-                                            active-text="忽略节点"
-                                            inactive-text="">
-                                        </el-switch>
+                                    <el-form-item label="自定义名称：" label-width="80px" class="inline-form-item">
+                                        <el-input v-model="propertyForm.rename" placeholder="输入自定义名称" :disabled="propertyForm.ignore" size="small" @input="onRenameChange"></el-input>
                                     </el-form-item>
-                                    
-                                    <el-form-item label="自定义名称">
-                                        <el-input v-model="propertyForm.rename" placeholder="输入自定义名称" :disabled="propertyForm.ignore"></el-input>
-                                    </el-form-item>
-                                    
-                                    <el-form-item label="资源模式">
-                                        <el-select v-model="propertyForm.res_mode" placeholder="选择资源模式" :disabled="propertyForm.ignore">
-                                            <el-option label="跟随父级" value="attach"></el-option>
-                                            <el-option label="文本" value="text"></el-option>
-                                            <el-option label="精灵" value="sprite"></el-option>
-                                            <el-option label="九宫格" value="slise"></el-option>
-                                            <el-option label="大图" value="texture"></el-option>
-                                            <el-option label="层级剔除" value="cutout"></el-option>
-                                        </el-select>
-                                    </el-form-item>
-                                    
-                                    <!-- 只有当资源模式不是attach或text时才显示图片名称和图片格式 -->
-                                    <template v-if="propertyForm.res_mode && propertyForm.res_mode !== 'attach' && propertyForm.res_mode !== 'text'">
-                                        <el-form-item label="图片名称">
-                                            <el-input v-model="propertyForm.img_name" placeholder="输入图片名称" :disabled="propertyForm.ignore"></el-input>
-                                        </el-form-item>
-                                        
-                                        <el-form-item label="图片格式">
-                                            <el-select v-model="propertyForm.imageDownloadType" placeholder="图片格式" :disabled="propertyForm.ignore">
-                                                <el-option label="PNG" value="png"></el-option>
-                                                <el-option label="JPG" value="jpg"></el-option>
-                                                <el-option label="SVG" value="svg"></el-option>
-                                                <el-option label="PDF" value="pdf"></el-option>
-                                            </el-select>
-                                        </el-form-item>
-                                    </template>
                                 </div>
                                 <div v-else class="property-empty-state">
                                     <p>点击"自定义设置"按钮开始编辑</p>
@@ -534,30 +818,36 @@
                             
                             <div class="property-section-content" v-show="sectionExpanded.layoutSettings">
                                 <div v-if="hasNodeModifications || showLayoutSettings">
-                                    <el-form-item label="锚点预设">
-                                        <el-select v-model="propertyForm.anchor_pos" placeholder="选择锚点位置" :disabled="propertyForm.ignore">
-                                            <el-option label="左上" value="top_left"></el-option>
-                                            <el-option label="上中" value="top_center"></el-option>
-                                            <el-option label="右上" value="top_right"></el-option>
-                                            <el-option label="左中" value="middle_left"></el-option>
-                                            <el-option label="居中" value="middle_center"></el-option>
-                                            <el-option label="右中" value="middle_right"></el-option>
-                                            <el-option label="左下" value="bottom_left"></el-option>
-                                            <el-option label="下中" value="bottom_center"></el-option>
-                                            <el-option label="右下" value="bottom_right"></el-option>
-                                            <el-option label="水平拉伸" value="stretch_horizontal"></el-option>
-                                            <el-option label="垂直拉伸" value="stretch_vertical"></el-option>
-                                            <el-option label="全部拉伸" value="stretch"></el-option>
+                                    <el-form-item label="水平约束：" label-width="80px" class="inline-form-item">
+                                        <el-select v-model="propertyForm.horizontal" placeholder="选择水平约束" :disabled="propertyForm.ignore" size="small">
+                                            <el-option label="左对齐" value="LEFT"></el-option>
+                                            <el-option label="右对齐" value="RIGHT"></el-option>
+                                            <el-option label="水平居中" value="CENTER"></el-option>
+                                            <el-option label="左右拉伸" value="LEFT_RIGHT"></el-option>
+                                            <el-option label="缩放" value="SCALE"></el-option>
                                         </el-select>
                                     </el-form-item>
                                     
-                                    <el-form-item>
-                                        <el-switch
-                                            v-model="propertyForm.anchor_self"
-                                            active-text="相对自身位置"
-                                            inactive-text="相对父级"
-                                            :disabled="propertyForm.ignore">
-                                        </el-switch>
+                                    <el-form-item label="垂直约束：" label-width="80px" class="inline-form-item">
+                                        <el-select v-model="propertyForm.vertical" placeholder="选择垂直约束" :disabled="propertyForm.ignore" size="small">
+                                            <el-option label="顶部对齐" value="TOP"></el-option>
+                                            <el-option label="底部对齐" value="BOTTOM"></el-option>
+                                            <el-option label="垂直居中" value="CENTER"></el-option>
+                                            <el-option label="上下拉伸" value="TOP_BOTTOM"></el-option>
+                                            <el-option label="缩放" value="SCALE"></el-option>
+                                        </el-select>
+                                    </el-form-item>
+                                    
+                                    
+                                    <el-form-item label="父级ID：" label-width="80px" class="inline-form-item">
+                                        <el-input 
+                                            v-model="propertyForm.parent_id" 
+                                            placeholder="用于重新指定父级节点" 
+                                            :disabled="propertyForm.ignore"
+                                            clearable
+                                            size="small"
+                                            @input="onParentIdChange">
+                                        </el-input>
                                     </el-form-item>
                                 </div>
                                 <div v-else class="property-empty-state">
@@ -568,15 +858,45 @@
                         
                         <div class="property-section">
                             <div class="property-section-title" @click="toggleSection('exportSettings')">
-                                3.功能设置
+                                3.组件设置
                                 <i :class="['el-icon-arrow-down', {'expanded': sectionExpanded.exportSettings}]"></i>
                             </div>
                             
                             <div class="property-section-content" v-show="sectionExpanded.exportSettings">
                                 <div v-if="hasNodeModifications || showExportSettings">
                                     
-                                    <el-form-item label="组件列表">
-                                        <el-select v-model="propertyForm.components" multiple placeholder="选择组件" :disabled="propertyForm.ignore">
+                                    <el-form-item label="资源模式：" label-width="80px" class="inline-form-item">
+                                        <el-select v-model="propertyForm.res_mode" placeholder="选择资源模式" :disabled="propertyForm.ignore" size="small" @change="onResModeChange">
+                                            <el-option label="跟随父级" value="attach"></el-option>
+                                            <el-option label="精灵" value="sprite"></el-option>
+                                            <el-option label="九宫格" value="slice"></el-option>
+                                            <el-option label="大图" value="texture"></el-option>
+                                            <el-option label="层级剔除" value="cutout"></el-option>
+                                        </el-select>
+                                    </el-form-item>
+                                    
+                                    <!-- 只有当资源模式不是attach或text时才显示图片相关设置 -->
+                                    <template v-if="propertyForm.res_mode && propertyForm.res_mode !== 'attach'">
+                                        <el-form-item label="图片名称：" label-width="80px" class="inline-form-item">
+                                            <el-input v-model="propertyForm.img_name" placeholder="默认当前节点名" :disabled="propertyForm.ignore" size="small" @input="onImgNameChange"></el-input>
+                                        </el-form-item>
+                                        
+                                        <el-form-item label="生成图片ID：" label-width="80px" class="inline-form-item">
+                                            <el-input v-model="propertyForm.img_id" placeholder="默认当前节点id" :disabled="propertyForm.ignore" size="small" @input="onImgIdChange"></el-input>
+                                        </el-form-item>
+                                        
+                                        <el-form-item label="图片格式：" label-width="80px" class="inline-form-item">
+                                            <el-select v-model="propertyForm.img_ext" placeholder="图片格式" :disabled="propertyForm.ignore" size="small" @change="onimg_extChange">
+                                                <el-option label="PNG" value="png"></el-option>
+                                                <el-option label="JPG" value="jpg"></el-option>
+                                                <el-option label="SVG" value="svg"></el-option>
+                                                <el-option label="PDF" value="pdf"></el-option>
+                                            </el-select>
+                                        </el-form-item>
+                                    </template>
+                                    
+                                    <el-form-item label="组件列表：" label-width="80px" class="inline-form-item">
+                                        <el-select v-model="propertyForm.components" multiple placeholder="选择组件" :disabled="propertyForm.ignore" size="small" @change="onComponentsChange">
                                             <el-option
                                                 v-for="type in compTypesList"
                                                 :key="type"
@@ -609,9 +929,9 @@
             width="30%"
             :close-on-click-modal="false"
             @close="closeRenameDialog">
-            <el-form :model="renameForm" label-width="80px">
+            <el-form :model="renameForm" label-width="80px" @submit.native.prevent="confirmRename">
                 <el-form-item label="新名称">
-                    <el-input v-model="renameForm.newName" autocomplete="off" ref="renameInput"></el-input>
+                    <el-input v-model="renameForm.newName" autocomplete="off" ref="renameInput" @keyup.enter.native="confirmRename"></el-input>
                 </el-form-item>
             </el-form>
             <span slot="footer" class="dialog-footer">
@@ -630,8 +950,57 @@
                 <el-option label="SVG" value="svg"></el-option>
                 <el-option label="PDF" value="pdf"></el-option>
             </el-select>
-            <el-button type="primary" @click="showExportDialog">导出项目</el-button>
-            <el-button type="warning" @click="clearProjectImageCache">清除缓存</el-button>
+            <el-select v-model="defaultImageScale" placeholder="缩放比例" size="small" style="width: 100px; margin-right: 10px;">
+                <el-option label="0.5x" :value="0.5"></el-option>
+                <el-option label="1.0x" :value="1.0"></el-option>
+                <el-option label="2.0x" :value="2.0"></el-option>
+                <el-option label="3.0x" :value="3.0"></el-option>
+                <el-option label="4.0x" :value="4.0"></el-option>
+            </el-select>
+            <el-button 
+                class="export-project-btn" 
+                type="success" 
+                size="small"
+                @click="showExportDialog"
+                title="图文导出">
+                图文导出
+            </el-button>
+            
+            <!-- 优化配置按钮 -->
+            <el-button 
+                class="api-download-btn" 
+                type="success" 
+                size="small"
+                @click="handleDownloadButtonClick"
+                @contextmenu.prevent.native="handleDownloadButtonContextMenu"
+                :disabled="!apiDownloadUrl"
+                title="优化配置">
+                优化配置
+            </el-button>
+            
+            <!-- 清除缓存按钮 -->
+            <el-button 
+                class="clear-cache-btn" 
+                type="warning" 
+                size="small"
+                @click="clearProjectImageCache"
+                title="清除缓存">
+                清除缓存
+            </el-button>
+            
+        </div>
+        
+        <!-- 右侧按钮组 - 放在最右边 -->
+        <div class="export-options-right">
+            <el-tooltip content="MCP调用记录" placement="top">
+                <el-button 
+                    icon="el-icon-connection" 
+                    size="small" 
+                    circle 
+                    @click="toggleMCPPanel"
+                    class="mcp-button-bottom">
+                </el-button>
+            </el-tooltip>
         </div>
         
         <div class="export-progress" v-if="exportStatus">
@@ -658,16 +1027,190 @@
                         inactive-text=""
                         @change="updateNodeJsonDisplay">
                     </el-switch>
+                    <el-button 
+                        type="primary" 
+                        size="small" 
+                        icon="el-icon-document-copy" 
+                        @click="copyNodeJson"
+                        style="margin-left: 10px;">
+                        拷贝
+                    </el-button>
                 </div>
             </div>
             <div class="json-viewer-content">
-                <pre v-text="nodeJsonString"></pre>
+                <el-input
+                    type="textarea"
+                    v-model="nodeJsonString"
+                    :autosize="{ minRows: 10, maxRows: 30 }"
+                    readonly
+                    class="json-textarea"
+                    ref="jsonTextarea">
+                </el-input>
             </div>
         </div>
         <div slot="footer" class="dialog-footer">
             <el-button @click="jsonPreviewDialogVisible = false">关闭</el-button>
         </div>
     </el-dialog>
+
+    <!-- MCP调用记录面板 -->
+    <el-drawer
+        title="MCP 调用记录"
+        :visible.sync="mcpPanelVisible"
+        direction="rtl"
+        size="400px">
+        <div class="mcp-panel">
+            <!-- 调用日志 -->
+            <el-card class="mcp-logs-card" shadow="never">
+                <div slot="header" class="clearfix">
+                    <span>MCP工具说明</span>
+                    <div style="float: right; display: flex; align-items: center; gap: 10px;">
+                        <el-button style="padding: 3px 0" type="text" @click="openMCPLogsPage">查看调用记录</el-button>
+                    </div>
+                </div>
+                <div class="mcp-tools">
+                    <div class="mcp-tool-item">
+                        <div class="tool-header">
+                            <i class="el-icon-view"></i>
+                            <span class="tool-name">获取节点预览</span>
+                        </div>
+                        <div class="tool-description">
+                            获取Figma节点的预览图，支持PNG、JPG、SVG、PDF格式，可设置缩放比例
+                        </div>
+                    </div>
+                    
+                    <div class="mcp-tool-item">
+                        <div class="tool-header">
+                            <i class="el-icon-s-data"></i>
+                            <span class="tool-name">获取节点树</span>
+                        </div>
+                        <div class="tool-description">
+                            获取Figma节点的完整树形结构配置信息，包含节点属性和修饰数据
+                        </div>
+                    </div>
+                    
+                    <div class="mcp-tool-item">
+                        <div class="tool-header">
+                            <i class="el-icon-edit"></i>
+                            <span class="tool-name">批量设置节点</span>
+                        </div>
+                        <div class="tool-description">
+                            批量修改节点的配置信息，包括锚点位置、资源模式、图片名称等属性
+                        </div>
+                    </div>
+                    
+                    <div class="mcp-tool-item">
+                        <div class="tool-header">
+                            <i class="el-icon-magic-stick"></i>
+                            <span class="tool-name">获取修饰提示词</span>
+                        </div>
+                        <div class="tool-description">
+                            获取节点配置的详细提示词，用于指导如何对当前项目进行节点修饰
+                        </div>
+                    </div>
+                    
+                    <div class="mcp-tool-item">
+                        <div class="tool-header">
+                            <i class="el-icon-info"></i>
+                            <span class="tool-name">工具使用说明</span>
+                        </div>
+                        <div class="tool-description">
+                            这些MCP工具可以通过Cursor等支持MCP协议的编辑器调用，帮助您更高效地处理Figma设计文件
+                        </div>
+                    </div>
+                </div>
+            </el-card>
+        </div>
+        
+        <!-- 界面描述编辑区域 - 固定在底部 -->
+        <div class="mcp-interface-description">
+            <div class="interface-description-header">
+                <div class="interface-description-title">
+                    <i class="el-icon-edit-outline"></i>
+                    <span>界面描述</span>
+                </div>
+                <div class="interface-description-actions">
+                    <el-button 
+                        type="text" 
+                        size="mini" 
+                        @click="saveInterfaceDescription"
+                        :disabled="!project || !project.id || !interfaceDescriptionChanged">
+                        <i class="el-icon-check"></i>
+                        保存
+                    </el-button>
+                </div>
+            </div>
+            <div class="interface-description-content">
+                <el-input
+                    type="textarea"
+                    v-model="interfaceDescription"
+                    placeholder="请描述当前界面的功能、用途和特点，这些信息将被添加到优化提示词中..."
+                    :autosize="{ minRows: 3, maxRows: 6 }"
+                    @input="onInterfaceDescriptionChange"
+                    :disabled="!project || !project.id"
+                    class="interface-description-textarea">
+                </el-input>
+            </div>
+        </div>
+        
+        <!-- 提示词拷贝功能 - 移到底部 -->
+        <div class="mcp-prompt-bottom">
+            <div class="prompt-actions">
+                <el-button 
+                    type="primary" 
+                    size="small" 
+                    icon="el-icon-document-copy"
+                    @click="copyNodeOptimizationPrompt"
+                    :disabled="!project || !project.id">
+                    拷贝此节点优化提示词
+                </el-button>
+            </div>
+        </div>
+    </el-drawer>
+    
+    <!-- 下载按钮右键菜单 - 移到最高层级避免被遮挡 -->
+    <div v-if="downloadMenuVisible" class="download-context-menu" :style="downloadMenuStyle" @click.stop>
+        <div class="layer-menu-title">下载链接</div>
+        
+        <!-- 简化级别选择 -->
+        <div class="download-level-selector">
+            <div class="level-selector-title">简化级别：</div>
+            <div class="level-options">
+                <div 
+                    class="level-option" 
+                    :class="{ 'active': downloadLevel === 0 }"
+                    @click.stop="downloadLevel = 0">
+                    <span class="level-number">0</span>
+                    <span class="level-desc">完整数据</span>
+                </div>
+                <div 
+                    class="level-option" 
+                    :class="{ 'active': downloadLevel === 1 }"
+                    @click.stop="downloadLevel = 1">
+                    <span class="level-number">1</span>
+                    <span class="level-desc">过滤空值</span>
+                </div>
+                <div 
+                    class="level-option" 
+                    :class="{ 'active': downloadLevel === 2 }"
+                    @click.stop="downloadLevel = 2">
+                    <span class="level-number">2</span>
+                    <span class="level-desc">激进简化</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="layer-menu-divider"></div>
+        
+        <div class="layer-menu-function-item" @click.stop="copyDownloadLink">
+            <i class="el-icon-document-copy"></i>
+            <span>拷贝下载链接</span>
+        </div>
+        <div class="layer-menu-function-item" @click.stop="downloadOptimizedJson">
+            <i class="el-icon-download"></i>
+            <span>下载</span>
+        </div>
+    </div>
 </div>
 {{ end }}
 
@@ -681,9 +1224,12 @@
 window.initialData = {
     project: {{ if .project }}{{ .project }}{{ else }}null{{ end }},
     nodes: {{ if .nodes }}{{ .nodes }}{{ else }}[]{{ end }},
-    compTypes: {{ if .compTypes }}"{{ .compTypes }}"{{ else }}""{{ end }}
+    compTypes: {{ if .compTypes }}"{{ .compTypes }}"{{ else }}""{{ end }},
+    mcpToken: {{ if .mcpToken }}"{{ .mcpToken }}"{{ else }}""{{ end }},
+    csrfToken: '{{ .csrf_token }}'
 };
 </script>
+<script src="/static/js/figma-plugin-bridge.js?v={{ .timestamp }}"></script>
 <script src="/static/js/dashboard.js?v={{ .timestamp }}"></script>
 <script>
 // 确保Vue实例能正确初始化

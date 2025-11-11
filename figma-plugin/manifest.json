@@ -1,0 +1,19 @@
+{
+  "name": "Figma Deliver",
+  "id": "figma-deliver-plugin",
+  "api": "1.0.0",
+  "main": "src/code.js",
+  "ui": "ui/ui.html",
+  "editorType": ["figma"],
+  "menu": [
+    {
+      "name": "Export to Figma Deliver",
+      "command": "export"
+    },
+    {
+      "name": "Settings",
+      "command": "settings"
+    }
+  ],
+  "permissions": ["currentuser"]
+}

@@ -30,7 +30,7 @@ func InitDB() {
 	dbPort := getEnv("DB_PORT", "3306")
 	dbUser := getEnv("DB_USER", "root")
 	dbPass := getEnv("DB_PASS", "")
-	dbName := getEnv("DB_NAME", "figma_bridge")
+	dbName := getEnv("DB_NAME", "figma_deliver")
 
 	// 首先尝试连接到MySQL服务器（不指定数据库）
 	rootDSN := dbUser + ":" + dbPass + "@tcp(" + dbHost + ":" + dbPort + ")/"
@@ -90,10 +90,14 @@ func InitDB() {
 	}
 
 	// 自动迁移数据库表结构
-	err = DB.AutoMigrate(&User{}, &FigmaProject{}, &FigmaNode{}, &ExportJob{})
+	err = DB.AutoMigrate(&User{}, &FigmaProject{}, &FigmaNode{}, &ExportJob{},
+		&MCPConnection{}, &MCPCallLog{}, &PromptShare{}, &PromptLike{})
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
+
+	// 为 PromptLike 创建联合唯一索引
+	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_like_unique ON prompt_likes(prompt_share_id, user_id)")
 
 	log.Printf("数据库连接和迁移成功")
 }

@@ -23,6 +23,18 @@ type FigmaService struct {
 	Token string
 }
 
+// formatScaleForFilename 格式化缩放等级用于文件名
+// 如果是整数（如1.0, 2.0），去掉".0"，使用整数部分（如"1", "2"）
+// 如果是非整数（如0.5, 1.5），保持小数点格式（如"0.5", "1.5"）
+func formatScaleForFilename(scale float64) string {
+	// 如果是整数（如1.0, 2.0），去掉".0"，使用整数部分
+	if scale == float64(int64(scale)) {
+		return fmt.Sprintf("%.0f", scale)
+	}
+	// 如果是非整数，保持小数点格式
+	return fmt.Sprintf("%.1f", scale)
+}
+
 // ParseFigmaLink 解析Figma链接
 func ParseFigmaLink(link string) (fileKey, nodeId string, err error) {
 	// 检查链接是否为空
@@ -77,7 +89,7 @@ func GetFigmaProjectNodes(userID, projectID uint, fileKey, nodeID string) ([]mod
 	// 保存节点信息
 	var savedNodes []models.FigmaNode
 	for _, node := range nodes {
-		figmaNode, err := CreateFigmaNode(projectID, node["id"].(string), node["name"].(string), node["type"].(string), node["parentId"])
+		figmaNode, err := CreateFigmaNode(projectID, node["id"].(string), node["name"].(string), node["type"].(string), node["parent_id"])
 		if err != nil {
 			continue
 		}
@@ -203,7 +215,7 @@ func parseFigmaNodes(data map[string]interface{}, _ /*rootNodeID*/ string) []map
 			documentCopy[k] = v
 		}
 		documentCopy["id"] = "0:0" // 设置根节点ID
-		documentCopy["parentId"] = nil
+		documentCopy["parent_id"] = nil
 		nodes = append(nodes, documentCopy)
 
 		// 处理子节点
@@ -216,14 +228,35 @@ func parseFigmaNodes(data map[string]interface{}, _ /*rootNodeID*/ string) []map
 	} else if nodeMap, ok := data["nodes"].(map[string]interface{}); ok {
 		// 处理指定节点查询
 		for nodeID, nodeData := range nodeMap {
-			if node, ok := nodeData.(map[string]interface{})["document"].(map[string]interface{}); ok {
+			// 检查 nodeData 是否为 nil
+			if nodeData == nil {
+				fmt.Printf("跳过节点 %s，因为 nodeData 为 nil\n", nodeID)
+				continue
+			}
+
+			// 检查 nodeData 是否为 map[string]interface{} 类型
+			nodeDataMap, ok := nodeData.(map[string]interface{})
+			if !ok {
+				fmt.Printf("跳过节点 %s，因为 nodeData 不是 map 类型: %T\n", nodeID, nodeData)
+				continue
+			}
+
+			// 检查是否有 document 字段
+			documentInterface, hasDocument := nodeDataMap["document"]
+			if !hasDocument || documentInterface == nil {
+				fmt.Printf("跳过节点 %s，因为没有 document 字段或 document 为 nil\n", nodeID)
+				continue
+			}
+
+			// 检查 document 是否为 map[string]interface{} 类型
+			if node, ok := documentInterface.(map[string]interface{}); ok {
 				// 添加当前节点 - 直接使用完整节点数据
 				nodeCopy := make(map[string]interface{})
 				for k, v := range node {
 					nodeCopy[k] = v
 				}
 				nodeCopy["id"] = nodeID
-				nodeCopy["parentId"] = nil // 根节点没有父节点
+				nodeCopy["parent_id"] = nil // 根节点没有父节点
 				nodes = append(nodes, nodeCopy)
 
 				// 处理子节点
@@ -249,7 +282,7 @@ func parseNodeRecursive(node map[string]interface{}, parentID string) []map[stri
 	for k, v := range node {
 		nodeCopy[k] = v
 	}
-	nodeCopy["parentId"] = parentID
+	nodeCopy["parent_id"] = parentID
 	nodes = append(nodes, nodeCopy)
 
 	// 处理子节点
@@ -267,9 +300,9 @@ func parseNodeRecursive(node map[string]interface{}, parentID string) []map[stri
 func CreateFigmaNode(projectID uint, nodeID, name, nodeType string, parentID interface{}) (*models.FigmaNode, error) {
 	// 创建节点记录，将节点信息存储在modifys字段中
 	nodeInfo := map[string]interface{}{
-		"name":     name,
-		"type":     nodeType,
-		"parentId": parentID,
+		"name":      name,
+		"type":      nodeType,
+		"parent_id": parentID,
 	}
 
 	// 转换为JSON字符串
@@ -345,19 +378,20 @@ func GetOrCreateFigmaProject(userID uint, fileKey, rootNodeID, name, figmaURL st
 
 // DownloadFigmaImage 下载Figma图片
 func DownloadFigmaImage(token, fileKey, nodeID string) (string, error) {
-	// 使用默认参数
-	return DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, "png", 1.0)
+	// 使用默认参数，默认使用缓存
+	return DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, "png", 1.0, true)
 }
 
 // DownloadPreviewFigmaImageWithOptions 下载Figma图片（带选项）
-func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat string, imageScale float64) (string, error) {
+func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat string, imageScale float64, useCache bool) (string, error) {
 	// 打印调试信息
-	fmt.Printf("开始下载Figma图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f\n",
-		fileKey, nodeID, imageFormat, imageScale)
+	fmt.Printf("开始下载Figma图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, useCache=%v\n",
+		fileKey, nodeID, imageFormat, imageScale, useCache)
 
 	// 首先检查是否已经有该节点的图片文件
 	// 创建临时文件夹
 	tempDir := filepath.Join("temp", fileKey, "previews")
+	fmt.Printf("缓存目录路径: %s\n", tempDir)
 	err := os.MkdirAll(tempDir, os.ModePerm)
 	if err != nil {
 		fmt.Printf("创建临时文件夹失败: %v\n", err)
@@ -366,19 +400,27 @@ func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat st
 
 	// 生成文件名 - 替换特殊字符为下划线
 	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+	fmt.Printf("原始节点ID: %s, 安全节点ID: %s\n", nodeID, safeNodeID)
 
-	// 如果有，直接使用最新的文件，避免重复下载
-	existingFile := findLatestNodeImage(tempDir, safeNodeID)
-	if existingFile != "" {
-		// 不再检查过期时间，直接使用缓存的图片文件
-		fmt.Printf("找到节点 %s 的缓存图片文件，直接使用: %s\n", nodeID, existingFile)
-		return existingFile, nil
+	// 如果使用缓存，检查是否已经有该节点的图片文件
+	if useCache {
+		existingFile := findLatestNodeImage(tempDir, safeNodeID, imageScale)
+		if existingFile != "" {
+			// 不再检查过期时间，直接使用缓存的图片文件
+			fmt.Printf("找到节点 %s 的缓存图片文件，直接使用: %s\n", nodeID, existingFile)
+			return existingFile, nil
+		}
+	} else {
+		fmt.Printf("跳过缓存检查，强制重新下载\n")
 	}
 
 	// 第一步：通过Figma API获取图片URL
+	// 确保节点ID使用冒号格式（Figma API标准格式）
+	figmaNodeID := strings.ReplaceAll(nodeID, "-", ":")
+
 	// 构建API URL
 	apiUrl := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=%s&scale=%.1f&contentOnly=true",
-		fileKey, nodeID, imageFormat, imageScale)
+		fileKey, figmaNodeID, imageFormat, imageScale)
 	fmt.Printf("Figma API URL: %s\n", apiUrl)
 
 	// 创建请求
@@ -432,35 +474,73 @@ func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat st
 		return "", errors.New("解析图片信息失败，未找到images字段或格式不正确")
 	}
 	fmt.Printf("图片信息: %+v\n", images)
+	fmt.Printf("查找图片URL - 原始nodeID: %s, 转换后figmaNodeID: %s\n", nodeID, figmaNodeID)
 
-	imageURL, ok := images[nodeID].(string)
-	if !ok || imageURL == "" {
-		fmt.Printf("获取图片URL失败，nodeID=%s 不存在或为空\n", nodeID)
+	// 尝试所有可能的节点ID格式
+	var imageURL string
+	var found bool
+
+	// 候选节点ID列表
+	candidateIDs := []string{
+		figmaNodeID, // 转换后的冒号格式
+		nodeID,      // 原始格式
+		strings.ReplaceAll(figmaNodeID, ":", "-"), // 连字符格式
+		strings.ReplaceAll(nodeID, "-", ":"),      // 冒号格式（如果原始是连字符）
+	}
+
+	fmt.Printf("尝试查找图片URL，候选ID: %v\n", candidateIDs)
+
+	for _, candidateID := range candidateIDs {
+		if url, exists := images[candidateID].(string); exists && url != "" {
+			imageURL = url
+			found = true
+			fmt.Printf("成功找到图片URL，使用节点ID: %s, URL: %s\n", candidateID, url)
+			break
+		}
+		fmt.Printf("节点ID %s 未找到或URL为空\n", candidateID)
+	}
+
+	if !found || imageURL == "" {
+		fmt.Printf("获取图片URL失败，尝试了所有候选ID: %v\n", candidateIDs)
 		return "", fmt.Errorf("获取图片URL失败，节点ID=%s 不存在或URL为空", nodeID)
 	}
 	fmt.Printf("获取到图片URL: %s\n", imageURL)
 
 	// 下载图片
-	return downloadPreviewImageFile(imageURL, fileKey, nodeID)
+	return downloadPreviewImageFile(imageURL, fileKey, nodeID, imageScale)
 }
 
-// 查找节点的最新图片文件
-func findLatestNodeImage(tempDir, safeNodeID string) string {
-	// 查找同一节点的所有图片文件（支持多种格式，不包括临时文件）
+// 查找节点的最新图片文件（根据缩放等级）
+func findLatestNodeImage(tempDir, safeNodeID string, imageScale float64) string {
+	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
+	fmt.Printf("查找缓存图片: tempDir=%s, safeNodeID=%s, scale=%.1f\n", tempDir, safeNodeID, imageScale)
+
+	// 构建缩放等级字符串（用于匹配文件名）
+	scaleStr := formatScaleForFilename(imageScale)
+
 	supportedExts := []string{".png", ".svg", ".jpg", ".pdf"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
-		pattern := filepath.Join(tempDir, safeNodeID+"-*"+ext)
+		// 匹配格式：节点-缩放等级-*.*
+		pattern := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+"-*"+ext)
+		fmt.Printf("查找模式: %s\n", pattern)
 		files, err := filepath.Glob(pattern)
-		if err == nil && len(files) > 0 {
-			allFiles = append(allFiles, files...)
+		if err != nil {
+			fmt.Printf("Glob查找出错: %v\n", err)
+		} else {
+			fmt.Printf("找到 %d 个文件匹配模式 %s\n", len(files), pattern)
+			if len(files) > 0 {
+				allFiles = append(allFiles, files...)
+			}
 		}
 	}
 
 	if len(allFiles) == 0 {
+		fmt.Printf("未找到任何匹配的缓存文件\n")
 		return ""
 	}
+	fmt.Printf("总共找到 %d 个文件\n", len(allFiles))
 
 	// 过滤掉临时文件
 	var validFiles []string
@@ -468,10 +548,14 @@ func findLatestNodeImage(tempDir, safeNodeID string) string {
 		// 检查是否是临时文件（包含-temp.扩展名）
 		if !strings.Contains(f, "-temp.") {
 			validFiles = append(validFiles, f)
+			fmt.Printf("有效缓存文件: %s\n", f)
+		} else {
+			fmt.Printf("跳过临时文件: %s\n", f)
 		}
 	}
 
 	if len(validFiles) == 0 {
+		fmt.Printf("过滤后没有有效的缓存文件\n")
 		return ""
 	}
 
@@ -495,20 +579,26 @@ func findLatestNodeImage(tempDir, safeNodeID string) string {
 
 	// 返回最新的文件
 	if len(fileInfos) > 0 {
+		fmt.Printf("返回最新的缓存文件: %s (修改时间: %v)\n", fileInfos[0].path, fileInfos[0].modTime)
 		return fileInfos[0].path
 	}
 
+	fmt.Printf("没有有效的文件信息\n")
 	return ""
 }
 
-// 清理节点的旧图片文件
-func cleanupOldNodeImages(tempDir, safeNodeID string, keepCount int) {
-	// 查找同一节点的所有图片文件（支持多种格式，不包括临时文件）
+// 清理节点的旧图片文件（根据缩放等级）
+func cleanupOldNodeImages(tempDir, safeNodeID string, imageScale float64, keepCount int) {
+	// 构建缩放等级字符串
+	scaleStr := formatScaleForFilename(imageScale)
+
+	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
 	supportedExts := []string{".png", ".svg", ".jpg", ".pdf"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
-		pattern := filepath.Join(tempDir, safeNodeID+"-*"+ext)
+		// 匹配格式：节点-缩放等级-*.*
+		pattern := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+"-*"+ext)
 		files, err := filepath.Glob(pattern)
 		if err == nil && len(files) > 0 {
 			allFiles = append(allFiles, files...)
@@ -561,6 +651,12 @@ func cleanupOldNodeImages(tempDir, safeNodeID string, keepCount int) {
 
 // 清除项目的所有图片缓存
 func ClearProjectImageCache(fileKey string) error {
+	return ClearProjectImageCacheByNodeIDs(fileKey, nil)
+}
+
+// ClearProjectImageCacheByNodeIDs 根据节点ID列表清除项目的图片缓存
+// 如果nodeIDs为nil或空，则清除所有缓存文件
+func ClearProjectImageCacheByNodeIDs(fileKey string, nodeIDs []string) error {
 	// 需要清理的目录列表
 	cacheDirs := []string{
 		filepath.Join("temp", fileKey, "images"),
@@ -571,40 +667,150 @@ func ClearProjectImageCache(fileKey string) error {
 	totalFiles := 0
 	var allErrors []string
 
-	for _, tempDir := range cacheDirs {
-		fmt.Printf("检查缓存目录: %s\n", tempDir)
+	// 如果没有指定节点ID，则清除所有缓存文件（原有行为）
+	if nodeIDs == nil || len(nodeIDs) == 0 {
+		fmt.Printf("清除项目 %s 的所有缓存文件\n", fileKey)
 
-		// 检查目录是否存在
-		if _, err := os.Stat(tempDir); os.IsNotExist(err) {
-			fmt.Printf("目录不存在，跳过: %s\n", tempDir)
-			continue
-		}
+		for _, tempDir := range cacheDirs {
+			fmt.Printf("检查缓存目录: %s\n", tempDir)
 
-		// 删除所有图片文件
-		pattern := filepath.Join(tempDir, "*.png")
-		files, err := filepath.Glob(pattern)
-		if err != nil {
-			errMsg := fmt.Sprintf("查找缓存文件失败 %s: %v", tempDir, err)
-			fmt.Println(errMsg)
-			allErrors = append(allErrors, errMsg)
-			continue
-		}
+			// 检查目录是否存在
+			if _, err := os.Stat(tempDir); os.IsNotExist(err) {
+				fmt.Printf("目录不存在，跳过: %s\n", tempDir)
+				continue
+			}
 
-		// 删除找到的所有文件
-		for _, f := range files {
-			fmt.Printf("删除缓存图片文件: %s\n", f)
-			if err := os.Remove(f); err != nil {
-				errMsg := fmt.Sprintf("删除文件失败: %s, 错误: %v", f, err)
+			// 删除所有图片文件（支持多种格式）
+			supportedExts := []string{"*.png", "*.jpg", "*.jpeg", "*.svg", "*.pdf"}
+			for _, ext := range supportedExts {
+				pattern := filepath.Join(tempDir, ext)
+				files, err := filepath.Glob(pattern)
+				if err != nil {
+					errMsg := fmt.Sprintf("查找缓存文件失败 %s: %v", tempDir, err)
+					fmt.Println(errMsg)
+					allErrors = append(allErrors, errMsg)
+					continue
+				}
+
+				// 删除找到的所有文件
+				for _, f := range files {
+					fmt.Printf("删除缓存图片文件: %s\n", f)
+					if err := os.Remove(f); err != nil {
+						errMsg := fmt.Sprintf("删除文件失败: %s, 错误: %v", f, err)
+						fmt.Println(errMsg)
+						allErrors = append(allErrors, errMsg)
+					} else {
+						totalFiles++
+					}
+				}
+			}
+
+			// 同时清理所有 .tmp 临时文件
+			tmpPattern := filepath.Join(tempDir, "*.tmp")
+			tmpFiles, err := filepath.Glob(tmpPattern)
+			if err != nil {
+				errMsg := fmt.Sprintf("查找临时文件失败 %s: %v", tempDir, err)
 				fmt.Println(errMsg)
 				allErrors = append(allErrors, errMsg)
+			} else {
+				for _, tmpFile := range tmpFiles {
+					fmt.Printf("删除临时文件: %s\n", tmpFile)
+					if err := os.Remove(tmpFile); err != nil {
+						errMsg := fmt.Sprintf("删除临时文件失败: %s, 错误: %v", tmpFile, err)
+						fmt.Println(errMsg)
+						allErrors = append(allErrors, errMsg)
+					} else {
+						totalFiles++
+					}
+				}
 			}
+
+			fmt.Printf("已清除目录 %s 中的文件\n", tempDir)
+		}
+	} else {
+		// 按节点ID清除特定缓存文件
+		fmt.Printf("清除项目 %s 中 %d 个节点的缓存文件\n", fileKey, len(nodeIDs))
+
+		// 将节点ID转换为安全的文件名前缀
+		safeNodeIDs := make([]string, len(nodeIDs))
+		for i, nodeID := range nodeIDs {
+			safeNodeIDs[i] = strings.NewReplacer(
+				":", "_", ";", "_", "/", "_", "\\", "_",
+				"*", "_", "?", "_", "\"", "_", "<", "_",
+				">", "_", "|", "_", ",", "_",
+			).Replace(nodeID)
 		}
 
-		totalFiles += len(files)
-		fmt.Printf("已清除目录 %s 中的 %d 个文件\n", tempDir, len(files))
+		for _, tempDir := range cacheDirs {
+			fmt.Printf("检查缓存目录: %s\n", tempDir)
+
+			// 检查目录是否存在
+			if _, err := os.Stat(tempDir); os.IsNotExist(err) {
+				fmt.Printf("目录不存在，跳过: %s\n", tempDir)
+				continue
+			}
+
+			dirCleared := 0
+
+			// 为每个节点ID查找并删除对应的缓存文件
+			for i, safeNodeID := range safeNodeIDs {
+				originalNodeID := nodeIDs[i]
+
+				// 支持多种图片格式
+				supportedExts := []string{".png", ".jpg", ".jpeg", ".svg", ".pdf"}
+
+				for _, ext := range supportedExts {
+					// 查找以节点ID为前缀的文件
+					pattern := filepath.Join(tempDir, safeNodeID+"-*"+ext)
+					files, err := filepath.Glob(pattern)
+					if err != nil {
+						errMsg := fmt.Sprintf("查找节点 %s 的缓存文件失败: %v", originalNodeID, err)
+						fmt.Println(errMsg)
+						allErrors = append(allErrors, errMsg)
+						continue
+					}
+
+					// 删除找到的文件
+					for _, file := range files {
+						fmt.Printf("删除节点 %s 的缓存文件: %s\n", originalNodeID, file)
+						if err := os.Remove(file); err != nil {
+							errMsg := fmt.Sprintf("删除文件失败: %s, 错误: %v", file, err)
+							fmt.Println(errMsg)
+							allErrors = append(allErrors, errMsg)
+						} else {
+							dirCleared++
+							totalFiles++
+						}
+					}
+				}
+			}
+
+			// 无论是否按节点ID清除，都要清理所有 .tmp 临时文件
+			tmpPattern := filepath.Join(tempDir, "*.tmp")
+			tmpFiles, err := filepath.Glob(tmpPattern)
+			if err != nil {
+				errMsg := fmt.Sprintf("查找临时文件失败 %s: %v", tempDir, err)
+				fmt.Println(errMsg)
+				allErrors = append(allErrors, errMsg)
+			} else {
+				for _, tmpFile := range tmpFiles {
+					fmt.Printf("删除临时文件: %s\n", tmpFile)
+					if err := os.Remove(tmpFile); err != nil {
+						errMsg := fmt.Sprintf("删除临时文件失败: %s, 错误: %v", tmpFile, err)
+						fmt.Println(errMsg)
+						allErrors = append(allErrors, errMsg)
+					} else {
+						dirCleared++
+						totalFiles++
+					}
+				}
+			}
+
+			fmt.Printf("目录 %s 中清除了 %d 个文件\n", tempDir, dirCleared)
+		}
 	}
 
-	fmt.Printf("已清除项目 %s 的所有缓存图片，共 %d 个文件\n", fileKey, totalFiles)
+	fmt.Printf("已清除项目 %s 的缓存图片，共 %d 个文件\n", fileKey, totalFiles)
 
 	// 如果有错误，返回合并的错误信息
 	if len(allErrors) > 0 {
@@ -615,10 +821,10 @@ func ClearProjectImageCache(fileKey string) error {
 }
 
 // DownloadFilteredPreviewFigmaImage 下载过滤后的Figma预览图片（使用过滤后的节点ID列表）
-func DownloadFilteredPreviewFigmaImage(token, fileKey, nodeID, imageFormat string, imageScale float64, projectID uint) (string, error) {
+func DownloadFilteredPreviewFigmaImage(token, fileKey, nodeID, imageFormat string, imageScale float64, projectID uint, useCache bool) (string, error) {
 	// 打印调试信息
-	fmt.Printf("开始下载过滤后的Figma预览图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, projectID=%d\n",
-		fileKey, nodeID, imageFormat, imageScale, projectID)
+	fmt.Printf("开始下载过滤后的Figma预览图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, projectID=%d, useCache=%v\n",
+		fileKey, nodeID, imageFormat, imageScale, projectID, useCache)
 
 	// 获取节点树，用于过滤
 	nodes, err := GetFigmaNodes(token, fileKey, nodeID)
@@ -673,11 +879,15 @@ func DownloadFilteredPreviewFigmaImage(token, fileKey, nodeID, imageFormat strin
 	nodeIDsHash := generateNodeIDsHash(includedNodeIDs)
 	safeFileName = fmt.Sprintf("%s-%s", safeFileName, nodeIDsHash)
 
-	// 检查是否有现有文件
-	existingFile := findLatestNodeImage(tempDir, safeFileName)
-	if existingFile != "" {
-		fmt.Printf("找到过滤预览图片缓存文件，直接使用: %s\n", existingFile)
-		return existingFile, nil
+	// 如果使用缓存，检查是否有现有文件
+	if useCache {
+		existingFile := findLatestNodeImage(tempDir, safeFileName, imageScale)
+		if existingFile != "" {
+			fmt.Printf("找到过滤预览图片缓存文件，直接使用: %s\n", existingFile)
+			return existingFile, nil
+		}
+	} else {
+		fmt.Printf("跳过缓存检查，强制重新下载过滤预览图片\n")
 	}
 
 	// 调用Figma API获取图片URL
@@ -752,11 +962,11 @@ func DownloadFilteredPreviewFigmaImage(token, fileKey, nodeID, imageFormat strin
 
 	// 下载图片
 	fmt.Printf("发现 %d 个包含的节点，下载过滤后的预览图片\n", len(includedNodeIDs))
-	return downloadFilteredPreviewImageFileByNodeIDs(imageURL, fileKey, safeFileName, includedNodeIDs)
+	return downloadFilteredPreviewImageFileByNodeIDs(imageURL, fileKey, safeFileName, includedNodeIDs, imageScale)
 }
 
 // downloadPreviewImageFile 下载图片文件
-func downloadPreviewImageFile(url, fileKey, nodeID string) (string, error) {
+func downloadPreviewImageFile(url, fileKey, nodeID string, imageScale float64) (string, error) {
 	fmt.Printf("第二步：开始下载图片文件: url=%s\n", url)
 
 	// 创建临时文件夹
@@ -780,8 +990,8 @@ func downloadPreviewImageFile(url, fileKey, nodeID string) (string, error) {
 	// 这样相同内容的文件会有相同的名称，避免重复下载
 	// 但我们仍需要清理过多的旧文件，避免占用过多磁盘空间
 
-	// 清理同一节点的过多旧文件
-	cleanupOldNodeImages(tempDir, safeNodeID, 10)
+	// 清理同一节点和缩放等级的过多旧文件
+	cleanupOldNodeImages(tempDir, safeNodeID, imageScale, 10)
 
 	// 下载图片
 	fmt.Printf("开始下载图片: %s\n", url)
@@ -866,8 +1076,10 @@ func downloadPreviewImageFile(url, fileKey, nodeID string) (string, error) {
 	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
 	fmt.Printf("文件数据哈希值: %s\n", hash)
 
-	// 使用哈希值构建最终文件名
-	fileName := fmt.Sprintf("%s-%s.png", safeNodeID, hash)
+	// 使用哈希值构建最终文件名（包含缩放等级）
+	// 格式：节点-缩放等级-hash.png，例如：节点-1-hash.png 或 节点-0.5-hash.png
+	scaleStr := formatScaleForFilename(imageScale)
+	fileName := fmt.Sprintf("%s-%s-%s.png", safeNodeID, scaleStr, hash)
 	filePath := filepath.Join(tempDir, fileName)
 	fmt.Printf("最终文件路径: %s\n", filePath)
 
@@ -910,7 +1122,7 @@ func generateNodeIDsHash(nodeIDs []string) string {
 }
 
 // downloadFilteredPreviewImageFileByNodeIDs 基于节点ID列表下载过滤后的预览图片文件
-func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string, includedNodeIDs []string) (string, error) {
+func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string, includedNodeIDs []string, imageScale float64) (string, error) {
 	fmt.Printf("开始下载过滤后的预览图片文件: url=%s, 包含 %d 个节点\n", url, len(includedNodeIDs))
 
 	// 创建临时文件夹
@@ -931,8 +1143,8 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 	tempFilePath := filepath.Join(tempDir, tempFileName)
 	fmt.Printf("临时文件路径: %s\n", tempFilePath)
 
-	// 清理同一类型的过多旧文件
-	cleanupOldNodeImages(tempDir, safeFileName, 10)
+	// 清理同一类型和缩放等级的过多旧文件
+	cleanupOldNodeImages(tempDir, safeFileName, imageScale, 10)
 
 	// 下载图片
 	fmt.Printf("开始下载过滤后的预览图片: %s\n", url)
@@ -1032,8 +1244,10 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 		}
 	}
 
-	// 使用哈希值和正确的扩展名构建最终文件名
-	fileName := fmt.Sprintf("%s-%s%s", safeFileName, hash, finalFileExt)
+	// 使用哈希值和正确的扩展名构建最终文件名（包含缩放等级）
+	// 格式：文件名-缩放等级-hash.ext
+	scaleStr := formatScaleForFilename(imageScale)
+	fileName := fmt.Sprintf("%s-%s-%s%s", safeFileName, scaleStr, hash, finalFileExt)
 	filePath := filepath.Join(tempDir, fileName)
 	fmt.Printf("最终文件路径: %s (Content-Type: %s)\n", filePath, contentType)
 
@@ -1185,7 +1399,7 @@ func DownloadFilteredPreviewFigmaImages(token, fileKey, nodeID, imageFormat stri
 		fileName := generateNodeFileName(nodeID, nodeMap[nodeID], nodeModifys[nodeID])
 
 		// 下载单个图片
-		filePath, err := downloadSingleFilteredPreviewImage(imageURL, fileKey, nodeID, fileName, tempDir)
+		filePath, err := downloadSingleFilteredPreviewImage(imageURL, fileKey, nodeID, fileName, tempDir, imageScale)
 		if err != nil {
 			fmt.Printf("下载节点 %s 的图片失败: %v\n", nodeID, err)
 			continue
@@ -1229,11 +1443,11 @@ func generateNodeFileName(nodeID string, nodeInfo map[string]interface{}, nodeMo
 }
 
 // downloadSingleFilteredPreviewImage 下载单个过滤预览图片
-func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileName, tempDir string) (string, error) {
-	fmt.Printf("开始下载单个图片: nodeID=%s, fileName=%s, url=%s\n", nodeID, fileName, imageURL)
+func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileName, tempDir string, imageScale float64) (string, error) {
+	fmt.Printf("开始下载单个图片: nodeID=%s, fileName=%s, url=%s, scale=%.1f\n", nodeID, fileName, imageURL, imageScale)
 
 	// 检查是否已经有缓存的图片文件
-	existingFile := findLatestNodeImage(tempDir, fileName)
+	existingFile := findLatestNodeImage(tempDir, fileName, imageScale)
 	if existingFile != "" {
 		fmt.Printf("找到节点 %s 的缓存图片文件，直接使用: %s\n", nodeID, existingFile)
 		return existingFile, nil
@@ -1354,8 +1568,10 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 		}
 	}
 
-	// 使用哈希值和正确的扩展名构建最终文件名
-	finalFileName := fmt.Sprintf("%s-%s%s", fileName, hash, resultFileExt)
+	// 使用哈希值和正确的扩展名构建最终文件名（包含缩放等级）
+	// 格式：文件名-缩放等级-hash.ext
+	scaleStr := formatScaleForFilename(imageScale)
+	finalFileName := fmt.Sprintf("%s-%s-%s%s", fileName, scaleStr, hash, resultFileExt)
 	filePath := filepath.Join(tempDir, finalFileName)
 	fmt.Printf("最终文件路径: %s (Content-Type: %s)\n", filePath, contentType)
 
@@ -1374,8 +1590,8 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 		return "", fmt.Errorf("重命名临时文件失败: %v", err)
 	}
 
-	// 清理同一节点的过多旧文件
-	cleanupOldNodeImages(tempDir, fileName, 10)
+	// 清理同一节点和缩放等级的过多旧文件
+	cleanupOldNodeImages(tempDir, fileName, imageScale, 10)
 
 	fmt.Printf("单个图片下载完成: %s (%d 字节)\n", filePath, bytes)
 	return filePath, nil
@@ -1397,7 +1613,7 @@ func collectIncludedNodeIDs(nodes []map[string]interface{}, rootNodeID string, n
 	childrenMap := make(map[string][]string)
 	for _, node := range nodes {
 		nodeID := node["id"].(string)
-		if parentID, ok := node["parentId"]; ok && parentID != nil {
+		if parentID, ok := node["parent_id"]; ok && parentID != nil {
 			if parentIDStr, ok := parentID.(string); ok {
 				childrenMap[parentIDStr] = append(childrenMap[parentIDStr], nodeID)
 			}
@@ -1502,4 +1718,182 @@ func traverseNodeTree(nodeID string, nodeMap map[string]map[string]interface{}, 
 	} else {
 		fmt.Printf("节点 %s 没有子节点\n", nodeID)
 	}
+}
+
+// GetNodeSubtreeIDs 获取指定节点及其子树的所有节点ID
+// 如果nodeID为空或等于根节点ID，则返回所有节点ID
+func GetNodeSubtreeIDs(token, fileKey, rootNodeID, targetNodeID string) ([]string, error) {
+	// 如果目标节点ID为空，使用根节点ID
+	if targetNodeID == "" {
+		targetNodeID = rootNodeID
+	}
+
+	// 获取完整的节点树
+	nodes, err := GetFigmaNodes(token, fileKey, rootNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("获取节点树失败: %v", err)
+	}
+
+	// 如果目标节点就是根节点，返回所有节点ID
+	if targetNodeID == rootNodeID {
+		var allNodeIDs []string
+		for _, node := range nodes {
+			if nodeID, ok := node["id"].(string); ok {
+				allNodeIDs = append(allNodeIDs, nodeID)
+			}
+		}
+		return allNodeIDs, nil
+	}
+
+	// 构建节点ID到节点的映射
+	nodeMap := make(map[string]map[string]interface{})
+	for _, node := range nodes {
+		nodeID := node["id"].(string)
+		nodeMap[nodeID] = node
+	}
+
+	// 构建父子关系映射
+	childrenMap := make(map[string][]string)
+	for _, node := range nodes {
+		nodeID := node["id"].(string)
+		if parentID, ok := node["parent_id"]; ok && parentID != nil {
+			if parentIDStr, ok := parentID.(string); ok {
+				childrenMap[parentIDStr] = append(childrenMap[parentIDStr], nodeID)
+			}
+		}
+	}
+
+	// 检查目标节点是否存在
+	if _, exists := nodeMap[targetNodeID]; !exists {
+		return nil, fmt.Errorf("目标节点 %s 不存在", targetNodeID)
+	}
+
+	// 收集目标节点及其子树的所有节点ID
+	var subtreeNodeIDs []string
+	collectSubtreeNodeIDs(targetNodeID, childrenMap, &subtreeNodeIDs)
+
+	return subtreeNodeIDs, nil
+}
+
+// collectSubtreeNodeIDs 递归收集节点及其子树的所有节点ID
+func collectSubtreeNodeIDs(nodeID string, childrenMap map[string][]string, subtreeNodeIDs *[]string) {
+	// 添加当前节点ID
+	*subtreeNodeIDs = append(*subtreeNodeIDs, nodeID)
+
+	// 递归处理子节点
+	if children, hasChildren := childrenMap[nodeID]; hasChildren {
+		for _, childID := range children {
+			collectSubtreeNodeIDs(childID, childrenMap, subtreeNodeIDs)
+		}
+	}
+}
+
+// CleanupAllTempFiles 清理指定目录下的临时文件（.tmp文件和JSON缓存文件）
+func CleanupAllTempFiles(tempDir string) error {
+	fmt.Printf("开始清理目录 %s 中的临时文件\n", tempDir)
+
+	// 检查目录是否存在
+	if _, err := os.Stat(tempDir); os.IsNotExist(err) {
+		fmt.Printf("目录不存在，跳过清理: %s\n", tempDir)
+		return nil
+	}
+
+	deletedCount := 0
+	var errors []string
+
+	// 清理 .tmp 文件（所有目录）
+	tmpPattern := filepath.Join(tempDir, "*.tmp")
+	tmpFiles, err := filepath.Glob(tmpPattern)
+	if err != nil {
+		return fmt.Errorf("查找临时文件失败: %v", err)
+	}
+
+	// 删除找到的临时文件
+	for _, tmpFile := range tmpFiles {
+		fmt.Printf("删除临时文件: %s\n", tmpFile)
+		if err := os.Remove(tmpFile); err != nil {
+			errMsg := fmt.Sprintf("删除临时文件失败: %s, 错误: %v", tmpFile, err)
+			fmt.Println(errMsg)
+			errors = append(errors, errMsg)
+		} else {
+			deletedCount++
+		}
+	}
+
+	// 如果是 documents 目录，额外清理 JSON 缓存文件
+	if strings.Contains(tempDir, "documents") {
+		jsonPattern := filepath.Join(tempDir, "*.json")
+		jsonFiles, err := filepath.Glob(jsonPattern)
+		if err != nil {
+			return fmt.Errorf("查找JSON缓存文件失败: %v", err)
+		}
+
+		// 删除找到的JSON缓存文件
+		for _, jsonFile := range jsonFiles {
+			fmt.Printf("删除JSON缓存文件: %s\n", jsonFile)
+			if err := os.Remove(jsonFile); err != nil {
+				errMsg := fmt.Sprintf("删除JSON缓存文件失败: %s, 错误: %v", jsonFile, err)
+				fmt.Println(errMsg)
+				errors = append(errors, errMsg)
+			} else {
+				deletedCount++
+			}
+		}
+	}
+
+	fmt.Printf("清理完成，删除了 %d 个文件\n", deletedCount)
+
+	// 如果有错误，返回合并的错误信息
+	if len(errors) > 0 {
+		return fmt.Errorf("部分文件清理失败: %s", strings.Join(errors, "; "))
+	}
+
+	return nil
+}
+
+// CleanupProjectTempFiles 清理特定项目的临时文件
+func CleanupProjectTempFiles(fileKey, rootNodeID string) error {
+	fmt.Printf("开始清理项目 %s (根节点: %s) 的临时文件\n", fileKey, rootNodeID)
+
+	// 需要清理的目录列表
+	cacheDirs := []string{
+		filepath.Join("temp", fileKey, "previews"),
+		filepath.Join("temp", fileKey, "images"),
+		filepath.Join("temp", fileKey, "fpreviews"),
+		filepath.Join("temp", fileKey, "documents"),
+	}
+
+	totalDeleted := 0
+	var allErrors []string
+
+	for _, tempDir := range cacheDirs {
+		fmt.Printf("检查目录: %s\n", tempDir)
+
+		// 检查目录是否存在
+		if _, err := os.Stat(tempDir); os.IsNotExist(err) {
+			fmt.Printf("目录不存在，跳过: %s\n", tempDir)
+			continue
+		}
+
+		// 清理该目录下的临时文件
+		if err := CleanupAllTempFiles(tempDir); err != nil {
+			errMsg := fmt.Sprintf("清理目录 %s 失败: %v", tempDir, err)
+			fmt.Println(errMsg)
+			allErrors = append(allErrors, errMsg)
+		} else {
+			// 统计删除的文件数
+			pattern := filepath.Join(tempDir, "*.tmp")
+			tmpFiles, _ := filepath.Glob(pattern)
+			totalDeleted += len(tmpFiles)
+		}
+	}
+
+	fmt.Printf("项目 %s 临时文件清理完成，共处理 %d 个文件\n", fileKey, totalDeleted)
+
+	// 如果有错误，返回合并的错误信息
+	if len(allErrors) > 0 {
+		return fmt.Errorf("部分目录清理失败: %s", strings.Join(allErrors, "; "))
+	}
+
+	return nil
 }

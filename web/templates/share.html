@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>提示词分享 - Figma Deliver</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui@2.15.14/lib/theme-chalk/index.css">
+    <link rel="stylesheet" href="/static/css/share.css?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}">
+</head>
+<body>
+    <div id="share-app">
+        <el-container>
+            <!-- 头部导航 -->
+            <el-header class="app-header">
+                <div class="header-left">
+                    <h1 class="logo" @click="goToHome">Figma Deliver</h1>
+                    <span class="page-title">提示词分享广场</span>
+                </div>
+                <div class="header-right">
+                    <template v-if="userId">
+                        <el-button type="primary" size="medium" @click="showCreateDialog" icon="el-icon-plus">
+                            分享提示词
+                        </el-button>
+                        <el-button size="medium" @click="showMyShares" icon="el-icon-document">
+                            我的分享
+                        </el-button>
+                        <el-dropdown trigger="click" @command="handleUserCommand">
+                            <el-button size="medium">
+                                <i class="el-icon-user"></i> {{`{{ username }}`}} <i class="el-icon-arrow-down"></i>
+                            </el-button>
+                            <el-dropdown-menu slot="dropdown">
+                                <el-dropdown-item command="profile">个人中心</el-dropdown-item>
+                                <el-dropdown-item command="projects">项目列表</el-dropdown-item>
+                                <el-dropdown-item command="about">关于</el-dropdown-item>
+                                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </el-dropdown>
+                    </template>
+                    <el-button v-else type="primary" size="medium" @click="goToLogin">登录</el-button>
+                </div>
+            </el-header>
+
+            <!-- 主内容区 -->
+            <el-main class="app-main">
+                <!-- 加载状态 -->
+                <div v-if="loading" class="loading-container">
+                    <el-skeleton :rows="5" animated />
+                </div>
+
+                <!-- 提示词列表 -->
+                <div v-else class="shares-container">
+                    <el-empty v-if="shares.length === 0" description="暂无分享内容"></el-empty>
+                    
+                    <div v-else class="shares-grid">
+                        <el-card v-for="share in shares" :key="share.id" class="share-card" shadow="hover">
+                            <div class="share-header">
+                                <div class="share-title-section">
+                                    <h3 class="share-title">{{`{{ share.title }}`}}</h3>
+                                    <div class="share-meta">
+                                        <el-tag size="mini" type="info">
+                                            <i class="el-icon-user"></i> {{`{{ share.username }}`}}
+                                        </el-tag>
+                                        <span class="share-time">
+                                            <i class="el-icon-time"></i> {{`{{ formatDate(share.created_at) }}`}}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="share-actions">
+                                    <el-button 
+                                        v-if="userId && share.user_id !== userId"
+                                        :type="share.liked ? 'primary' : 'default'" 
+                                        size="small" 
+                                        @click="toggleLike(share)"
+                                        :loading="share.liking">
+                                        <i :class="share.liked ? 'el-icon-star-on' : 'el-icon-star-off'"></i>
+                                        {{`{{ share.like_count }}`}}
+                                    </el-button>
+                                    <el-button 
+                                        v-else-if="!userId"
+                                        type="default" 
+                                        size="small" 
+                                        disabled>
+                                        <i class="el-icon-star-off"></i>
+                                        {{`{{ share.like_count }}`}}
+                                    </el-button>
+                                    <el-tag v-else size="small" type="success">
+                                        <i class="el-icon-star-on"></i> {{`{{ share.like_count }}`}}
+                                    </el-tag>
+                                    
+                                    <el-button 
+                                        v-if="userId && share.user_id === userId"
+                                        type="danger" 
+                                        size="small" 
+                                        icon="el-icon-delete"
+                                        @click="deleteShare(share)"
+                                        :loading="share.deleting">
+                                        删除
+                                    </el-button>
+                                </div>
+                            </div>
+                            
+                            <div v-if="share.description" class="share-description">
+                                {{`{{ share.description }}`}}
+                            </div>
+                            
+                            <div class="share-prompt">
+                                <div class="prompt-header">
+                                    <span class="prompt-label">提示词内容：</span>
+                                    <el-button 
+                                        type="text" 
+                                        size="small" 
+                                        icon="el-icon-document-copy"
+                                        @click="copyPrompt(share.prompt)">
+                                        复制
+                                    </el-button>
+                                </div>
+                                <pre class="prompt-content">{{`{{ share.prompt }}`}}</pre>
+                            </div>
+                        </el-card>
+                    </div>
+
+                    <!-- 分页 -->
+                    <div class="pagination-container" v-if="total > limit">
+                        <el-pagination
+                            background
+                            layout="prev, pager, next, total"
+                            :total="total"
+                            :page-size="limit"
+                            :current-page="currentPage"
+                            @current-change="handlePageChange">
+                        </el-pagination>
+                    </div>
+                </div>
+            </el-main>
+        </el-container>
+
+        <!-- 创建分享对话框 -->
+        <el-dialog
+            title="分享提示词"
+            :visible.sync="createDialogVisible"
+            width="600px"
+            :close-on-click-modal="false">
+            <el-form :model="createForm" :rules="createRules" ref="createForm" label-width="100px">
+                <el-form-item label="标题" prop="title">
+                    <el-input v-model="createForm.title" placeholder="请输入标题"></el-input>
+                </el-form-item>
+                <el-form-item label="描述" prop="description">
+                    <el-input 
+                        type="textarea" 
+                        v-model="createForm.description" 
+                        :rows="3"
+                        placeholder="请输入描述（可选）"></el-input>
+                </el-form-item>
+                <el-form-item label="提示词" prop="prompt">
+                    <el-input 
+                        type="textarea" 
+                        v-model="createForm.prompt" 
+                        :rows="10"
+                        placeholder="请输入提示词内容"></el-input>
+                </el-form-item>
+            </el-form>
+            <span slot="footer">
+                <el-button @click="createDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="submitShare" :loading="submitting">确定分享</el-button>
+            </span>
+        </el-dialog>
+
+        <!-- 我的分享对话框 -->
+        <el-dialog
+            title="我的分享"
+            :visible.sync="mySharesDialogVisible"
+            width="800px">
+            <div v-if="loadingMyShares" class="loading-container">
+                <el-skeleton :rows="3" animated />
+            </div>
+            <el-empty v-else-if="myShares.length === 0" description="暂无分享"></el-empty>
+            <div v-else class="my-shares-list">
+                <el-card v-for="share in myShares" :key="share.id" class="my-share-item" shadow="hover">
+                    <div class="share-header">
+                        <div class="share-title-section">
+                            <h4>{{`{{ share.title }}`}}</h4>
+                            <span class="share-time">
+                                <i class="el-icon-time"></i> {{`{{ formatDate(share.created_at) }}`}}
+                            </span>
+                        </div>
+                        <div class="share-actions">
+                            <el-tag size="small" type="success">
+                                <i class="el-icon-star-on"></i> {{`{{ share.like_count }}`}}
+                            </el-tag>
+                            <el-button 
+                                type="danger" 
+                                size="small" 
+                                icon="el-icon-delete"
+                                @click="deleteShare(share, true)">
+                                删除
+                            </el-button>
+                        </div>
+                    </div>
+                </el-card>
+            </div>
+        </el-dialog>
+    </div>
+
+    <script src="https://unpkg.com/vue@2.6.14/dist/vue.min.js"></script>
+    <script src="https://unpkg.com/element-ui@2.15.14/lib/index.js"></script>
+    <script src="https://unpkg.com/axios@1.6.0/dist/axios.min.js"></script>
+    <script>
+        // 初始化数据 - 必须在 share.js 之前加载
+        window.initialData = {
+            userId: {{ if .user_id }}{{ .user_id }}{{ else }}0{{ end }},
+            username: {{ if .username }}"{{ .username }}"{{ else }}""{{ end }},
+            csrfToken: {{ if .csrf_token }}'{{ .csrf_token }}'{{ else }}''{{ end }}
+        };
+        console.log('Share页面初始化数据:', window.initialData);
+    </script>
+    <script src="/static/js/share.js?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}"></script>
+</body>
+</html>
+

@@ -20,6 +20,8 @@
         {{ template "projects_styles" . }}
     {{ else if eq .template "profile" }}
         {{ template "profile_styles" . }}
+    {{ else if eq .template "about" }}
+        {{ template "about_styles" . }}
     {{ else }}
         {{ block "styles" . }}{{ end }}
     {{ end }}
@@ -32,6 +34,8 @@
             {{ template "projects_content" . }}
         {{ else if eq .template "profile" }}
             {{ template "profile_content" . }}
+        {{ else if eq .template "about" }}
+            {{ template "about_content" . }}
         {{ else }}
             {{ template "content" . }}
         {{ end }}
@@ -51,6 +55,8 @@
         {{ template "projects_scripts" . }}
     {{ else if eq .template "profile" }}
         {{ template "profile_scripts" . }}
+    {{ else if eq .template "about" }}
+        {{ template "about_scripts" . }}
     {{ else }}
         {{ block "scripts" . }}{{ end }}
     {{ end }}

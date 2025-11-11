@@ -1,5 +1,5 @@
 /**
- * Figma Bridge 主脚本文件
+ * Figma Deliver 主脚本文件
  */
 
 // 全局配置
@@ -16,8 +16,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const csrfToken = metaTag.getAttribute('content');
         console.log('全局CSRF令牌:', csrfToken);
         
-        // 为所有请求添加CSRF令牌
+        // 为所有请求添加CSRF令牌和AJAX标识
         axios.defaults.headers.common['X-CSRF-Token'] = csrfToken;
+        axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
         
         // 为表单提交添加CSRF令牌
         axios.interceptors.request.use(function(config) {

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 // LoginPage 登录页面
 func LoginPage(c *gin.Context) {
 	c.HTML(http.StatusOK, "login.html", gin.H{
-		"title": "登录 - Figma Bridge",
+		"title": "登录 - Figma Deliver",
 	})
 }
 
@@ -149,11 +150,16 @@ func Profile(c *gin.Context) {
 	var user models.User
 	models.DB.First(&user, userID)
 
+	// 直接从用户表获取MCP Token
+	mcpToken := user.MCPToken
+
 	c.HTML(http.StatusOK, "standalone.html", gin.H{
-		"title":      "个人资料 - Figma Bridge",
+		"title":      "个人资料 - Figma Deliver",
 		"username":   username,
 		"figmaToken": user.FigmaToken,
 		"compTypes":  user.CompTypes,
+		"prompts":    user.Prompts,
+		"mcpToken":   mcpToken,
 		"timestamp":  time.Now().Unix(),
 		"csrf_token": csrfToken,
 		"template":   "profile",
@@ -167,6 +173,7 @@ func UpdateProfile(c *gin.Context) {
 	username := c.PostForm("username")
 	figmaToken := c.PostForm("figma_token")
 	compTypes := c.PostForm("comp_types")
+	prompts := c.PostForm("prompts")
 
 	// 如果用户名不为空，检查是否已存在
 	if username != "" {
@@ -216,8 +223,9 @@ func UpdateProfile(c *gin.Context) {
 			return
 		}
 
-		// 更新控件类型列表
+		// 更新控件类型列表和提示词
 		user.CompTypes = compTypes
+		user.Prompts = prompts
 		models.DB.Save(&user)
 
 		// 设置会话
@@ -246,7 +254,7 @@ func UpdateProfile(c *gin.Context) {
 	}
 
 	// 更新用户资料
-	err := user.UpdateProfile(username, figmaToken, compTypes)
+	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -265,6 +273,87 @@ func UpdateProfile(c *gin.Context) {
 	})
 }
 
+// GenerateMCPToken 生成新的MCP Token
+func GenerateMCPToken(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未登录",
+		})
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	err := models.DB.First(&user, userID.(uint)).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "用户不存在",
+		})
+		return
+	}
+
+	// 生成新的token
+	newToken, err := user.GenerateNewMCPToken()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Token生成失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 检查是否已有MCP连接
+	var existingConnection models.MCPConnection
+	err = models.DB.Where("user_id = ? AND is_active = ?", userID.(uint), true).First(&existingConnection).Error
+
+	if err == nil {
+		// 更新现有连接的token
+		existingConnection.ConnectionID = newToken
+		existingConnection.LastActivity = time.Now()
+		models.DB.Save(&existingConnection)
+	} else {
+		// 创建新的MCP连接
+		connection := models.MCPConnection{
+			UserID:       userID.(uint),
+			ConnectionID: newToken,
+			Status:       "connected",
+			IsActive:     true,
+			LastActivity: time.Now(),
+		}
+		models.DB.Create(&connection)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"token":   newToken,
+		"message": "MCP Token生成成功",
+	})
+}
+
+// RevokeMCPToken 撤销MCP Token
+func RevokeMCPToken(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未登录",
+		})
+		return
+	}
+
+	// 清空用户表中的MCP Token
+	models.DB.Model(&models.User{}).Where("id = ?", userID.(uint)).Update("mcp_token", "")
+
+	// 将所有该用户的MCP连接设为非活跃状态
+	models.DB.Model(&models.MCPConnection{}).Where("user_id = ?", userID.(uint)).Update("is_active", false)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "MCP Token已撤销",
+	})
+}
+
 // 生成随机密码
 func generateRandomPassword() string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+"
@@ -276,4 +365,18 @@ func generateRandomPassword() string {
 	}
 
 	return string(result)
+}
+
+// 生成随机MCP Token
+func generateRandomMCPToken() string {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	tokenLength := 32
+	result := make([]byte, tokenLength)
+
+	for i := 0; i < tokenLength; i++ {
+		result[i] = chars[time.Now().UnixNano()%int64(len(chars))]
+		time.Sleep(time.Nanosecond)
+	}
+
+	return fmt.Sprintf("mcp_%s", string(result))
 }

@@ -2,56 +2,186 @@
 <div class="app-container">
     <!-- 顶部导航栏 -->
     <el-header class="app-header">
-        <div class="logo">Figma Bridge</div>
-        <div class="user-info">
-            <el-dropdown trigger="click" @command="handleCommand">
-                <span class="el-dropdown-link">
-                    {{ .username }} <i class="el-icon-arrow-down el-icon--right"></i>
-                </span>
-                <el-dropdown-menu slot="dropdown">
-                    <el-dropdown-item command="dashboard">返回仪表盘</el-dropdown-item>
-                    <el-dropdown-item command="logout">退出登录</el-dropdown-item>
-                </el-dropdown-menu>
-            </el-dropdown>
+        <div class="logo">Figma Deliver</div>
+        <div class="header-actions">
+            <el-button @click="goBack" icon="el-icon-back">返回</el-button>
+            <div class="user-info">
+                <el-dropdown trigger="click" @command="handleCommand">
+                    <span class="el-dropdown-link">
+                        {{ .username }} <i class="el-icon-arrow-down el-icon--right"></i>
+                    </span>
+                    <el-dropdown-menu slot="dropdown">
+                        <el-dropdown-item command="dashboard">返回仪表盘</el-dropdown-item>
+                        <el-dropdown-item command="about">关于</el-dropdown-item>
+                        <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                    </el-dropdown-menu>
+                </el-dropdown>
+            </div>
         </div>
     </el-header>
     
     <!-- 主内容区 -->
     <el-main class="app-main">
-        <el-card class="profile-card">
-            <div slot="header">
-                <span>个人资料</span>
+        <div class="profile-container">
+            <!-- 左侧栏：基本信息 -->
+            <div class="profile-left">
+                <el-card class="profile-card">
+                    <div slot="header" class="card-header">
+                        <span><i class="el-icon-user"></i> 基本信息</span>
+                    </div>
+                    
+                    <el-form :model="profileForm" :rules="profileRules" ref="profileForm" label-width="100px">
+                        <el-form-item label="用户名" prop="username">
+                            <el-input v-model="profileForm.username" placeholder="请输入用户名"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Figma Token" prop="figmaToken">
+                            <el-input v-model="profileForm.figmaToken" type="password" placeholder="输入Figma Private Token" show-password></el-input>
+                            <div class="form-tip">
+                                <i class="el-icon-info"></i>
+                                <span>您可以在Figma账户设置中生成个人访问令牌</span>
+                            </div>
+                        </el-form-item>
+                    </el-form>
+                </el-card>
+
+                <!-- MCP Token 管理 -->
+                <el-card class="profile-card mcp-card">
+                    <div slot="header" class="card-header">
+                        <span><i class="el-icon-connection"></i> MCP 连接</span>
+                    </div>
+                    
+                    <div class="mcp-token-section">
+                        <div v-if="mcpToken" class="token-display">
+                            <el-input 
+                                v-model="mcpToken" 
+                                readonly 
+                                placeholder="暂无MCP Token">
+                                <template slot="append">
+                                    <el-button @click="copyToken" icon="el-icon-copy-document">复制</el-button>
+                                </template>
+                            </el-input>
+                            <div class="form-tip">
+                                <i class="el-icon-info"></i>
+                                <span>这是您的Cursor MCP连接Token，请妥善保管</span>
+                            </div>
+                        </div>
+                        <div v-else class="no-token">
+                            <p>您还没有MCP Token</p>
+                        </div>
+                        <div class="token-actions">
+                            <el-button 
+                                type="primary" 
+                                @click="generateMCPToken" 
+                                :loading="mcpTokenLoading"
+                                icon="el-icon-refresh"
+                                size="small">
+                                {{`{{ mcpToken ? '重新生成Token' : '生成Token' }}`}}
+                            </el-button>
+                            <el-button 
+                                v-if="mcpToken"
+                                type="danger" 
+                                @click="revokeMCPToken" 
+                                :loading="mcpTokenLoading"
+                                icon="el-icon-delete"
+                                size="small">
+                                撤销Token
+                            </el-button>
+                        </div>
+                        <div class="cursor-config-tip">
+                            <p><strong>Cursor配置示例：</strong></p>
+                            <pre v-if="mcpToken">{{`{{ getCursorConfig() }}`}}</pre>
+                            <p v-else class="no-config">生成Token后将显示Cursor配置示例</p>
+                        </div>
+                    </div>
+                </el-card>
             </div>
-            
-            <el-form :model="profileForm" :rules="profileRules" ref="profileForm" label-width="120px">
-                <el-form-item label="用户名" prop="username">
-                    <el-input v-model="profileForm.username" placeholder="请输入用户名"></el-input>
-                </el-form-item>
-                <el-form-item label="Figma Token" prop="figmaToken">
-                    <el-input v-model="profileForm.figmaToken" placeholder="输入Figma Private Token"></el-input>
-                    <div class="form-tip">
-                        <i class="el-icon-info"></i>
-                        <span>您可以在Figma账户设置中生成个人访问令牌</span>
+
+            <!-- 右侧栏：配置信息 -->
+            <div class="profile-right">
+                <el-card class="profile-card">
+                    <div slot="header" class="card-header">
+                        <span><i class="el-icon-setting"></i> 控件配置</span>
                     </div>
-                </el-form-item>
-                <el-form-item label="控件类型列表" prop="compTypes">
-                    <el-input v-model="profileForm.compTypes" type="textarea" :rows="4" placeholder="输入控件类型列表，用逗号分隔"></el-input>
-                    <div class="form-tip">
-                        <i class="el-icon-info"></i>
-                        <span>请输入控件类型列表，多个类型用英文逗号分隔，如：Button,Input,Select,Switch</span>
+                    
+                    <el-form :model="profileForm" :rules="profileRules" ref="profileFormRight" label-width="100px">
+                        <el-form-item label="控件类型" prop="compTypes">
+                            <el-input v-model="profileForm.compTypes" type="textarea" :rows="4" placeholder="输入控件类型列表，用逗号分隔"></el-input>
+                            <div class="form-tip">
+                                <i class="el-icon-info"></i>
+                                <span>请输入控件类型列表，多个类型用英文逗号分隔，如：Button,Input,Select,Switch</span>
+                            </div>
+                            <div class="control-examples">
+                                <el-button type="text" @click="showUnityExamples" size="mini">🧩 Unity</el-button>
+                                <el-button type="text" @click="showAndroidExamples" size="mini">🤖 Android</el-button>
+                                <el-button type="text" @click="showIOSExamples" size="mini">🍎 iOS</el-button>
+                            </div>
+                        </el-form-item>
+                    </el-form>
+                </el-card>
+
+                <el-card class="profile-card">
+                    <div slot="header" class="card-header">
+                        <span><i class="el-icon-edit-outline"></i> AI 提示词</span>
+                        <div class="header-actions">
+                            <el-button type="primary" size="mini" icon="el-icon-share" @click="showSharePromptDialog">分享提示词</el-button>
+                            <el-button type="default" size="mini" icon="el-icon-s-grid" @click="goToSharePage">提示词广场</el-button>
+                        </div>
                     </div>
-                    <div style="margin-top: 10px;">
-                        <el-button type="text" @click="showUnityExamples">🧩 Unity 常用控件示例</el-button>
-                        <el-button type="text" @click="showAndroidExamples">🤖 Android 常用控件示例</el-button>
-                        <el-button type="text" @click="showIOSExamples">🍎 iOS 常用控件示例</el-button>
-                    </div>
-                </el-form-item>
-                <el-form-item>
-                    <el-button type="primary" @click="updateProfile" :loading="loading">保存设置</el-button>
-                </el-form-item>
-            </el-form>
-        </el-card>
+                    
+                    <el-form :model="profileForm" :rules="profileRules" ref="profileFormPrompt" label-width="100px">
+                        <el-form-item label="修饰提示词" prop="prompts">
+                            <el-input v-model="profileForm.prompts" type="textarea" :rows="8" placeholder="输入用于MCP节点修饰的提示词（最多16k字符）" maxlength="16384" show-word-limit></el-input>
+                            <div class="form-tip">
+                                <i class="el-icon-info"></i>
+                                <span>此提示词将在调用get_modify_prompt时返回，用于指导AI如何修饰节点，如果为空，将使用默认提示词：基于mcp获取界面预览图，由当前节点数据，修饰节点，优化层级/显示/命名/布局/父级调整/是否包图/图片名称/图片id/图片格式/组件配置等等</span>
+                            </div>
+                        </el-form-item>
+                    </el-form>
+                </el-card>
+            </div>
+        </div>
+
+        <!-- 保存按钮 -->
+        <div class="save-actions">
+            <el-button type="primary" @click="updateProfile" :loading="loading" icon="el-icon-check" size="medium">保存所有设置</el-button>
+        </div>
     </el-main>
+    
+    <!-- 分享提示词对话框 -->
+    <el-dialog
+        title="分享提示词"
+        :visible.sync="shareDialogVisible"
+        width="600px"
+        :close-on-click-modal="false">
+        <el-form :model="shareForm" :rules="shareRules" ref="shareForm" label-width="80px">
+            <el-form-item label="标题" prop="title">
+                <el-input v-model="shareForm.title" placeholder="请输入标题"></el-input>
+            </el-form-item>
+            <el-form-item label="描述" prop="description">
+                <el-input 
+                    type="textarea" 
+                    v-model="shareForm.description" 
+                    :rows="3"
+                    placeholder="请输入描述（可选）"></el-input>
+            </el-form-item>
+            <el-form-item label="提示词" prop="prompt">
+                <el-input 
+                    type="textarea" 
+                    v-model="shareForm.prompt" 
+                    :rows="10"
+                    placeholder="提示词内容"
+                    readonly></el-input>
+                <div class="form-tip">
+                    <i class="el-icon-info"></i>
+                    <span>将分享您当前的修饰提示词内容</span>
+                </div>
+            </el-form-item>
+        </el-form>
+        <span slot="footer">
+            <el-button @click="shareDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitSharePrompt" :loading="sharing">确定分享</el-button>
+        </span>
+    </el-dialog>
     
     <!-- Unity控件示例对话框 -->
     <el-dialog title="🧩 Unity 常用控件示例" :visible.sync="unityDialogVisible" width="600px">
@@ -94,7 +224,10 @@
 window.profileData = {
     username: '{{ .username }}',
     figmaToken: '{{ .figmaToken }}',
-    compTypes: '{{ .compTypes }}'
+    compTypes: '{{ .compTypes }}',
+    prompts: '{{ .prompts }}',
+    mcpToken: '{{ .mcpToken }}',
+    csrfToken: '{{ .csrf_token }}'
 };
 </script>
 <script src="/static/js/profile.js?v={{ .timestamp }}"></script>

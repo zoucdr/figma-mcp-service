@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # Figma Deliver 服务
+  figma-deliver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: figma-deliver-service
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - GIN_MODE=release
+      - SESSION_SECRET=figma-bridge-secret-key-change-this-in-production
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=figma_user
+      - DB_PASS=figma_password
+      - DB_NAME=figma_deliver
+      - EXPORT_DIR=/app/exports
+      - TEMP_DIR=/app/temp
+    volumes:
+      # 持久化存储导出文件和临时文件
+      - figma_exports:/app/exports
+      - figma_temp:/app/temp
+      - figma_data:/app/data
+      - figma_logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - figma-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/about"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: figma-deliver-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=figma_deliver
+      - MYSQL_USER=figma_user
+      - MYSQL_PASSWORD=figma_password
+      - MYSQL_CHARACTER_SET_SERVER=utf8mb4
+      - MYSQL_COLLATION_SERVER=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+    networks:
+      - figma-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "figma_user", "-pfigma_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: --default-authentication-plugin=mysql_native_password
+
+  # Redis (可选，用于缓存和会话存储)
+  redis:
+    image: redis:7-alpine
+    container_name: figma-deliver-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - figma-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  figma_exports:
+    driver: local
+  figma_temp:
+    driver: local
+  figma_data:
+    driver: local
+  figma_logs:
+    driver: local
+
+networks:
+  figma-network:
+    driver: bridge

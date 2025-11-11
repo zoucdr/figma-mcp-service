@@ -3,7 +3,7 @@
 <div id="project-list-app" class="app-container">
     <!-- 顶部导航栏 -->
     <el-header class="app-header">
-        <div class="logo">Figma Bridge</div>
+        <div class="logo">Figma Deliver</div>
         <div class="user-info">
             <el-dropdown trigger="click" @command="handleCommand">
                 <span class="el-dropdown-link">
@@ -12,6 +12,7 @@
                 </span>
                 <el-dropdown-menu slot="dropdown">
                     <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                    <el-dropdown-item command="about">关于</el-dropdown-item>
                     <el-dropdown-item command="logout">退出登录</el-dropdown-item>
                 </el-dropdown-menu>
             </el-dropdown>
@@ -35,59 +36,130 @@
                         </el-input>
                     </div>
                     
-                    <!-- 排序按钮 -->
-                    <el-tooltip :content="{{`sortOrder === 'desc' ? '当前：时间降序' : '当前：时间升序'`}}" placement="top">
-                        <el-button 
-                            type="text" 
-                            @click="toggleSortOrder" 
-                            class="sort-btn">
-                            <i :class="{{`['el-icon-sort', sortOrder === 'desc' ? 'el-icon-sort-desc' : 'el-icon-sort-asc']`}}"></i>
-                            {{`{{ sortOrder === 'desc' ? '最新在前' : '最早在前' }}`}}
+                    <!-- 展开/收起控制按钮 -->
+                    <div class="expand-controls">
+                        <el-button size="mini" type="text" @click="expandAllGroups" title="展开所有分组">
+                            <i class="el-icon-plus"></i> 展开全部
                         </el-button>
-                    </el-tooltip>
+                        <el-button size="mini" type="text" @click="collapseAllGroups" title="收起所有分组">
+                            <i class="el-icon-minus"></i> 收起全部
+                        </el-button>
+                    </div>
                     
                     <el-button class="add-project-btn" type="primary" @click="showLinkDialog">添加项目</el-button>
                 </div>
             </div>
             
             <template v-if="processedProjects && processedProjects.length > 0">
-                <el-table :data="processedProjects" style="width: 100%">
-                    <!-- 序号列 -->
-                    <el-table-column type="index" label="序号" width="80" align="center"></el-table-column>
-                    
-                    <el-table-column label="项目名称">
-                        <template slot-scope="scope">
-                            <span class="project-name-link" 
-                                  @click="openProject(scope.row)"
-                                  style="color: #409EFF; cursor: pointer; text-decoration: none;"
-                                  @mouseover="$event.target.style.textDecoration='underline'"
-                                  @mouseout="$event.target.style.textDecoration='none'">
-                                {{`{{ scope.row.name }}`}}
+                <!-- 按FileKey分组显示 -->
+                <div v-for="group in processedProjects" :key="group.fileKey" class="file-group">
+                    <!-- 分组标题 -->
+                    <div class="group-header" @click="toggleGroupExpanded(group.fileKey)">
+                        <div class="group-title">
+                            <i class="expand-icon" :class="group.expanded ? 'el-icon-folder-opened' : 'el-icon-folder'"></i>
+                            <i class="collapse-arrow" :class="group.expanded ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
+                            <span class="group-display-name" :title="group.displayName" @click.stop="navigateToFirstProject(group)" style="cursor: pointer; color: #409EFF;">{{`{{ group.displayName }}`}}</span>
+                            <el-tag size="mini" type="info">{{`{{ group.projectCount }}`}}个项目</el-tag>
+                        </div>
+                        <div class="group-header-right">
+                            <span class="file-key-badge" @click.stop="copyFileKey(group.fileKey)" :title="'点击复制: ' + group.fileKey">
+                                <i class="el-icon-document-copy"></i>
+                                {{`{{ group.fileKey }}`}}
                             </span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="file_key" label="File Key"></el-table-column>
-                    <el-table-column prop="root_node_id" label="Root Node ID"></el-table-column>
-                    <el-table-column label="创建时间" width="180">
-                        <template slot-scope="scope">
-                            {{`{{ formatDate(scope.row.created_at) }}`}}
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="操作" width="240">
-                        <template slot-scope="scope">
-                            <el-button v-if="scope.row.figma_url" 
-                                       class="figma-link-btn" 
-                                       size="mini" 
-                                       circle 
-                                       icon="el-icon-link"
-                                       @click="openFigmaLink(scope.row.figma_url)"
-                                       title="在Figma中打开">
-                            </el-button>
-                            <el-button size="mini" type="primary" @click="showEditDialog(scope.row)">编辑</el-button>
-                            <el-button size="mini" type="danger" @click="deleteProject(scope.row)">删除</el-button>
-                        </template>
-                    </el-table-column>
-                </el-table>
+                            <div class="group-actions" @click.stop>
+                            <el-tooltip content="展开/收起" placement="top">
+                                <el-button 
+                                    type="text" 
+                                    @click="toggleGroupExpanded(group.fileKey)" 
+                                    class="expand-btn" 
+                                    size="mini">
+                                    <i :class="group.expanded ? 'el-icon-minus' : 'el-icon-plus'"></i>
+                                </el-button>
+                            </el-tooltip>
+                            <el-tooltip content="FileKey排序" placement="top">
+                                <el-button 
+                                    type="text" 
+                                    @click="toggleSortOrder('fileKey')" 
+                                    class="sort-btn" 
+                                    size="mini">
+                                    <i :class="['el-icon-sort', sortField === 'fileKey' && sortOrder === 'desc' ? 'el-icon-sort-desc' : 'el-icon-sort-asc']"></i>
+                                </el-button>
+                            </el-tooltip>
+                        </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 分组内的项目表格 -->
+                    <transition name="group-collapse">
+                        <el-table v-show="group.expanded" :data="group.projects" style="width: 100%; margin-bottom: 20px;" class="group-table">
+                        <!-- 序号列 -->
+                        <el-table-column type="index" label="序号" width="60" align="center"></el-table-column>
+                        
+                        <el-table-column>
+                            <template slot="header">
+                                <div style="display: flex; align-items: center; column-gap: 5px;">
+                                    <span>项目名称</span>
+                                    <el-tooltip content="名称排序" placement="top">
+                                        <el-button 
+                                            type="text" 
+                                            @click="toggleSortOrder('name')" 
+                                            class="sort-btn"
+                                            style="padding: 0; margin-left: 2px;">
+                                            <i :class="['el-icon-sort', sortField === 'name' && sortOrder === 'desc' ? 'el-icon-sort-desc' : 'el-icon-sort-asc']"></i>
+                                        </el-button>
+                                    </el-tooltip>
+                                </div>
+                            </template>
+                             <template slot-scope="scope">
+                                 <span class="project-name-link" 
+                                       @click="openProject(scope.row)"
+                                       style="color: #409EFF; cursor: pointer; text-decoration: none;"
+                                       @mouseover="$event.target.style.textDecoration='underline'"
+                                       @mouseout="$event.target.style.textDecoration='none'">
+                                     {{`{{ scope.row.name }}`}}({{`{{ scope.row.id }}`}})
+                                 </span>
+                             </template>
+                        </el-table-column>
+                        
+                        <el-table-column prop="root_node_id" label="Root Node ID" width="150"></el-table-column>
+                        
+                        <el-table-column width="180">
+                            <template slot="header">
+                                <div style="display: flex; align-items: center; column-gap: 5px;">
+                                    <span>创建时间</span>
+                                    <el-tooltip content="时间排序" placement="top">
+                                        <el-button 
+                                            type="text" 
+                                            @click="toggleSortOrder('time')" 
+                                            class="sort-btn"
+                                            style="padding: 0; margin-left: 2px;">
+                                            <i :class="['el-icon-sort', sortField === 'time' && sortOrder === 'desc' ? 'el-icon-sort-desc' : 'el-icon-sort-asc']"></i>
+                                        </el-button>
+                                    </el-tooltip>
+                                </div>
+                            </template>
+                             <template slot-scope="scope">
+                                 {{`{{ formatDate(scope.row.created_at) }}`}}
+                             </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="操作" width="240">
+                            <template slot-scope="scope">
+                                <el-button v-if="scope.row.figma_url" 
+                                           class="figma-link-btn" 
+                                           size="mini" 
+                                           circle 
+                                           icon="el-icon-link"
+                                           @click="openFigmaLink(scope.row.figma_url)"
+                                           title="在Figma中打开">
+                                </el-button>
+                                <el-button size="mini" type="primary" @click="showEditDialog(scope.row)">编辑</el-button>
+                                <el-button size="mini" type="danger" @click="deleteProject(scope.row)">删除</el-button>
+                            </template>
+                        </el-table-column>
+                        </el-table>
+                    </transition>
+                </div>
             </template>
             <div v-else-if="projects && projects.length > 0 && processedProjects.length === 0" class="no-result">
                 <i class="el-icon-search"></i>

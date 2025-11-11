@@ -1,5 +1,5 @@
 /**
- * Figma Bridge 登录页面脚本
+ * Figma Deliver 登录页面脚本
  */
 
 // 创建Vue实例
@@ -70,8 +70,8 @@ new Vue({
                     axios.post('/login', formData)
                         .then(response => {
                             this.$message.success('登录成功');
-                            // 登录成功后直接跳转到仪表盘
-                            window.location.href = '/dashboard';
+                            // 登录成功后跳转到项目列表页面
+                            window.location.href = '/projects';
                         })
                         .catch(error => {
                             this.$message.error(error.response?.data?.error || '登录失败');
@@ -97,7 +97,7 @@ new Vue({
                     axios.post('/register', formData)
                         .then(response => {
                             this.$message.success('注册成功');
-                            window.location.href = '/dashboard';
+                            window.location.href = '/projects';
                         })
                         .catch(error => {
                             this.$message.error(error.response?.data?.error || '注册失败');

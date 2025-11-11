@@ -1,5 +1,5 @@
 /**
- * Figma Bridge 项目列表样式
+ * Figma Deliver 项目列表样式
  */
 
 /* 基础布局 */
@@ -187,5 +187,296 @@
     padding: 20px;
     color: #909399;
     font-size: 14px;
+}
+
+/* 分组显示样式 */
+.file-group {
+    margin-bottom: 30px;
+    border: 1px solid #e4e7ed;
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.group-header {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    padding: 15px 20px;
+    border-bottom: 1px solid #e4e7ed;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    user-select: none;
+}
+
+.group-header:hover {
+    background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+}
+
+.group-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.group-title i {
+    color: #409EFF;
+    font-size: 16px;
+}
+
+.file-key {
+    font-weight: 600;
+    font-size: 16px;
+    color: #303133;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    background-color: #f1f2f6;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #d3d4d6;
+}
+
+/* 分组显示名称样式 */
+.group-display-name {
+    font-weight: 600;
+    font-size: 16px;
+    color: #303133;
+    background-color: #f1f2f6;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid #d3d4d6;
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.group-display-name:hover {
+    background-color: #e9ecef;
+    border-color: #409EFF;
+    color: #409EFF;
+}
+
+.group-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.file-key-badge {
+    font-size: 12px;
+    color: #909399;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    background-color: #f5f7fa;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #e4e7ed;
+    opacity: 0.8;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.file-key-badge:hover {
+    background-color: #e9ecef;
+    border-color: #409EFF;
+    color: #409EFF;
+    opacity: 1;
+}
+
+.file-key-badge:active {
+    transform: scale(0.98);
+}
+
+.file-key-badge i {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.file-key-badge:hover i {
+    opacity: 1;
+}
+
+.group-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.group-table {
+    border: none !important;
+}
+
+.group-table .el-table__header {
+    background-color: #fafbfc;
+}
+
+.group-table .el-table__header th {
+    background-color: #fafbfc !important;
+    border-bottom: 1px solid #e4e7ed;
+    color: #606266;
+    font-weight: 500;
+}
+
+.group-table .el-table__body tr:hover > td {
+    background-color: #f5f7fa !important;
+}
+
+.group-table .el-table__body tr:last-child td {
+    border-bottom: none;
+}
+
+/* 分组表格内的序号列调整 */
+.group-table .el-table__body .el-table__cell.is-center {
+    background-color: transparent;
+}
+
+/* 展开/收起控制按钮 */
+.expand-controls {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: 10px;
+}
+
+.expand-controls .el-button {
+    color: #606266;
+    font-size: 12px;
+}
+
+.expand-controls .el-button:hover {
+    color: #409EFF;
+}
+
+/* 分组标题位置调整 */
+.group-title {
+    position: relative;
+}
+
+/* 展开/收起图标样式 */
+.expand-icon {
+    color: #409EFF;
+    font-size: 16px;
+    margin-right: 8px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.expand-icon:hover {
+    color: #66b1ff;
+    transform: scale(1.1);
+}
+
+.collapse-arrow {
+    color: #909399;
+    font-size: 12px;
+    margin-right: 8px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.collapse-arrow:hover {
+    color: #409EFF;
+    transform: scale(1.1);
+}
+
+.collapse-arrow.el-icon-arrow-down {
+    transform: rotate(0deg);
+}
+
+.collapse-arrow.el-icon-arrow-right {
+    transform: rotate(0deg);
+}
+
+/* 展开/收起按钮样式 */
+.expand-btn {
+    color: #606266;
+    font-size: 12px;
+    margin-right: 5px;
+}
+
+.expand-btn:hover {
+    color: #409EFF;
+    background-color: rgba(64, 158, 255, 0.1);
+}
+
+.expand-btn i {
+    font-weight: bold;
+}
+
+/* 分组折叠动画 */
+.group-collapse-enter-active,
+.group-collapse-leave-active {
+    transition: all 0.3s ease;
+    max-height: 1000px;
+    overflow: hidden;
+}
+
+.group-collapse-enter,
+.group-collapse-leave-to {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-10px);
+}
+
+/* 分组容器动画优化 */
+.file-group {
+    transition: all 0.3s ease;
+    transform-origin: top;
+}
+
+.file-group:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 折叠状态下的分组样式 */
+.file-group.collapsed {
+    margin-bottom: 10px;
+}
+
+.file-group.collapsed .group-header {
+    border-bottom: none;
+    border-radius: 8px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .group-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .group-title {
+        flex-wrap: wrap;
+    }
+    
+    .file-key {
+        font-size: 14px;
+        word-break: break-all;
+    }
+    
+    .group-display-name {
+        font-size: 14px;
+        max-width: 200px;
+        padding: 4px 8px;
+    }
+    
+    .expand-controls {
+        flex-direction: column;
+        gap: 2px;
+    }
+    
+    .expand-controls .el-button {
+        font-size: 11px;
+        padding: 2px 4px;
+    }
 }
 

@@ -1,5 +1,5 @@
 @echo off
-echo ===== Figma Bridge 启动脚本 =====
+echo ===== Figma Deliver 启动脚本 =====
 echo.
 
 echo 1. 查找并结束现有的 figma-bridge 进程...
