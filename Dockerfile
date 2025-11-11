@@ -60,8 +60,8 @@ WORKDIR /app
 # 从构建阶段复制二进制文件
 COPY --from=builder /app/figma-deliver .
 
-# 复制配置文件模板
-COPY --from=builder /app/configs/config.env ./configs/
+# 复制配置文件（YAML格式）
+COPY --from=builder /app/configs/config.yaml ./configs/
 
 # 复制Web静态资源和模板
 COPY --from=builder /app/web ./web
@@ -80,7 +80,7 @@ RUN mkdir -p logs exports temp data && \
     chmod 770 /app/temp && \
     chmod 770 /app/data && \
     chmod 500 /app/figma-deliver && \
-    chmod 440 /app/configs/config.env
+    chmod 440 /app/configs/config.yaml
 
 # 切换到非root用户
 USER appuser

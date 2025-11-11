@@ -1,0 +1,22 @@
+# Figma Deliver 配置文件示例
+# 复制此文件为 config.yaml 并修改相应的值
+
+# 应用配置
+app:
+  port: 8080
+  gin_mode: debug  # 可选值: debug, release
+  session_secret: your-secret-key-change-this-in-production
+
+# 数据库配置
+database:
+  host: localhost
+  port: 3306
+  user: your_db_user
+  password: your_db_password
+  name: figma_deliver
+
+# 文件存储配置
+storage:
+  export_dir: ./exports
+  temp_dir: ./temp
+
