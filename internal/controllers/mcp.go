@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/figma-bridge/internal/models"
-	"github.com/figma-bridge/internal/services"
+	"github.com/figma-deliver/internal/models"
+	"github.com/figma-deliver/internal/services"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )

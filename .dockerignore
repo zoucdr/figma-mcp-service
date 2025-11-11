@@ -21,7 +21,7 @@ bin/
 cmd/__debug_bin*
 cmd/*.exe
 *.exe
-figma-bridge.exe
+figma-deliver.exe
 figma-deliver
 figma-deliver-service
 

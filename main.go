@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/figma-bridge/internal/controllers"
-	"github.com/figma-bridge/internal/middleware"
-	"github.com/figma-bridge/internal/models"
+	"github.com/figma-deliver/internal/controllers"
+	"github.com/figma-deliver/internal/middleware"
+	"github.com/figma-deliver/internal/models"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -48,7 +48,7 @@ func main() {
 	r.Use(middleware.CORSMiddleware())
 
 	// 设置会话存储
-	store := cookie.NewStore([]byte(getEnv("SESSION_SECRET", "figma-bridge-secret")))
+	store := cookie.NewStore([]byte(getEnv("SESSION_SECRET", "figma-deliver-secret")))
 
 	// 配置会话选项
 	store.Options(sessions.Options{
@@ -58,7 +58,7 @@ func main() {
 		Secure:   false, // 开发环境不需要HTTPS
 	})
 
-	r.Use(sessions.Sessions("figma-bridge-session", store))
+	r.Use(sessions.Sessions("figma-deliver-session", store))
 
 	// 添加CSRF中间件
 	r.Use(middleware.CSRF())

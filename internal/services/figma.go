@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/figma-bridge/internal/models"
+	"github.com/figma-deliver/internal/models"
 )
 
 // FigmaService Figma API服务

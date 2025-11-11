@@ -12,7 +12,7 @@ services:
     environment:
       - PORT=8080
       - GIN_MODE=release
-      - SESSION_SECRET=figma-bridge-secret-key-change-this-in-production
+      - SESSION_SECRET=figma-deliver-secret-key-change-this-in-production
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_USER=figma_user

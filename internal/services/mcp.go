@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/figma-bridge/internal/models"
+	"github.com/figma-deliver/internal/models"
 )
 
 // MCPService MCP服务管理器

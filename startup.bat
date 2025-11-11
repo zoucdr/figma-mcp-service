@@ -2,12 +2,12 @@
 echo ===== Figma Deliver 启动脚本 =====
 echo.
 
-echo 1. 查找并结束现有的 figma-bridge 进程...
-taskkill /F /IM figma-bridge.exe >nul 2>&1
+echo 1. 查找并结束现有的 figma-deliver 进程...
+taskkill /F /IM figma-deliver.exe >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo    已结束现有的 figma-bridge 进程
+    echo    已结束现有的 figma-deliver 进程
 ) else (
-    echo    未发现正在运行的 figma-bridge 进程
+    echo    未发现正在运行的 figma-deliver 进程
 )
 echo.
 
@@ -26,7 +26,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8080 ^| findstr LISTENING') 
 echo.
 
 echo 3. 检查是否存在可执行文件...
-go build -o figma-bridge.exe ./cmd
+go build -o figma-deliver.exe ./cmd
 echo.
 
 echo 4. 启动应用程序...
@@ -34,4 +34,4 @@ echo    应用程序已启动，请访问 http://localhost:8080
 echo    按 Ctrl+C 可以终止程序
 echo.
 echo ===== 应用程序日志 =====
-figma-bridge.exe
+figma-deliver.exe

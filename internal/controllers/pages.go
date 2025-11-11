@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/figma-bridge/internal/middleware"
-	"github.com/figma-bridge/internal/models"
+	"github.com/figma-deliver/internal/middleware"
+	"github.com/figma-deliver/internal/models"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/figma-bridge/internal/models"
+	"github.com/figma-deliver/internal/models"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
