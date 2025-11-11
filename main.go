@@ -21,7 +21,7 @@ func main() {
 	err := godotenv.Load("configs/config.env")
 	if err != nil {
 		// 尝试从上级目录加载
-		err = godotenv.Load("../configs/config.env")
+		err = godotenv.Load("./configs/config.env")
 		if err != nil {
 			// 尝试从当前目录加载
 			err = godotenv.Load(".env")
