@@ -27,7 +27,7 @@ RUN go mod tidy && go mod verify
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -a -installsuffix cgo \
     -ldflags="-w -s -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo 'v1.0.0')" \
-    -o figma-deliver ./cmd/main.go
+    -o figma-deliver ./main.go
 
 # 运行阶段 - 使用精简的基础镜像以减小体积，提高K8s部署速度
 FROM alpine:3.19
