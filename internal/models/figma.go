@@ -92,15 +92,21 @@ func GetProjectByUserFileKeyAndRootNodeID(userID uint, fileKey string, rootNodeI
 
 // CreateOrUpdateProject 创建或更新项目
 func CreateOrUpdateProject(userID uint, fileKey, rootNodeID, name, figmaURL string) (*FigmaProject, error) {
+	return CreateOrUpdateProjectWithGroup(userID, fileKey, rootNodeID, name, figmaURL, "")
+}
+
+// CreateOrUpdateProjectWithGroup 创建或更新项目（支持分组名称）
+func CreateOrUpdateProjectWithGroup(userID uint, fileKey, rootNodeID, name, figmaURL, groupName string) (*FigmaProject, error) {
 	var project FigmaProject
 
 	// 如果提供了rootNodeID，先尝试精确匹配
 	if rootNodeID != "" {
 		result := DB.Where("user_id = ? AND file_key = ? AND root_node_id = ?", userID, fileKey, rootNodeID).First(&project)
 		if result.Error == nil {
-			// 找到精确匹配，更新名称和URL
+			// 找到精确匹配，更新名称、URL和分组名称
 			project.Name = name
 			project.FigmaURL = figmaURL
+			project.GroupName = groupName
 			DB.Save(&project)
 			return &project, nil
 		}
@@ -113,6 +119,7 @@ func CreateOrUpdateProject(userID uint, fileKey, rootNodeID, name, figmaURL stri
 		RootNodeID: rootNodeID,
 		Name:       name,
 		FigmaURL:   figmaURL,
+		GroupName:  groupName,
 	}
 	result := DB.Create(&project)
 	if result.Error != nil {

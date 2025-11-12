@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -118,6 +119,25 @@ func main() {
 
 	// 设置静态文件目录
 	r.Static("/static", "./web/static")
+
+	// 设置模板函数
+	r.SetFuncMap(template.FuncMap{
+		"len": func(v interface{}) int {
+			if v == nil {
+				return 0
+			}
+			switch val := v.(type) {
+			case map[string]interface{}:
+				return len(val)
+			case []interface{}:
+				return len(val)
+			case string:
+				return len(val)
+			default:
+				return 0
+			}
+		},
+	})
 
 	// 加载所有模板文件，包括布局模板
 	r.LoadHTMLGlob("./web/templates/*")
@@ -324,7 +344,20 @@ func main() {
 	figmaGroup.POST("/project/:project_id/export", controllers.ExportFigmaDesign)
 	figmaGroup.GET("/project/:project_id/export/active", controllers.GetProjectActiveExportJob)
 	figmaGroup.GET("/export/:job_id", controllers.GetExportStatus)
+	figmaGroup.GET("/export/status/:job_id", controllers.GetExportStatus)
 	figmaGroup.GET("/export/:job_id/download", controllers.DownloadExport)
+
+	// Swift代码导出功能
+	figmaGroup.POST("/project/:project_id/export/swift", controllers.ExportSwiftCode)
+	figmaGroup.POST("/project/:project_id/swift/preview", controllers.GenerateSwiftPreview)
+	figmaGroup.POST("/project/:project_id/swift/preview-full", controllers.GenerateSwiftFullPreview)
+	figmaGroup.GET("/project/:project_id/swift/code-preview", controllers.ShowSwiftCodePreview)
+
+	// Android代码导出功能
+	figmaGroup.POST("/project/:project_id/export/android", controllers.ExportAndroidCode)
+	figmaGroup.POST("/project/:project_id/android/preview", controllers.GenerateAndroidPreview)
+	figmaGroup.POST("/project/:project_id/android/preview-full", controllers.GenerateAndroidFullPreview)
+	figmaGroup.GET("/project/:project_id/android/code-preview", controllers.ShowAndroidCodePreview)
 
 	// Cursor MCP HTTP接口 - 无需认证，通过connection_id验证
 	// 支持 /mcp/connection_id 格式的URL访问

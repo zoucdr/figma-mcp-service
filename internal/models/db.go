@@ -96,9 +96,6 @@ func InitDB() {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 
-	// 为 PromptLike 创建联合唯一索引
-	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_like_unique ON prompt_likes(prompt_share_id, user_id)")
-
 	log.Printf("数据库连接和迁移成功")
 }
 

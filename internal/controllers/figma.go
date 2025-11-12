@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/figma-deliver/internal/middleware"
 	"github.com/figma-deliver/internal/models"
 	"github.com/figma-deliver/internal/services"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,6 +21,7 @@ import (
 func ParseFigmaLink(c *gin.Context) {
 	link := c.PostForm("link")
 	name := c.PostForm("name")
+	groupName := c.PostForm("group_name") // 添加分组名称参数
 
 	if link == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -43,9 +46,10 @@ func ParseFigmaLink(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"fileKey": fileKey,
-		"nodeId":  nodeId,
-		"name":    name,
+		"fileKey":   fileKey,
+		"nodeId":    nodeId,
+		"name":      name,
+		"groupName": groupName, // 返回分组名称
 	})
 }
 
@@ -71,8 +75,11 @@ func GetFigmaNode(c *gin.Context) {
 	// 获取Figma URL参数
 	figmaURL := c.Query("figma_url")
 
+	// 获取分组名称参数
+	groupName := c.Query("group_name")
+
 	// 创建或获取项目，只保存到figma_projects表
-	project, err := services.GetOrCreateFigmaProject(userID, fileKey, nodeID, projectName, figmaURL)
+	project, err := services.GetOrCreateFigmaProjectWithGroup(userID, fileKey, nodeID, projectName, figmaURL, groupName)
 	if err != nil {
 		// 检查是否是用户不存在的错误
 		if strings.Contains(err.Error(), "用户不存在") {
@@ -1905,5 +1912,580 @@ func GetRefNodeDetails(c *gin.Context) {
 			"node_details": nodeDetails,
 		},
 		"message": "获取依赖节点详细信息成功",
+	})
+}
+
+// ExportSwiftCode 导出Swift代码
+func ExportSwiftCode(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 解析请求体中的Swift导出配置
+	var config services.SwiftExportConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		// 使用默认配置
+		config = services.SwiftExportConfig{
+			ImageFormat: "png",
+			ImageScale:  2.0,
+			CodeStyle:   "uikit-autolayout",
+			Options:     []string{"generateExtensions", "generateResourceManager"},
+		}
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权限访问此项目",
+		})
+		return
+	}
+
+	// 先取消该项目的所有进行中的导出任务
+	err = models.CancelExportJobsByProject(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "取消之前的导出任务失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 创建Swift导出任务
+	job := &models.ExportJob{
+		UserID:    userID,
+		ProjectID: uint(projectID),
+		Status:    "pending",
+		Progress:  0,
+		Format:    config.ImageFormat,
+		Scale:     config.ImageScale,
+	}
+
+	result := models.DB.Create(job)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "创建导出任务失败: " + result.Error.Error(),
+		})
+		return
+	}
+
+	// 异步处理Swift导出任务
+	go services.ProcessSwiftExportJob(job.ID, config)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"job_id":  job.ID,
+		"message": "Swift代码导出任务已创建",
+	})
+}
+
+// GenerateSwiftPreview 生成Swift代码预览
+func GenerateSwiftPreview(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 解析请求体中的Swift导出配置
+	var config services.SwiftExportConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		// 使用默认配置
+		config = services.SwiftExportConfig{
+			ImageFormat: "png",
+			ImageScale:  2.0,
+			CodeStyle:   "uikit-autolayout",
+			Options:     []string{"generateExtensions", "generateResourceManager"},
+		}
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权限访问此项目",
+		})
+		return
+	}
+
+	// 生成Swift代码预览
+	preview, err := services.GenerateSwiftPreview(project, config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "生成Swift代码预览失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"preview": preview,
+		"message": "Swift代码预览生成成功",
+	})
+}
+
+// GenerateSwiftFullPreview 生成完整的Swift代码预览（所有文件）
+func GenerateSwiftFullPreview(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 解析请求体中的Swift导出配置
+	var config services.SwiftExportConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		// 使用默认配置
+		config = services.SwiftExportConfig{
+			ImageFormat: "png",
+			ImageScale:  2.0,
+			CodeStyle:   "uikit-autolayout",
+			Options:     []string{"generateExtensions", "generateResourceManager"},
+		}
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权限访问此项目",
+		})
+		return
+	}
+
+	// 生成完整的Swift代码文件
+	files, err := services.GenerateSwiftFullPreview(project, config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "生成Swift代码预览失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"files":   files,
+		"message": "Swift代码预览生成成功",
+	})
+}
+
+// ShowSwiftCodePreview 显示Swift代码预览页面
+func ShowSwiftCodePreview(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.HTML(http.StatusBadRequest, "error.html", gin.H{
+			"title":   "错误",
+			"message": "项目ID无效",
+		})
+		return
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error.html", gin.H{
+			"title":   "项目不存在",
+			"message": "找不到指定的项目",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.HTML(http.StatusForbidden, "error.html", gin.H{
+			"title":   "无权限",
+			"message": "您无权限访问此项目",
+		})
+		return
+	}
+
+	// 获取导出配置（从查询参数或使用默认值）
+	exportConfig := services.SwiftExportConfig{
+		ImageFormat: c.DefaultQuery("imageFormat", "png"),
+		ImageScale:  2.0,
+		CodeStyle:   c.DefaultQuery("codeStyle", "uikit-autolayout"),
+		Options:     []string{"generateExtensions", "generateResourceManager"},
+	}
+
+	// 解析缩放比例
+	if scaleStr := c.Query("imageScale"); scaleStr != "" {
+		if scale, err := strconv.ParseFloat(scaleStr, 64); err == nil && scale > 0 && scale <= 4.0 {
+			exportConfig.ImageScale = scale
+		}
+	}
+
+	// 解析选项
+	if optionsStr := c.Query("options"); optionsStr != "" {
+		exportConfig.Options = strings.Split(optionsStr, ",")
+	}
+
+	// 尝试生成代码文件
+	var codeFiles map[string]string
+	files, err := services.GenerateSwiftFullPreview(project, exportConfig)
+	if err != nil {
+		// 如果生成失败，使用空的文件映射，让前端处理
+		codeFiles = make(map[string]string)
+	} else {
+		codeFiles = files
+	}
+
+	// 序列化数据为JSON
+	codeFilesJSON, _ := json.Marshal(codeFiles)
+	exportConfigJSON, _ := json.Marshal(exportConfig)
+
+	// 确保CSRF令牌存在
+	session := sessions.Default(c)
+	csrfToken := session.Get("csrf_token")
+	if csrfToken == nil {
+		token, err := middleware.GenerateRandomString(32)
+		if err != nil {
+			c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+				"title":   "系统错误",
+				"message": "生成CSRF令牌失败",
+			})
+			return
+		}
+		session.Set("csrf_token", token)
+		session.Save()
+		csrfToken = token
+	}
+
+	// 渲染代码预览页面
+	c.HTML(http.StatusOK, "code-preview.html", gin.H{
+		"title":         "Swift 代码预览",
+		"project_id":    project.ID,
+		"project_name":  project.Name,
+		"code_files":    string(codeFilesJSON),
+		"export_config": string(exportConfigJSON),
+		"csrf_token":    csrfToken,
+		"timestamp":     time.Now().Unix(),
+		"file_count":    len(codeFiles),
+	})
+}
+
+// ExportAndroidCode 导出Android代码
+func ExportAndroidCode(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 解析请求体中的Android导出配置
+	var config services.AndroidExportConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		// 使用默认配置
+		config = services.AndroidExportConfig{
+			ImageFormat: "png",
+			ImageScale:  2.0,
+			CodeStyle:   "kotlin-constraintlayout",
+			Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
+		}
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权限访问此项目",
+		})
+		return
+	}
+
+	// 先取消该项目的所有进行中的导出任务
+	err = models.CancelExportJobsByProject(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "取消之前的导出任务失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 创建Android导出任务
+	job := &models.ExportJob{
+		UserID:    userID,
+		ProjectID: uint(projectID),
+		Status:    "pending",
+		Progress:  0,
+		Format:    config.ImageFormat,
+		Scale:     config.ImageScale,
+	}
+
+	result := models.DB.Create(job)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "创建导出任务失败: " + result.Error.Error(),
+		})
+		return
+	}
+
+	// 异步处理Android导出任务
+	go services.ProcessAndroidExportJob(job.ID, config)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"job_id":  job.ID,
+		"message": "Android代码导出任务已创建",
+	})
+}
+
+// GenerateAndroidPreview 生成Android代码预览
+func GenerateAndroidPreview(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 解析请求体中的Android导出配置
+	var config services.AndroidExportConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		// 使用默认配置
+		config = services.AndroidExportConfig{
+			ImageFormat: "png",
+			ImageScale:  2.0,
+			CodeStyle:   "kotlin-constraintlayout",
+			Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
+		}
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权限访问此项目",
+		})
+		return
+	}
+
+	// 生成Android代码预览
+	preview, err := services.GenerateAndroidPreview(project, config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "生成Android代码预览失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"preview": preview,
+		"message": "Android代码预览生成成功",
+	})
+}
+
+// GenerateAndroidFullPreview 生成完整的Android代码预览（所有文件）
+func GenerateAndroidFullPreview(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 解析请求体中的Android导出配置
+	var config services.AndroidExportConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		// 使用默认配置
+		config = services.AndroidExportConfig{
+			ImageFormat: "png",
+			ImageScale:  2.0,
+			CodeStyle:   "kotlin-constraintlayout",
+			Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
+		}
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权限访问此项目",
+		})
+		return
+	}
+
+	// 生成完整的Android代码文件
+	files, err := services.GenerateAndroidFullPreview(project, config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "生成Android代码预览失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"files":   files,
+		"message": "Android代码预览生成成功",
+	})
+}
+
+// ShowAndroidCodePreview 显示Android代码预览页面
+func ShowAndroidCodePreview(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.HTML(http.StatusBadRequest, "error.html", gin.H{
+			"title":   "错误",
+			"message": "项目ID无效",
+		})
+		return
+	}
+
+	// 验证项目权限
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error.html", gin.H{
+			"title":   "项目不存在",
+			"message": "找不到指定的项目",
+		})
+		return
+	}
+
+	// 检查项目是否属于当前用户
+	if project.UserID != userID {
+		c.HTML(http.StatusForbidden, "error.html", gin.H{
+			"title":   "无权限",
+			"message": "您无权限访问此项目",
+		})
+		return
+	}
+
+	// 获取导出配置（从查询参数或使用默认值）
+	exportConfig := services.AndroidExportConfig{
+		ImageFormat: c.DefaultQuery("imageFormat", "png"),
+		ImageScale:  2.0,
+		CodeStyle:   c.DefaultQuery("codeStyle", "kotlin-constraintlayout"),
+		Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
+	}
+
+	// 解析缩放比例
+	if scaleStr := c.Query("imageScale"); scaleStr != "" {
+		if scale, err := strconv.ParseFloat(scaleStr, 64); err == nil && scale > 0 && scale <= 4.0 {
+			exportConfig.ImageScale = scale
+		}
+	}
+
+	// 解析选项
+	if optionsStr := c.Query("options"); optionsStr != "" {
+		exportConfig.Options = strings.Split(optionsStr, ",")
+	}
+
+	// 生成完整的Android代码文件
+	files, err := services.GenerateAndroidFullPreview(project, exportConfig)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+			"title":   "生成失败",
+			"message": "生成Android代码预览失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 将文件数据转换为JSON字符串
+	codeFilesJSON, err := json.Marshal(files)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+			"title":   "数据处理失败",
+			"message": "处理代码文件数据失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 将导出配置转换为JSON字符串
+	exportConfigJSON, err := json.Marshal(exportConfig)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+			"title":   "配置处理失败",
+			"message": "处理导出配置失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 生成CSRF令牌
+	csrfToken, err := middleware.GenerateRandomString(32)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+			"title":   "系统错误",
+			"message": "生成CSRF令牌失败",
+		})
+		return
+	}
+
+	c.HTML(http.StatusOK, "android-code-preview.html", gin.H{
+		"title":         "Android 代码预览",
+		"project_id":    project.ID,
+		"project_name":  project.Name,
+		"code_files":    string(codeFilesJSON),
+		"export_config": string(exportConfigJSON),
+		"csrf_token":    csrfToken,
+		"timestamp":     time.Now().Unix(),
 	})
 }

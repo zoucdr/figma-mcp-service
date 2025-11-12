@@ -154,15 +154,16 @@ func Profile(c *gin.Context) {
 	mcpToken := user.MCPToken
 
 	c.HTML(http.StatusOK, "standalone.html", gin.H{
-		"title":      "个人资料 - Figma Deliver",
-		"username":   username,
-		"figmaToken": user.FigmaToken,
-		"compTypes":  user.CompTypes,
-		"prompts":    user.Prompts,
-		"mcpToken":   mcpToken,
-		"timestamp":  time.Now().Unix(),
-		"csrf_token": csrfToken,
-		"template":   "profile",
+		"title":       "个人资料 - Figma Deliver",
+		"username":    username,
+		"figmaToken":  user.FigmaToken,
+		"compTypes":   user.CompTypes,
+		"prompts":     user.Prompts,
+		"codePrompts": user.CodePrompts,
+		"mcpToken":    mcpToken,
+		"timestamp":   time.Now().Unix(),
+		"csrf_token":  csrfToken,
+		"template":    "profile",
 	})
 }
 
@@ -174,6 +175,7 @@ func UpdateProfile(c *gin.Context) {
 	figmaToken := c.PostForm("figma_token")
 	compTypes := c.PostForm("comp_types")
 	prompts := c.PostForm("prompts")
+	codePrompts := c.PostForm("code_prompts")
 
 	// 如果用户名不为空，检查是否已存在
 	if username != "" {
@@ -226,6 +228,7 @@ func UpdateProfile(c *gin.Context) {
 		// 更新控件类型列表和提示词
 		user.CompTypes = compTypes
 		user.Prompts = prompts
+		user.CodePrompts = codePrompts
 		models.DB.Save(&user)
 
 		// 设置会话
@@ -254,7 +257,7 @@ func UpdateProfile(c *gin.Context) {
 	}
 
 	// 更新用户资料
-	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts)
+	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),

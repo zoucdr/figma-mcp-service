@@ -147,12 +147,53 @@ const ProjectEditorApp = {
             nodeSearchKeyword: '', // 节点搜索关键词
             searchMatchedNodes: [], // 搜索匹配的节点列表
             currentSearchIndex: 0, // 当前搜索结果索引
+            // 模板代码导出相关
+            swiftExportDialogVisible: false, // Swift导出弹窗是否可见
+            swiftExporting: false, // 是否正在导出Swift代码
+            generatingPreview: false, // 是否正在生成预览
+            swiftExportPreview: '', // Swift代码预览内容（已废弃）
+            swiftExportConfig: { // Swift导出配置
+                imageFormat: 'png',
+                imageScale: 2.0,
+                codeStyle: 'uikit-autolayout',
+                options: ['generateExtensions', 'generateResourceManager']
+            },
+            // Android导出相关
+            androidExportDialogVisible: false, // Android导出弹窗是否可见
+            androidExporting: false, // 是否正在导出Android代码
+            androidExportConfig: { // Android导出配置
+                imageFormat: 'png',
+                imageScale: 2.0,
+                codeStyle: 'kotlin-constraintlayout',
+                options: ['generateExtensions', 'generateResourceManager', 'generateStyles', 'generateColors']
+            },
+            // 代码预览弹窗相关
+            swiftCodePreviewDialogVisible: false, // 代码预览弹窗是否可见
+            swiftCodeFiles: {}, // Swift代码文件内容 {filename: content}
+            activeCodeTab: '', // 当前激活的代码标签页
             // 面板宽度调整相关
             treePanelWidth: 300, // 左侧树形图面板宽度
             propertyPanelWidth: 350, // 右侧属性面板宽度（固定）
             isResizing: false, // 是否正在调整大小
             resizeStartX: 0, // 调整开始时的X坐标
-            resizeStartWidth: 0 // 调整开始时的面板宽度
+            resizeStartWidth: 0, // 调整开始时的面板宽度
+            // 创建项目相关
+            createProjectDialogVisible: false, // 创建项目对话框是否可见
+            creatingProject: false, // 是否正在创建项目
+            createProjectForm: {
+                name: '',
+                group_name: '',
+                link: ''
+            },
+            createProjectRules: {
+                name: [
+                    { required: true, message: '请输入项目名称', trigger: 'blur' }
+                ],
+                link: [
+                    { required: true, message: '请输入Figma链接', trigger: 'blur' },
+                    { pattern: /figma\.com/, message: '请输入有效的Figma链接', trigger: 'blur' }
+                ]
+            }
         };
     },
     computed: {
@@ -935,6 +976,135 @@ const ProjectEditorApp = {
                 day: '2-digit',
                 hour: '2-digit',
                 minute: '2-digit'
+            });
+        },
+        
+        // 显示创建项目对话框
+        showCreateProjectDialog() {
+            // 重置表单
+            this.createProjectForm = {
+                name: '',
+                group_name: '',
+                link: ''
+            };
+            this.createProjectDialogVisible = true;
+            // 关闭下拉框
+            this.$nextTick(() => {
+                // 手动关闭下拉框
+                const selectComponent = this.$el.querySelector('.project-select .el-select');
+                if (selectComponent && selectComponent.__vue__) {
+                    selectComponent.__vue__.blur();
+                }
+            });
+        },
+        
+        // 创建项目
+        createProject() {
+            this.$refs.createProjectForm.validate((valid) => {
+                if (valid) {
+                    this.creatingProject = true;
+                    
+                    // 解析Figma链接
+                    this.parseFigmaLinkAndCreate();
+                } else {
+                    console.log('表单验证失败');
+                    return false;
+                }
+            });
+        },
+        
+        // 解析Figma链接并创建项目
+        parseFigmaLinkAndCreate() {
+            const link = this.createProjectForm.link;
+            
+            // 解析Figma链接
+            const figmaUrlPattern = /figma\.com\/file\/([a-zA-Z0-9]+)\/[^?]*(?:\?.*node-id=([^&]+))?/;
+            const match = link.match(figmaUrlPattern);
+            
+            if (!match) {
+                this.$message.error('无效的Figma链接格式');
+                this.creatingProject = false;
+                return;
+            }
+            
+            const fileKey = match[1];
+            let nodeId = match[2] || '0:1'; // 默认根节点
+            
+            // 处理URL编码的node-id
+            if (nodeId.includes('%3A')) {
+                nodeId = decodeURIComponent(nodeId);
+            }
+            
+            // 发送创建请求
+            const formData = new FormData();
+            formData.append('name', this.createProjectForm.name);
+            formData.append('group_name', this.createProjectForm.group_name);
+            formData.append('figma_url', link);
+            
+            fetch(`/api/figma/${fileKey}/${nodeId}?name=${encodeURIComponent(this.createProjectForm.name)}&figma_url=${encodeURIComponent(link)}`, {
+                method: 'GET',
+                headers: {
+                    'X-CSRF-Token': window.initialData?.csrfToken || ''
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // 创建成功后，如果有分组名称，需要更新项目信息
+                if (this.createProjectForm.group_name && data.project) {
+                    return this.updateProjectGroupName(data.project.id, this.createProjectForm.group_name);
+                }
+                
+                return data;
+            })
+            .then(data => {
+                this.$message.success('项目创建成功！');
+                this.createProjectDialogVisible = false;
+                this.creatingProject = false;
+                
+                // 切换到新创建的项目
+                const projectId = data.project ? data.project.id : data.id;
+                if (projectId) {
+                    this.$message({
+                        message: '正在切换到新项目...',
+                        type: 'info',
+                        duration: 1000
+                    });
+                    setTimeout(() => {
+                        window.location.href = `/dashboard?project=${projectId}`;
+                    }, 500);
+                }
+            })
+            .catch(error => {
+                console.error('创建项目失败:', error);
+                this.$message.error('创建项目失败: ' + error.message);
+                this.creatingProject = false;
+            });
+        },
+        
+        // 更新项目分组名称
+        updateProjectGroupName(projectId, groupName) {
+            const formData = new FormData();
+            formData.append('name', this.createProjectForm.name);
+            formData.append('group_name', groupName);
+            formData.append('figma_url', this.createProjectForm.link);
+            
+            return fetch(`/api/projects/${projectId}`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-Token': window.initialData?.csrfToken || ''
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                return { project: data.project };
             });
         },
         
@@ -4493,8 +4663,8 @@ const ProjectEditorApp = {
     },
     
     // 定位聚焦到选中节点
-    focusToSelectedNode() {
-        if (!this.currentNode || !this.rootNodeBounds || !this.$refs.previewContainer) return;
+        focusToSelectedNode() {
+        if (!this.currentNode) return;
         
         let node = null;
         let isRefNode = false;
@@ -4513,17 +4683,30 @@ const ProjectEditorApp = {
             return;
         }
         
-        console.log('聚焦到节点:', node.id, node.absoluteRenderBounds);
-        
         // 获取节点的边界信息
         const nodeBounds = node.absoluteRenderBounds;
-        const rootBounds = isRefNode && this.refNodeRootBounds ? this.refNodeRootBounds : this.rootNodeBounds;
         
-        // 计算节点中心相对于根节点的位置
+        // 对于依赖节点，需要检查依赖节点根边界是否存在
+        if (isRefNode && !this.refNodeRootBounds) {
+            console.log('依赖节点根边界信息不存在，无法聚焦');
+            return;
+        }
+        
+        // 检查主树根节点边界是否存在
+        if (!this.rootNodeBounds) {
+            console.log('主树根节点边界信息不存在，无法聚焦');
+            return;
+        }
+        
+        console.log('聚焦到节点:', node.id, node.absoluteRenderBounds);
+        console.log('是否为依赖节点:', isRefNode);
+        
+        // 计算节点中心相对于主树根节点的位置
+        // 注意：无论是主节点还是依赖节点，都应该基于主树根节点来计算相对位置
         const nodeCenterX = nodeBounds.x + nodeBounds.width / 2;
         const nodeCenterY = nodeBounds.y + nodeBounds.height / 2;
-        const rootCenterX = rootBounds.x + rootBounds.width / 2;
-        const rootCenterY = rootBounds.y + rootBounds.height / 2;
+        const rootCenterX = this.rootNodeBounds.x + this.rootNodeBounds.width / 2;
+        const rootCenterY = this.rootNodeBounds.y + this.rootNodeBounds.height / 2;
         
         // 计算相对偏移量
         const relativeX = nodeCenterX - rootCenterX;
@@ -6307,6 +6490,465 @@ const ProjectEditorApp = {
                     console.error('加载面板宽度失败:', e);
                 }
             }
+        },
+
+        // ==================== 模板代码导出功能 ====================
+
+        // 处理模板导出命令
+        handleTemplateExport(command) {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            switch (command) {
+                case 'unity-appui':
+                    this.showUnityExportDialog();
+                    break;
+                case 'android-kt':
+                    this.showAndroidExportDialog();
+                    break;
+                case 'ios-swift':
+                    this.showSwiftExportDialog();
+                    break;
+                case 'web-vue':
+                    this.showVueExportDialog();
+                    break;
+                default:
+                    this.$message.info(`${command} 导出功能即将推出`);
+            }
+        },
+
+        // 显示Swift导出弹窗
+        showSwiftExportDialog() {
+            // 重置配置为默认值
+            this.swiftExportConfig = {
+                imageFormat: 'png',
+                imageScale: 2.0,
+                codeStyle: 'uikit-autolayout',
+                options: ['generateExtensions', 'generateResourceManager']
+            };
+            this.swiftExportPreview = '';
+            this.swiftCodeFiles = {};
+            this.activeCodeTab = '';
+            this.swiftExportDialogVisible = true;
+        },
+
+        // 显示Swift代码预览（在新窗口中打开）
+        showSwiftCodePreview() {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            // 构建预览页面URL，包含导出配置参数
+            const params = new URLSearchParams({
+                imageFormat: this.swiftExportConfig.imageFormat,
+                imageScale: this.swiftExportConfig.imageScale.toString(),
+                codeStyle: this.swiftExportConfig.codeStyle,
+                options: this.swiftExportConfig.options.join(',')
+            });
+
+            const previewUrl = `/figma/project/${this.project.id}/swift/code-preview?${params.toString()}`;
+            
+            // 在新窗口中打开代码预览页面
+            const previewWindow = window.open(previewUrl, '_blank', 'width=1400,height=900,scrollbars=yes,resizable=yes');
+            
+            if (!previewWindow) {
+                this.$message.error('无法打开预览窗口，请检查浏览器弹窗设置');
+                return;
+            }
+
+            // 关闭Swift导出弹窗
+            this.swiftExportDialogVisible = false;
+            this.$message.success('代码预览页面已在新窗口中打开');
+        },
+
+        // 生成Swift代码预览（完整版本，用于代码预览弹窗）
+        async generateSwiftCodePreview() {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            try {
+                this.generatingPreview = true;
+                
+                const response = await fetch(`/figma/project/${this.project.id}/swift/preview-full`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': window.csrfToken
+                    },
+                    body: JSON.stringify(this.swiftExportConfig)
+                });
+
+                if (!response.ok) {
+                    throw new Error('生成代码预览失败');
+                }
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    this.swiftCodeFiles = result.files || {};
+                    
+                    // 设置默认激活的标签页
+                    const fileNames = Object.keys(this.swiftCodeFiles);
+                    if (fileNames.length > 0) {
+                        this.activeCodeTab = fileNames[0];
+                    }
+                    
+                    this.$message.success('代码预览生成成功');
+                } else {
+                    throw new Error(result.error || '生成代码预览失败');
+                }
+                
+            } catch (error) {
+                console.error('生成Swift代码预览错误:', error);
+                this.$message.error('生成代码预览失败: ' + error.message);
+                
+                // 显示示例代码
+                this.swiftCodeFiles = {
+                    'ViewController.swift': `//
+//  ViewController.swift
+//  Generated from Figma Design
+//  Created on ${new Date().toISOString().split('T')[0]}
+//
+
+import UIKit
+
+class ViewController: UIViewController {
+    
+    // MARK: - UI Components
+    private let containerView = UIView()
+    private let titleLabel = UILabel()
+    private let iconImageView = UIImageView()
+    
+    // MARK: - Lifecycle
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+        setupConstraints()
+    }
+    
+    // MARK: - Setup Methods
+    private func setupUI() {
+        view.backgroundColor = UIColor.systemBackground
+        
+        // Container View
+        containerView.backgroundColor = UIColor(red: 0.247, green: 0.318, blue: 0.710, alpha: 1.000)
+        containerView.layer.cornerRadius = 12
+        view.addSubview(containerView)
+        
+        // Title Label
+        titleLabel.text = "Welcome"
+        titleLabel.font = UIFont.systemFont(ofSize: 24, weight: .bold)
+        titleLabel.textColor = UIColor.white
+        titleLabel.textAlignment = .center
+        containerView.addSubview(titleLabel)
+    }
+    
+    private func setupConstraints() {
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        
+        NSLayoutConstraint.activate([
+            // Container View
+            containerView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            containerView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            containerView.widthAnchor.constraint(equalToConstant: 300),
+            containerView.heightAnchor.constraint(equalToConstant: 200),
+            
+            // Title Label
+            titleLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20)
+        ])
+    }
+}`,
+                    'README.md': `# Swift UIKit Code
+
+This Swift code was automatically generated from Figma design.
+
+## Error Information
+${error.message}
+
+## Files
+
+- ViewController.swift: Main view controller
+- *View.swift: Individual UI components  
+- UIView+Extensions.swift: Useful UIView extensions (optional)
+- ResourceManager.swift: Resource management utilities (optional)
+
+## Usage
+
+1. Add these files to your Xcode project
+2. Import the image assets to your project's asset catalog
+3. Update the view controller class name if needed
+4. Customize the code as needed for your app
+
+Generated on: ${new Date().toLocaleString()}
+`
+                };
+                this.activeCodeTab = 'ViewController.swift';
+            } finally {
+                this.generatingPreview = false;
+            }
+        },
+
+        // 导出Swift代码
+        async exportSwiftCode() {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            try {
+                this.swiftExporting = true;
+                
+                const response = await fetch(`/figma/project/${this.project.id}/export/swift`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': window.csrfToken
+                    },
+                    body: JSON.stringify(this.swiftExportConfig)
+                });
+
+                if (!response.ok) {
+                    throw new Error('导出请求失败');
+                }
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    this.$message.success('Swift代码导出任务已创建，请稍候...');
+                    this.swiftExportDialogVisible = false;
+                    this.checkSwiftExportStatus(result.job_id);
+                } else {
+                    throw new Error(result.error || '导出失败');
+                }
+                
+            } catch (error) {
+                console.error('Swift导出错误:', error);
+                this.$message.error('Swift导出失败: ' + error.message);
+            } finally {
+                this.swiftExporting = false;
+            }
+        },
+
+        // 检查Swift导出状态
+        async checkSwiftExportStatus(jobId) {
+            const checkStatus = async () => {
+                try {
+                    const response = await fetch(`/figma/export/status/${jobId}`);
+                    const result = await response.json();
+                    
+                    if (result.status === 'completed') {
+                        this.$message.success('Swift代码导出完成！');
+                        // 自动下载
+                        window.open(result.download_url, '_blank');
+                    } else if (result.status === 'failed') {
+                        this.$message.error('Swift代码导出失败: ' + result.error);
+                    } else if (result.status === 'processing') {
+                        // 显示进度
+                        this.$message.info(`Swift代码导出中... ${result.progress}%`);
+                        // 继续检查
+                        setTimeout(checkStatus, 2000);
+                    } else {
+                        // 继续检查
+                        setTimeout(checkStatus, 2000);
+                    }
+                } catch (error) {
+                    console.error('检查导出状态失败:', error);
+                    this.$message.error('检查导出状态失败');
+                }
+            };
+            
+            checkStatus();
+        },
+
+        // 其他模板导出方法（占位）
+        showUnityExportDialog() {
+            this.$message.info('Unity-AppUI 导出功能即将推出');
+        },
+
+        showAndroidExportDialog() {
+            // 重置配置为默认值
+            this.androidExportConfig = {
+                imageFormat: 'png',
+                imageScale: 2.0,
+                codeStyle: 'kotlin-constraintlayout',
+                options: ['generateExtensions', 'generateResourceManager', 'generateStyles', 'generateColors']
+            };
+            this.androidExportDialogVisible = true;
+        },
+
+        showVueExportDialog() {
+            this.$message.info('Web-Vue 导出功能即将推出');
+        },
+
+        // 从预览弹窗导出Swift代码
+        async exportSwiftCodeFromPreview() {
+            await this.exportSwiftCode();
+        },
+
+        // 复制代码到剪贴板
+        async copyCodeToClipboard(content, filename) {
+            try {
+                await navigator.clipboard.writeText(content);
+                this.$message.success(`${filename} 代码已复制到剪贴板`);
+            } catch (error) {
+                console.error('复制失败:', error);
+                // 降级方案：创建临时文本区域
+                const textArea = document.createElement('textarea');
+                textArea.value = content;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    this.$message.success(`${filename} 代码已复制到剪贴板`);
+                } catch (fallbackError) {
+                    this.$message.error('复制失败，请手动选择代码');
+                }
+                document.body.removeChild(textArea);
+            }
+        },
+
+        // 获取代码文件大小（格式化显示）
+        getCodeFileSize(content) {
+            const bytes = new Blob([content]).size;
+            if (bytes < 1024) {
+                return bytes + ' B';
+            } else if (bytes < 1024 * 1024) {
+                return Math.round(bytes / 1024) + ' KB';
+            } else {
+                return Math.round(bytes / (1024 * 1024)) + ' MB';
+            }
+        },
+
+        // ==================== Android代码导出功能 ====================
+
+        // 显示Android代码预览（在新窗口中打开）
+        showAndroidCodePreview() {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            // 构建预览页面URL，包含导出配置参数
+            const params = new URLSearchParams({
+                imageFormat: this.androidExportConfig.imageFormat,
+                imageScale: this.androidExportConfig.imageScale.toString(),
+                codeStyle: this.androidExportConfig.codeStyle,
+                options: this.androidExportConfig.options.join(',')
+            });
+
+            const previewUrl = `/figma/project/${this.project.id}/android/code-preview?${params.toString()}`;
+            
+            // 在新窗口中打开代码预览页面
+            const previewWindow = window.open(previewUrl, '_blank', 'width=1400,height=900,scrollbars=yes,resizable=yes');
+
+            if (!previewWindow) {
+                this.$message.error('无法打开预览窗口，请检查浏览器弹窗拦截设置');
+                return;
+            }
+
+            // 关闭Android导出弹窗
+            this.androidExportDialogVisible = false;
+            this.$message.success('代码预览页面已在新窗口中打开');
+        },
+
+        // 导出Android代码
+        async exportAndroidCode() {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            this.androidExporting = true;
+            
+            try {
+                const response = await fetch(`/figma/project/${this.project.id}/export/android`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': window.csrfToken
+                    },
+                    body: JSON.stringify(this.androidExportConfig)
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    this.$message.success('Android代码导出任务已创建，请稍候...');
+                    this.androidExportDialogVisible = false;
+                    this.checkAndroidExportStatus(result.job_id);
+                } else {
+                    throw new Error(result.error || '导出失败');
+                }
+            } catch (error) {
+                console.error('导出Android代码失败:', error);
+                this.$message.error('导出失败: ' + error.message);
+            } finally {
+                this.androidExporting = false;
+            }
+        },
+
+        // 检查Android导出状态
+        async checkAndroidExportStatus(jobId) {
+            const maxAttempts = 60; // 最多检查60次（5分钟）
+            let attempts = 0;
+
+            const checkStatus = async () => {
+                try {
+                    const response = await fetch(`/figma/export/status/${jobId}`);
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        const job = result.job;
+                        
+                        if (job.status === 'completed') {
+                            this.$message.success('Android代码导出完成！');
+                            // 自动下载
+                            if (job.file_path) {
+                                const downloadUrl = `/figma/export/${jobId}/download`;
+                                const link = document.createElement('a');
+                                link.href = downloadUrl;
+                                link.download = '';
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                            }
+                            return;
+                        } else if (job.status === 'failed') {
+                            this.$message.error('Android代码导出失败: ' + (job.error_message || '未知错误'));
+                            return;
+                        } else if (job.status === 'processing') {
+                            // 继续检查
+                            attempts++;
+                            if (attempts < maxAttempts) {
+                                setTimeout(checkStatus, 5000); // 5秒后再次检查
+                            } else {
+                                this.$message.warning('导出任务超时，请稍后手动检查');
+                            }
+                        }
+                    } else {
+                        throw new Error(result.error || '检查状态失败');
+                    }
+                } catch (error) {
+                    console.error('检查Android导出状态失败:', error);
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStatus, 5000); // 5秒后重试
+                    } else {
+                        this.$message.error('无法检查导出状态，请稍后手动查看');
+                    }
+                }
+            };
+
+            // 开始检查
+            setTimeout(checkStatus, 2000); // 2秒后开始检查
         }
     }
 };

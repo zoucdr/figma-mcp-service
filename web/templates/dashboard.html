@@ -25,6 +25,13 @@
                                     <div class="project-option-time">{{`{{ formatDate(proj.created_at) }}`}}</div>
                                 </div>
                             </el-option>
+                            <!-- 创建新项目按钮 -->
+                            <div class="create-project-option" @click.stop="showCreateProjectDialog">
+                                <div class="create-project-content">
+                                    <i class="el-icon-plus"></i>
+                                    <span>创建新项目</span>
+                                </div>
+                            </div>
                         </el-select>
                     </div>
                 </el-breadcrumb-item>
@@ -937,23 +944,52 @@
             </div>
         </div>
         
-        <!-- 重命名对话框 -->
-        <el-dialog
-            title="重命名节点"
-            :visible.sync="renameDialogVisible"
-            width="30%"
-            :close-on-click-modal="false"
-            @close="closeRenameDialog">
-            <el-form :model="renameForm" label-width="80px" @submit.native.prevent="confirmRename">
-                <el-form-item label="新名称">
-                    <el-input v-model="renameForm.newName" autocomplete="off" ref="renameInput" @keyup.enter.native="confirmRename"></el-input>
-                </el-form-item>
-            </el-form>
-            <span slot="footer" class="dialog-footer">
-                <el-button @click="closeRenameDialog">取消</el-button>
-                <el-button type="primary" @click="confirmRename">确定</el-button>
-            </span>
-        </el-dialog>
+    <!-- 重命名对话框 -->
+    <el-dialog
+        title="重命名节点"
+        :visible.sync="renameDialogVisible"
+        width="30%"
+        :close-on-click-modal="false"
+        @close="closeRenameDialog">
+        <el-form :model="renameForm" label-width="80px" @submit.native.prevent="confirmRename">
+            <el-form-item label="新名称">
+                <el-input v-model="renameForm.newName" autocomplete="off" ref="renameInput" @keyup.enter.native="confirmRename"></el-input>
+            </el-form-item>
+        </el-form>
+        <span slot="footer" class="dialog-footer">
+            <el-button @click="closeRenameDialog">取消</el-button>
+            <el-button type="primary" @click="confirmRename">确定</el-button>
+        </span>
+    </el-dialog>
+    
+    <!-- 创建项目对话框 -->
+    <el-dialog title="创建Figma项目" :visible.sync="createProjectDialogVisible" width="500px" class="custom-dialog">
+        <el-form :model="createProjectForm" :rules="createProjectRules" ref="createProjectForm" label-width="100px">
+            <el-form-item label="项目名称" prop="name">
+                <el-input v-model="createProjectForm.name" placeholder="输入项目名称"></el-input>
+            </el-form-item>
+            <el-form-item label="分组名称" prop="group_name">
+                <el-input v-model="createProjectForm.group_name" placeholder="输入分组名称（可选）">
+                    <template slot="append">
+                        <el-tooltip content="分组名称用于将多个项目归类显示，如果不填写则按File Key分组" placement="top">
+                            <i class="el-icon-question"></i>
+                        </el-tooltip>
+                    </template>
+                </el-input>
+            </el-form-item>
+            <el-form-item label="Figma链接" prop="link">
+                <el-input v-model="createProjectForm.link" placeholder="输入Figma文件链接"></el-input>
+                <div class="form-tip">
+                    <i class="el-icon-info"></i>
+                    <span>例如: https://www.figma.com/file/abcdefg/FileName?node-id=0%3A1</span>
+                </div>
+            </el-form-item>
+        </el-form>
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="createProjectDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="createProject" :loading="creatingProject">创建项目</el-button>
+        </div>
+    </el-dialog>
     </el-main>
     
     <!-- 底部导出功能区 - 固定在屏幕底部 -->
@@ -1001,6 +1037,31 @@
                 title="清除缓存">
                 清除缓存
             </el-button>
+            
+            <!-- 模板代码导出按钮 -->
+            <el-dropdown @command="handleTemplateExport" trigger="click" placement="top">
+                <el-button 
+                    class="template-export-btn" 
+                    type="primary" 
+                    size="small"
+                    title="模板代码导出">
+                    模板代码 <i class="el-icon-arrow-up el-icon--right"></i>
+                </el-button>
+                <el-dropdown-menu slot="dropdown">
+                    <el-dropdown-item command="unity-appui">
+                        <i class="el-icon-mobile-phone"></i> Unity-AppUI
+                    </el-dropdown-item>
+                    <el-dropdown-item command="android-kt">
+                        <i class="el-icon-phone"></i> Android-Kotlin
+                    </el-dropdown-item>
+                    <el-dropdown-item command="ios-swift">
+                        <i class="el-icon-mobile"></i> iOS-Swift
+                    </el-dropdown-item>
+                    <el-dropdown-item command="web-vue">
+                        <i class="el-icon-monitor"></i> Web-Vue
+                    </el-dropdown-item>
+                </el-dropdown-menu>
+            </el-dropdown>
             
         </div>
         
@@ -1065,6 +1126,132 @@
         </div>
         <div slot="footer" class="dialog-footer">
             <el-button @click="jsonPreviewDialogVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- iOS-Swift导出弹窗 -->
+    <el-dialog title="iOS-Swift 代码导出" :visible.sync="swiftExportDialogVisible" width="500px" class="custom-dialog swift-export-dialog" append-to-body>
+        <div class="swift-export-content">
+            <div class="export-description">
+                <i class="el-icon-mobile" style="color: #409EFF; font-size: 24px; margin-right: 10px;"></i>
+                <div>
+                    <h4 style="margin: 0 0 8px 0;">Swift UIKit 代码生成</h4>
+                    <p style="margin: 0; color: #666; font-size: 14px;">
+                        将Figma设计转换为Swift UIKit原生代码，包含视图控制器、UI组件和Auto Layout约束
+                    </p>
+                </div>
+            </div>
+            
+            <el-divider></el-divider>
+            
+            <div class="export-settings">
+                <el-form label-width="120px">
+                    <el-form-item label="图片格式:">
+                        <el-select v-model="swiftExportConfig.imageFormat" placeholder="选择图片格式" style="width: 100%;">
+                            <el-option label="PNG (推荐)" value="png"></el-option>
+                            <el-option label="JPG" value="jpg"></el-option>
+                            <el-option label="SVG" value="svg"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    
+                    <el-form-item label="图片缩放:">
+                        <el-select v-model="swiftExportConfig.imageScale" placeholder="选择缩放比例" style="width: 100%;">
+                            <el-option label="1x" :value="1.0"></el-option>
+                            <el-option label="2x (推荐)" :value="2.0"></el-option>
+                            <el-option label="3x" :value="3.0"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    
+                    <el-form-item label="代码风格:">
+                        <el-select v-model="swiftExportConfig.codeStyle" placeholder="选择代码风格" style="width: 100%;">
+                            <el-option label="UIKit + Auto Layout" value="uikit-autolayout"></el-option>
+                            <el-option label="UIKit + Frame" value="uikit-frame"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    
+                    <el-form-item label="生成选项:">
+                        <el-checkbox-group v-model="swiftExportConfig.options">
+                            <el-checkbox label="generateExtensions">生成扩展文件</el-checkbox>
+                            <el-checkbox label="generateResourceManager">生成资源管理器</el-checkbox>
+                            <el-checkbox label="generateConstraintHelpers">生成约束辅助方法</el-checkbox>
+                        </el-checkbox-group>
+                    </el-form-item>
+                </el-form>
+            </div>
+        </div>
+        
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="swiftExportDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="showSwiftCodePreview" :loading="generatingPreview">
+                <i class="el-icon-view"></i> 预览代码
+            </el-button>
+            <el-button type="success" @click="exportSwiftCode" :loading="swiftExporting">
+                <i class="el-icon-download"></i> 导出Swift代码
+            </el-button>
+        </div>
+    </el-dialog>
+
+    <!-- Android-Kotlin导出弹窗 -->
+    <el-dialog title="Android-Kotlin 代码导出" :visible.sync="androidExportDialogVisible" width="500px" class="custom-dialog android-export-dialog" append-to-body>
+        <div class="android-export-content">
+            <div class="export-description">
+                <i class="el-icon-phone" style="color: #4CAF50; font-size: 24px; margin-right: 10px;"></i>
+                <div>
+                    <h4 style="margin: 0 0 8px 0;">Android Kotlin 代码生成</h4>
+                    <p style="margin: 0; color: #666; font-size: 14px;">
+                        将Figma设计转换为Android Kotlin原生代码，包含Activity、布局文件和ConstraintLayout约束
+                    </p>
+                </div>
+            </div>
+            
+            <el-divider></el-divider>
+            
+            <div class="export-settings">
+                <el-form label-width="120px">
+                    <el-form-item label="图片格式:">
+                        <el-select v-model="androidExportConfig.imageFormat" placeholder="选择图片格式" style="width: 100%;">
+                            <el-option label="PNG (推荐)" value="png"></el-option>
+                            <el-option label="JPG" value="jpg"></el-option>
+                            <el-option label="SVG" value="svg"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    
+                    <el-form-item label="图片缩放:">
+                        <el-select v-model="androidExportConfig.imageScale" placeholder="选择缩放比例" style="width: 100%;">
+                            <el-option label="1x" :value="1.0"></el-option>
+                            <el-option label="2x (推荐)" :value="2.0"></el-option>
+                            <el-option label="3x" :value="3.0"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    
+                    <el-form-item label="代码风格:">
+                        <el-select v-model="androidExportConfig.codeStyle" placeholder="选择代码风格" style="width: 100%;">
+                            <el-option label="Kotlin + ConstraintLayout" value="kotlin-constraintlayout"></el-option>
+                            <el-option label="Kotlin + LinearLayout" value="kotlin-linearlayout"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    
+                    <el-form-item label="生成选项:">
+                        <el-checkbox-group v-model="androidExportConfig.options">
+                            <el-checkbox label="generateExtensions">生成扩展文件</el-checkbox>
+                            <el-checkbox label="generateResourceManager">生成资源管理器</el-checkbox>
+                            <el-checkbox label="generateStyles">生成样式文件</el-checkbox>
+                            <el-checkbox label="generateColors">生成颜色文件</el-checkbox>
+                            <el-checkbox label="generateDimens">生成尺寸文件</el-checkbox>
+                        </el-checkbox-group>
+                    </el-form-item>
+                </el-form>
+            </div>
+        </div>
+        
+        <div slot="footer" class="dialog-footer">
+            <el-button @click="androidExportDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="showAndroidCodePreview" :loading="generatingPreview">
+                <i class="el-icon-view"></i> 预览代码
+            </el-button>
+            <el-button type="success" @click="exportAndroidCode" :loading="androidExporting">
+                <i class="el-icon-download"></i> 导出Android代码
+            </el-button>
         </div>
     </el-dialog>
 
@@ -1243,6 +1430,9 @@ window.initialData = {
     mcpToken: {{ if .mcpToken }}"{{ .mcpToken }}"{{ else }}""{{ end }},
     csrfToken: '{{ .csrf_token }}'
 };
+
+// 设置全局CSRF令牌，供其他脚本使用
+window.csrfToken = '{{ .csrf_token }}';
 </script>
 <script src="/static/js/figma-plugin-bridge.js?v={{ .timestamp }}"></script>
 <script src="/static/js/dashboard.js?v={{ .timestamp }}"></script>

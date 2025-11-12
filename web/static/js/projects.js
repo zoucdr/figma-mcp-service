@@ -18,6 +18,7 @@ const ProjectListApp = {
             expandedGroups: {}, // 分组展开状态，key为fileKey，value为boolean
             linkForm: {
                 name: '',
+                group_name: '',
                 link: ''
             },
             editForm: {
@@ -174,6 +175,12 @@ const ProjectListApp = {
         
         // 显示添加链接对话框
         showLinkDialog() {
+            // 重置表单
+            this.linkForm = {
+                name: '',
+                group_name: '',
+                link: ''
+            };
             this.linkDialogVisible = true;
         },
         
@@ -185,6 +192,7 @@ const ProjectListApp = {
                     const formData = new FormData();
                     formData.append('link', this.linkForm.link);
                     formData.append('name', this.linkForm.name);
+                    formData.append('group_name', this.linkForm.group_name);
                     
                     axios.post('/figma/parse', formData)
                         .then(response => {
@@ -211,22 +219,48 @@ const ProjectListApp = {
                 showClose: true
             });
             
-            // 获取项目名称和Figma URL
+            // 获取项目名称、分组名称和Figma URL
             const name = this.linkForm.name;
+            const groupName = this.linkForm.group_name;
             const figmaURL = this.linkForm.link;
             
-            axios.get(`/figma/node/${fileKey}/${nodeId || ''}?name=${encodeURIComponent(name)}&figma_url=${encodeURIComponent(figmaURL)}`)
+            axios.get(`/figma/node/${fileKey}/${nodeId || ''}?name=${encodeURIComponent(name)}&figma_url=${encodeURIComponent(figmaURL)}&group_name=${encodeURIComponent(groupName)}`)
                 .then(response => {
                     this.$message.closeAll();
                     this.$message.success('获取节点数据成功');
+                    
+                    // 如果有分组名称，需要更新项目信息
+                    if (groupName && response.data.project) {
+                        return this.updateProjectGroupName(response.data.project.id, name, groupName, figmaURL);
+                    }
+                    
+                    return response.data;
+                })
+                .then(data => {
                     // 更新项目列表
-                    this.projects = [...this.projects, response.data.project];
+                    this.projects = [...this.projects, data.project];
                     // 跳转到编辑页面
-                    window.location.href = `/dashboard?project=${response.data.project.id}`;
+                    window.location.href = `/dashboard?project=${data.project.id}`;
                 })
                 .catch(error => {
                     this.$message.closeAll();
                     this.$message.error(error.response?.data?.error || '获取节点数据失败');
+                });
+        },
+        
+        // 更新项目分组名称
+        updateProjectGroupName(projectId, name, groupName, figmaURL) {
+            const formData = new FormData();
+            formData.append('name', name);
+            formData.append('group_name', groupName);
+            formData.append('figma_url', figmaURL);
+            
+            return axios.post(`/api/projects/${projectId}`, formData)
+                .then(response => {
+                    if (response.data.error) {
+                        throw new Error(response.data.error);
+                    }
+                    return { project: response.data.project };
                 });
         },
         

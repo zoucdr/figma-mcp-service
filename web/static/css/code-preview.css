@@ -1,0 +1,434 @@
+/* 代码预览页面样式 */
+
+/* CSS变量定义 */
+:root {
+    --primary-color: #409EFF;
+    --success-color: #67C23A;
+    --warning-color: #E6A23C;
+    --danger-color: #F56C6C;
+    --info-color: #909399;
+    
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #252526;
+    --bg-tertiary: #2d2d30;
+    --bg-quaternary: #383838;
+    
+    --text-primary: #cccccc;
+    --text-secondary: #969696;
+    --text-muted: #6a6a6a;
+    
+    --border-color: #3e3e42;
+    --hover-bg: rgba(255, 255, 255, 0.1);
+    
+    --font-mono: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
+}
+
+/* 全局样式 */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+/* 主应用容器 */
+.code-preview-app {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 顶部导航栏 */
+.preview-header {
+    height: 60px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    flex-shrink: 0;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
+.project-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.project-info i {
+    font-size: 24px;
+    color: var(--primary-color);
+}
+
+.project-info h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.header-right {
+    display: flex;
+    gap: 12px;
+}
+
+/* 主要内容区域 */
+.preview-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+/* 文件列表侧边栏 */
+.file-sidebar {
+    width: 300px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.sidebar-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.file-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.file-item {
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.file-item:hover {
+    background: var(--hover-bg);
+}
+
+.file-item.active {
+    background: rgba(64, 158, 255, 0.1);
+    border-left-color: var(--primary-color);
+}
+
+.file-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.file-info i {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.file-info .filename {
+    font-size: 13px;
+    color: var(--text-primary);
+    truncate: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.file-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.file-size {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* 文件图标 */
+.file-icon-swift { color: #fa7343; }
+.file-icon-md { color: #519aba; }
+.file-icon-txt { color: var(--text-secondary); }
+.file-icon-default { color: var(--text-secondary); }
+
+/* 代码显示区域 */
+.code-display {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.code-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 代码文件头部 */
+.code-header {
+    height: 50px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    flex-shrink: 0;
+}
+
+.file-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.file-title i {
+    font-size: 16px;
+}
+
+.file-title .filename {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.file-title .file-size {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.code-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* 代码内容 */
+.code-content {
+    flex: 1;
+    overflow: auto;
+    background: var(--bg-primary);
+}
+
+.code-block {
+    margin: 0;
+    padding: 24px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: #d4d4d4;
+    background: var(--bg-primary);
+    white-space: pre;
+    overflow-x: auto;
+    min-height: 100%;
+}
+
+.code-block code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+    font-family: inherit;
+}
+
+/* 语法高亮 */
+.lang-swift {
+    /* Swift语法高亮颜色 */
+    --keyword: #569cd6;
+    --string: #ce9178;
+    --comment: #6a9955;
+    --type: #4ec9b0;
+    --number: #b5cea8;
+}
+
+.lang-markdown {
+    /* Markdown语法高亮颜色 */
+    --header: #569cd6;
+    --bold: #d7ba7d;
+    --italic: #9cdcfe;
+    --code: #ce9178;
+}
+
+/* 空状态 */
+.empty-state {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-primary);
+}
+
+.empty-state .el-empty {
+    background: transparent;
+}
+
+.empty-state .el-empty__description {
+    color: var(--text-secondary);
+}
+
+/* 设置弹窗 */
+.settings-dialog .el-dialog {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.settings-dialog .el-dialog__header {
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 8px 8px 0 0;
+}
+
+.settings-dialog .el-dialog__title {
+    color: var(--text-primary);
+}
+
+.settings-dialog .el-dialog__body {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.settings-dialog .el-form-item__label {
+    color: var(--text-primary);
+}
+
+/* Element UI 组件样式覆盖 */
+.el-button {
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.el-button--primary {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.el-button--success {
+    background: var(--success-color);
+    border-color: var(--success-color);
+}
+
+.el-button--info {
+    background: var(--info-color);
+    border-color: var(--info-color);
+}
+
+.el-button--text {
+    color: var(--text-secondary);
+}
+
+.el-button--text:hover {
+    color: var(--primary-color);
+}
+
+.el-select .el-input__inner {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+.el-checkbox__label {
+    color: var(--text-primary);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--bg-quaternary);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .file-sidebar {
+        width: 250px;
+    }
+    
+    .preview-header {
+        padding: 0 16px;
+    }
+    
+    .project-info h1 {
+        font-size: 16px;
+    }
+    
+    .header-right {
+        gap: 8px;
+    }
+    
+    .code-block {
+        padding: 16px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .file-sidebar {
+        width: 200px;
+    }
+    
+    .preview-header {
+        height: 50px;
+        padding: 0 12px;
+    }
+    
+    .project-info h1 {
+        font-size: 14px;
+    }
+    
+    .code-header {
+        height: 40px;
+        padding: 0 12px;
+    }
+    
+    .code-block {
+        padding: 12px;
+        font-size: 11px;
+    }
+}

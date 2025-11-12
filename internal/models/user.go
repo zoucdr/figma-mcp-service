@@ -16,8 +16,9 @@ type User struct {
 	PasswordHash string         `gorm:"size:255;not null" json:"-"`
 	FigmaToken   string         `gorm:"size:255" json:"-"`
 	MCPToken     string         `gorm:"size:255" json:"mcp_token"`   // MCP Token
-	CompTypes    string         `gorm:"size:1000" json:"comp_types"` // 控件类型列表，逗号分隔
-	Prompts      string         `gorm:"type:text" json:"prompts"`    // 修饰提示词，用于MCP节点修饰
+	CompTypes    string         `gorm:"size:1000" json:"comp_types"`     // 控件类型列表，逗号分隔
+	Prompts      string         `gorm:"type:text" json:"prompts"`        // 修饰提示词，用于MCP节点修饰
+	CodePrompts  string         `gorm:"type:text" json:"code_prompts"`   // 代码生成提示词，用于Swift等代码生成
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	Projects     []FigmaProject `gorm:"foreignKey:UserID" json:"projects,omitempty"`
@@ -138,7 +139,7 @@ func (u *User) UpdateProfile(username, figmaToken, compTypes string) error {
 }
 
 // UpdateProfileWithPrompts 更新用户资料（包含提示词）
-func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts string) error {
+func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts string) error {
 	// 更新用户名
 	if err := u.UpdateUsername(username); err != nil {
 		return err
@@ -152,8 +153,11 @@ func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts
 	// 更新控件类型列表
 	u.CompTypes = compTypes
 
-	// 更新提示词
+	// 更新修饰提示词
 	u.Prompts = prompts
+
+	// 更新代码生成提示词
+	u.CodePrompts = codePrompts
 
 	// 保存所有更新
 	result := DB.Save(u)

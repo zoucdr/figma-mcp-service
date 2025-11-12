@@ -327,6 +327,11 @@ func CreateFigmaNode(projectID uint, nodeID, name, nodeType string, parentID int
 
 // GetOrCreateFigmaProject 获取或创建Figma项目
 func GetOrCreateFigmaProject(userID uint, fileKey, rootNodeID, name, figmaURL string) (*models.FigmaProject, error) {
+	return GetOrCreateFigmaProjectWithGroup(userID, fileKey, rootNodeID, name, figmaURL, "")
+}
+
+// GetOrCreateFigmaProjectWithGroup 获取或创建Figma项目（支持分组名称）
+func GetOrCreateFigmaProjectWithGroup(userID uint, fileKey, rootNodeID, name, figmaURL, groupName string) (*models.FigmaProject, error) {
 	// 确保用户存在
 	_, err := models.EnsureUserExists(userID)
 	if err != nil {
@@ -337,9 +342,17 @@ func GetOrCreateFigmaProject(userID uint, fileKey, rootNodeID, name, figmaURL st
 	if rootNodeID != "" {
 		project, err := models.GetProjectByUserFileKeyAndRootNodeID(userID, fileKey, rootNodeID)
 		if err == nil {
-			// 找到了精确匹配的项目，更新URL（如果提供了新的URL）
+			// 找到了精确匹配的项目，更新URL和分组名称（如果提供了新的值）
+			needSave := false
 			if figmaURL != "" && project.FigmaURL != figmaURL {
 				project.FigmaURL = figmaURL
+				needSave = true
+			}
+			if groupName != "" && project.GroupName != groupName {
+				project.GroupName = groupName
+				needSave = true
+			}
+			if needSave {
 				models.DB.Save(project)
 			}
 			return project, nil
@@ -350,7 +363,7 @@ func GetOrCreateFigmaProject(userID uint, fileKey, rootNodeID, name, figmaURL st
 	if rootNodeID == "" {
 		project, err := models.GetProjectByUserAndFileKey(userID, fileKey)
 		if err == nil {
-			// 找到了项目，但检查是否需要更新rootNodeID和URL
+			// 找到了项目，但检查是否需要更新rootNodeID、URL和分组名称
 			needSave := false
 			if project.RootNodeID == "" && rootNodeID != "" {
 				project.RootNodeID = rootNodeID
@@ -358,6 +371,10 @@ func GetOrCreateFigmaProject(userID uint, fileKey, rootNodeID, name, figmaURL st
 			}
 			if figmaURL != "" && project.FigmaURL != figmaURL {
 				project.FigmaURL = figmaURL
+				needSave = true
+			}
+			if groupName != "" && project.GroupName != groupName {
+				project.GroupName = groupName
 				needSave = true
 			}
 			if needSave {
@@ -368,7 +385,7 @@ func GetOrCreateFigmaProject(userID uint, fileKey, rootNodeID, name, figmaURL st
 	}
 
 	// 创建新项目
-	project, err := models.CreateOrUpdateProject(userID, fileKey, rootNodeID, name, figmaURL)
+	project, err := models.CreateOrUpdateProjectWithGroup(userID, fileKey, rootNodeID, name, figmaURL, groupName)
 	if err != nil {
 		return nil, err
 	}

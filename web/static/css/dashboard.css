@@ -344,6 +344,38 @@
     box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
+/* 创建项目按钮样式 */
+.create-project-option {
+    padding: 10px 16px;
+    margin: 8px 0 0 0;
+    border-top: 1px solid var(--dark-border);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: linear-gradient(145deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+}
+
+.create-project-option:hover {
+    background: linear-gradient(145deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+}
+
+.create-project-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dark-accent);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.create-project-content i {
+    margin-right: 8px;
+    font-size: 16px;
+}
+
+.create-project-content:hover {
+    color: var(--dark-accent-hover);
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
     .project-select {
@@ -2590,6 +2622,55 @@ body.resizing {
     padding: 20px 20px 10px;
 }
 
+/* 表单提示样式 */
+.form-tip {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--dark-text-muted);
+    display: flex;
+    align-items: center;
+}
+
+.form-tip i {
+    margin-right: 4px;
+    color: var(--dark-accent);
+}
+
+/* 输入框组合样式（用于分组名称字段的问号图标） */
+.el-input-group__append {
+    background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%) !important;
+    border: 2px solid rgba(102, 126, 234, 0.3) !important;
+    border-left: none !important;
+    color: var(--dark-text-primary) !important;
+}
+
+.el-input-group__append:hover {
+    background: linear-gradient(145deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%) !important;
+    border-color: var(--dark-accent) !important;
+}
+
+.el-input-group__append .el-icon-question {
+    color: var(--dark-accent) !important;
+    font-size: 16px !important;
+    transition: all 0.3s ease !important;
+}
+
+.el-input-group__append:hover .el-icon-question {
+    color: var(--dark-accent-hover) !important;
+    transform: scale(1.1) !important;
+}
+
+/* 对话框中的输入框组合样式 */
+.custom-dialog .el-input-group__append {
+    background: linear-gradient(145deg, var(--dark-bg-card) 0%, rgba(30, 30, 63, 0.8) 100%) !important;
+    border: 2px solid rgba(102, 126, 234, 0.3) !important;
+    border-left: none !important;
+}
+
+.custom-dialog .el-input-group__append:hover {
+    background: linear-gradient(145deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%) !important;
+}
+
 /* JSON对话框样式 */
 .json-dialog .el-dialog {
     background: linear-gradient(145deg, var(--dark-bg-card) 0%, rgba(30, 30, 63, 0.95) 100%);
@@ -3649,4 +3730,289 @@ h1, h2, h3, h4, h5, h6, p, span, div {
 .el-select .el-tag .el-tag__close:hover {
     color: var(--dark-danger) !important;
     background: rgba(245, 101, 101, 0.1) !important;
+}
+
+/* ==================== 模板代码导出样式 ==================== */
+
+/* 模板代码导出按钮 */
+.template-export-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    border: none !important;
+    color: white !important;
+    font-weight: 500 !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3) !important;
+}
+
+.template-export-btn:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4) !important;
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%) !important;
+}
+
+.template-export-btn:active {
+    transform: translateY(0) !important;
+}
+
+/* 模板导出下拉菜单 */
+.el-dropdown-menu {
+    background: var(--dark-bg-secondary) !important;
+    border: 1px solid var(--dark-border) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    border-radius: 8px !important;
+    padding: 8px 0 !important;
+}
+
+.el-dropdown-menu__item {
+    color: var(--dark-text-primary) !important;
+    padding: 12px 20px !important;
+    font-size: 14px !important;
+    transition: all 0.2s ease !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+}
+
+.el-dropdown-menu__item:hover {
+    background: linear-gradient(90deg, rgba(64, 158, 255, 0.1) 0%, rgba(64, 158, 255, 0.05) 100%) !important;
+    color: var(--dark-primary) !important;
+}
+
+.el-dropdown-menu__item i {
+    font-size: 16px !important;
+    width: 20px !important;
+    text-align: center !important;
+}
+
+/* Swift导出弹窗样式 */
+.swift-export-dialog .el-dialog {
+    background: var(--dark-bg-secondary) !important;
+    border: 1px solid var(--dark-border) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4) !important;
+}
+
+.swift-export-dialog .el-dialog__header {
+    background: linear-gradient(135deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%) !important;
+    border-bottom: 1px solid var(--dark-border) !important;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 20px 24px !important;
+}
+
+.swift-export-dialog .el-dialog__title {
+    color: var(--dark-text-primary) !important;
+    font-size: 18px !important;
+    font-weight: 600 !important;
+}
+
+.swift-export-dialog .el-dialog__body {
+    background: var(--dark-bg-secondary) !important;
+    padding: 24px !important;
+}
+
+/* Swift导出内容区域 */
+.swift-export-content {
+    color: var(--dark-text-primary) !important;
+}
+
+.export-description {
+    display: flex !important;
+    align-items: flex-start !important;
+    margin-bottom: 20px !important;
+}
+
+.export-description h4 {
+    color: var(--dark-text-primary) !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+}
+
+.export-description p {
+    color: var(--dark-text-secondary) !important;
+    line-height: 1.5 !important;
+}
+
+/* 导出设置表单 */
+.export-settings .el-form-item__label {
+    color: var(--dark-text-primary) !important;
+    font-weight: 500 !important;
+}
+
+.export-settings .el-select {
+    width: 100% !important;
+}
+
+.export-settings .el-checkbox-group {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+}
+
+.export-settings .el-checkbox {
+    margin-right: 0 !important;
+}
+
+.export-settings .el-checkbox__label {
+    color: var(--dark-text-primary) !important;
+    font-size: 14px !important;
+}
+
+/* 代码预览区域 */
+.export-preview {
+    margin-top: 20px !important;
+}
+
+.code-preview {
+    background: var(--dark-bg-tertiary) !important;
+    border: 1px solid var(--dark-border) !important;
+    border-radius: 8px !important;
+    padding: 16px !important;
+    max-height: 300px !important;
+    overflow-y: auto !important;
+}
+
+.code-preview pre {
+    margin: 0 !important;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    color: var(--dark-text-primary) !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+}
+
+.code-preview code {
+    color: var(--dark-text-primary) !important;
+    background: transparent !important;
+}
+
+/* 弹窗底部按钮 */
+.swift-export-dialog .dialog-footer {
+    background: var(--dark-bg-tertiary) !important;
+    border-top: 1px solid var(--dark-border) !important;
+    border-radius: 0 0 12px 12px !important;
+    padding: 16px 24px !important;
+    text-align: right !important;
+}
+
+.swift-export-dialog .dialog-footer .el-button {
+    margin-left: 12px !important;
+}
+
+/* Android导出弹窗样式 */
+.android-export-dialog .el-dialog {
+    background: var(--dark-bg-secondary) !important;
+    border: 1px solid var(--dark-border) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4) !important;
+}
+
+.android-export-dialog .el-dialog__header {
+    background: linear-gradient(135deg, var(--dark-bg-tertiary) 0%, rgba(22, 62, 33, 0.8) 100%) !important;
+    border-bottom: 1px solid var(--dark-border) !important;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 20px 24px !important;
+}
+
+.android-export-dialog .el-dialog__title {
+    color: var(--dark-text-primary) !important;
+    font-size: 18px !important;
+    font-weight: 600 !important;
+}
+
+.android-export-dialog .el-dialog__body {
+    background: var(--dark-bg-secondary) !important;
+    padding: 24px !important;
+}
+
+/* Android导出内容区域 */
+.android-export-content {
+    color: var(--dark-text-primary) !important;
+}
+
+.android-export-content .export-description {
+    display: flex !important;
+    align-items: flex-start !important;
+    padding: 16px 20px !important;
+    background: rgba(76, 175, 80, 0.1) !important;
+    border: 1px solid rgba(76, 175, 80, 0.2) !important;
+    border-radius: 8px !important;
+    margin-bottom: 20px !important;
+}
+
+.android-export-content .export-description h4 {
+    color: var(--dark-text-primary) !important;
+    font-weight: 600 !important;
+}
+
+.android-export-content .export-description p {
+    color: var(--dark-text-secondary) !important;
+    line-height: 1.5 !important;
+}
+
+.android-export-content .el-divider {
+    border-color: var(--dark-border) !important;
+    margin: 20px 0 !important;
+}
+
+.android-export-content .el-form-item__label {
+    color: var(--dark-text-primary) !important;
+    font-weight: 500 !important;
+}
+
+.android-export-content .el-select,
+.android-export-content .el-input {
+    background: var(--dark-bg-primary) !important;
+}
+
+.android-export-content .el-select .el-input__inner,
+.android-export-content .el-input__inner {
+    background: var(--dark-bg-primary) !important;
+    border-color: var(--dark-border) !important;
+    color: var(--dark-text-primary) !important;
+}
+
+.android-export-content .el-checkbox {
+    color: var(--dark-text-primary) !important;
+}
+
+.android-export-content .el-checkbox__input.is-checked .el-checkbox__inner {
+    background-color: #4CAF50 !important;
+    border-color: #4CAF50 !important;
+}
+
+.android-export-content .el-checkbox__label {
+    color: var(--dark-text-primary) !important;
+    background: transparent !important;
+}
+
+/* Android弹窗底部按钮 */
+.android-export-dialog .dialog-footer {
+    background: var(--dark-bg-tertiary) !important;
+    border-top: 1px solid var(--dark-border) !important;
+    border-radius: 0 0 12px 12px !important;
+    padding: 16px 24px !important;
+    text-align: right !important;
+}
+
+.android-export-dialog .dialog-footer .el-button {
+    margin-left: 12px !important;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .swift-export-dialog .el-dialog {
+        width: 95% !important;
+        margin: 0 auto !important;
+    }
+    
+    .template-export-btn {
+        font-size: 12px !important;
+        padding: 8px 12px !important;
+    }
+    
+    .el-dropdown-menu__item {
+        padding: 10px 16px !important;
+        font-size: 13px !important;
+    }
 }

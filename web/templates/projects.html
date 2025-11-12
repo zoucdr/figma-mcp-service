@@ -166,6 +166,15 @@
             <el-form-item label="项目名称" prop="name">
                 <el-input v-model="linkForm.name" placeholder="输入项目名称"></el-input>
             </el-form-item>
+            <el-form-item label="分组名称" prop="group_name">
+                <el-input v-model="linkForm.group_name" placeholder="输入分组名称（可选）">
+                    <template slot="append">
+                        <el-tooltip content="分组名称用于将多个项目归类显示，如果不填写则按File Key分组" placement="top">
+                            <i class="el-icon-question"></i>
+                        </el-tooltip>
+                    </template>
+                </el-input>
+            </el-form-item>
             <el-form-item label="Figma链接" prop="link">
                 <el-input v-model="linkForm.link" placeholder="输入Figma文件链接"></el-input>
                 <div class="form-tip">

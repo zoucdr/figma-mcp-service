@@ -1,0 +1,145 @@
+{{ define "android-code-preview.html" }}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .title }} - Figma Deliver</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <link rel="stylesheet" href="/static/css/android-code-preview.css?v={{ .timestamp }}">
+</head>
+<body>
+    <div id="android-code-preview-app">
+        <!-- 顶部导航栏 -->
+        <div class="preview-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1>{{ .project_name }} - Android 代码预览</h1>
+                </div>
+                <div class="header-right">
+                    <el-button @click="window.close()" size="small">关闭窗口</el-button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主要内容区域 -->
+        <div class="preview-content">
+            <!-- 文件列表侧边栏 -->
+            <div class="file-sidebar">
+                <div class="sidebar-header">
+                    <h3>文件列表</h3>
+                    <span class="file-count">({{ "{{" }} Object.keys(codeFiles).length {{ "}}" }} 个文件)</span>
+                </div>
+                <div class="file-list">
+                    <div 
+                        v-for="(content, filename) in codeFiles" 
+                        :key="filename"
+                        :class="['file-item', { active: activeFile === filename }]"
+                        @click="selectFile(filename)">
+                        <div class="file-info">
+                            <i :class="getFileIcon(filename)"></i>
+                            <span class="filename" v-text="filename"></span>
+                        </div>
+                        <div class="file-meta">
+                            <span class="file-size" v-text="getFileSize(content)"></span>
+                            <el-button 
+                                size="mini" 
+                                type="text"
+                                @click.stop="copyFile(filename, content)">
+                                <i class="el-icon-document-copy"></i>
+                            </el-button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 代码显示区域 -->
+            <div class="code-display">
+                <div v-if="activeFile" class="code-container">
+                    <!-- 代码文件头部 -->
+                    <div class="code-header">
+                        <div class="file-title">
+                            <i :class="getFileIcon(activeFile)"></i>
+                            <span class="filename" v-text="activeFile"></span>
+                            <span class="file-size" v-text="'(' + getFileSize(codeFiles[activeFile]) + ')'"></span>
+                        </div>
+                        <div class="code-actions">
+                            <el-button 
+                                size="mini" 
+                                type="primary"
+                                @click="copyFile(activeFile, codeFiles[activeFile])">
+                                <i class="el-icon-document-copy"></i>
+                                复制代码
+                            </el-button>
+                        </div>
+                    </div>
+
+                    <!-- 代码内容 -->
+                    <div class="code-content">
+                        <pre><code v-text="codeFiles[activeFile]"></code></pre>
+                    </div>
+                </div>
+
+                <!-- 空状态 -->
+                <div v-else class="empty-state">
+                    <div class="empty-content">
+                        <i class="el-icon-document"></i>
+                        <h3>选择一个文件查看代码</h3>
+                        <p>从左侧文件列表中选择要查看的代码文件</p>
+                        <el-button 
+                            v-if="Object.keys(codeFiles).length === 0"
+                            type="primary" 
+                            @click="generateAndroidCodePreview"
+                            :loading="generatingPreview">
+                            生成代码预览
+                        </el-button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部操作栏 -->
+        <div class="preview-footer">
+            <div class="footer-content">
+                <div class="footer-left">
+                    <span class="file-info">
+                        共 {{ "{{" }} Object.keys(codeFiles).length {{ "}}" }} 个文件
+                    </span>
+                </div>
+                <div class="footer-right">
+                    <el-button 
+                        @click="generateAndroidCodePreview"
+                        :loading="generatingPreview"
+                        size="small">
+                        <i class="el-icon-refresh"></i>
+                        刷新
+                    </el-button>
+                    <el-button 
+                        type="primary" 
+                        @click="exportAndroidCodeFromPreview"
+                        :loading="androidExporting"
+                        size="small">
+                        <i class="el-icon-download"></i>
+                        导出全部代码
+                    </el-button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@2/dist/vue.js"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script>
+        // 初始化数据
+        window.androidCodePreviewData = {
+            projectId: {{ .project_id }},
+            projectName: '{{ .project_name }}',
+            codeFiles: {{ .code_files }},
+            exportConfig: {{ .export_config }},
+            csrfToken: '{{ .csrf_token }}'
+        };
+    </script>
+    <script src="/static/js/android-code-preview.js?v={{ .timestamp }}"></script>
+</body>
+</html>
+{{ end }}

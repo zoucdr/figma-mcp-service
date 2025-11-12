@@ -9,20 +9,37 @@ new Vue({
             androidDialogVisible: false,
             iosDialogVisible: false,
             shareDialogVisible: false,
+            shareCodeDialogVisible: false,
             sharing: false,
+            sharingCode: false,
             mcpToken: window.profileData?.mcpToken || '',
             profileForm: {
                 username: window.profileData?.username || '',
                 figmaToken: window.profileData?.figmaToken || '',
                 compTypes: window.profileData?.compTypes || '',
-                prompts: window.profileData?.prompts || ''
+                prompts: window.profileData?.prompts || '',
+                codePrompts: window.profileData?.codePrompts || ''
             },
             shareForm: {
                 title: '',
                 description: '',
                 prompt: ''
             },
+            shareCodeForm: {
+                title: '',
+                description: '',
+                prompt: ''
+            },
             shareRules: {
+                title: [
+                    { required: true, message: '请输入标题', trigger: 'blur' },
+                    { min: 2, max: 100, message: '长度在 2 到 100 个字符', trigger: 'blur' }
+                ],
+                prompt: [
+                    { required: true, message: '提示词内容不能为空', trigger: 'blur' }
+                ]
+            },
+            shareCodeRules: {
                 title: [
                     { required: true, message: '请输入标题', trigger: 'blur' },
                     { min: 2, max: 100, message: '长度在 2 到 100 个字符', trigger: 'blur' }
@@ -48,7 +65,8 @@ new Vue({
                 basicInfo: true,
                 mcpConnection: true,
                 controlConfig: true,
-                aiPrompt: true
+                aiPrompt: true,
+                codePrompt: true
             }
         };
     },
@@ -178,6 +196,7 @@ new Vue({
                     formData.append('figma_token', this.profileForm.figmaToken);
                     formData.append('comp_types', this.profileForm.compTypes);
                     formData.append('prompts', this.profileForm.prompts);
+                    formData.append('code_prompts', this.profileForm.codePrompts);
                     // CSRF令牌已由main.js中的axios拦截器自动添加
                     // 无需在此手动添加
                     
@@ -358,6 +377,51 @@ new Vue({
         // 跳转到分享广场
         goToSharePage() {
             window.location.href = '/share';
+        },
+        
+        // 显示分享代码生成提示词对话框
+        showShareCodePromptDialog() {
+            if (!this.profileForm.codePrompts || this.profileForm.codePrompts.trim() === '') {
+                this.$message.warning('请先设置代码生成提示词内容');
+                return;
+            }
+            
+            this.shareCodeForm = {
+                title: '',
+                description: '',
+                prompt: this.profileForm.codePrompts
+            };
+            this.shareCodeDialogVisible = true;
+        },
+        
+        // 提交分享代码生成提示词
+        async submitShareCodePrompt() {
+            this.$refs.shareCodeForm.validate(async (valid) => {
+                if (!valid) {
+                    return false;
+                }
+                
+                this.sharingCode = true;
+                try {
+                    const response = await axios.post('/share/api/shares', this.shareCodeForm);
+                    
+                    if (response.data.success) {
+                        this.$message.success('分享成功');
+                        this.shareCodeDialogVisible = false;
+                        this.shareCodeForm = {
+                            title: '',
+                            description: '',
+                            prompt: ''
+                        };
+                        this.$refs.shareCodeForm.resetFields();
+                    }
+                } catch (error) {
+                    console.error('分享失败:', error);
+                    this.$message.error(error.response?.data?.error || '分享失败');
+                } finally {
+                    this.sharingCode = false;
+                }
+            });
         }
     },
     mounted() {

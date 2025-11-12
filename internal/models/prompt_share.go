@@ -23,12 +23,11 @@ type PromptShare struct {
 // PromptLike 提示词点赞记录
 type PromptLike struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
-	PromptShareID uint      `gorm:"not null;index" json:"prompt_share_id"`
-	UserID        uint      `gorm:"not null;index" json:"user_id"`
+	PromptShareID uint      `gorm:"not null;uniqueIndex:idx_prompt_like_unique" json:"prompt_share_id"`
+	UserID        uint      `gorm:"not null;uniqueIndex:idx_prompt_like_unique" json:"user_id"`
 	CreatedAt     time.Time `json:"created_at"`
 
 	// 联合唯一索引，防止重复点赞
-	// 在 AutoMigrate 中设置
 }
 
 // TableName 指定表名
