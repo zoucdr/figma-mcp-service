@@ -654,6 +654,44 @@ func ClearProjectImageCache(fileKey string) error {
 	return ClearProjectImageCacheByNodeIDs(fileKey, nil)
 }
 
+// ClearProjectExportCache 清除项目的导出缓存
+func ClearProjectExportCache(projectID uint) (int, error) {
+	exportDir := filepath.Join("temp", "exports", fmt.Sprintf("%d", projectID))
+
+	fmt.Printf("清除项目 %d 的导出缓存目录: %s\n", projectID, exportDir)
+
+	// 检查目录是否存在
+	if _, err := os.Stat(exportDir); os.IsNotExist(err) {
+		fmt.Printf("导出目录不存在，跳过: %s\n", exportDir)
+		return 0, nil
+	}
+
+	// 计算要删除的文件数量
+	var fileCount int
+	err := filepath.Walk(exportDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			fileCount++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0, fmt.Errorf("统计导出文件失败: %v", err)
+	}
+
+	// 删除整个导出目录
+	err = os.RemoveAll(exportDir)
+	if err != nil {
+		return 0, fmt.Errorf("删除导出目录失败: %v", err)
+	}
+
+	fmt.Printf("成功删除项目 %d 的导出目录，清除了 %d 个文件\n", projectID, fileCount)
+	return fileCount, nil
+}
+
 // ClearProjectImageCacheByNodeIDs 根据节点ID列表清除项目的图片缓存
 // 如果nodeIDs为nil或空，则清除所有缓存文件
 func ClearProjectImageCacheByNodeIDs(fileKey string, nodeIDs []string) error {

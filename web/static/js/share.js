@@ -53,7 +53,8 @@ const ShareApp = {
                         ...share,
                         liked: false,
                         liking: false,
-                        deleting: false
+                        deleting: false,
+                        expanded: false
                     }));
                     this.total = response.data.data.total;
                     
@@ -223,6 +224,19 @@ const ShareApp = {
             } finally {
                 this.loadingMyShares = false;
             }
+        },
+        
+        // 切换提示词展开状态
+        togglePromptExpand(share) {
+            share.expanded = !share.expanded;
+        },
+        
+        // 获取显示的提示词内容
+        getDisplayPrompt(share) {
+            if (share.expanded || share.prompt.length <= 300) {
+                return share.prompt;
+            }
+            return share.prompt.substring(0, 300) + '...';
         },
         
         // 复制提示词

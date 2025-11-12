@@ -64,6 +64,7 @@ const ProjectEditorApp = {
                 left: '0px'
             },
             exportStatus: '', // pending, processing, completed, failed
+            exportProgress: 0, // 导出进度 0-100
             exportJobId: null,
             defaultImageFormat: 'png', // 默认图片格式
             defaultImageScale: 1.0, // 默认图片缩放比例
@@ -249,6 +250,9 @@ const ProjectEditorApp = {
         // 添加键盘事件监听器（批量选择功能）
         document.addEventListener('keydown', this.handleKeyDown);
         document.addEventListener('keyup', this.handleKeyUp);
+        
+        // 检查是否有活跃的导出任务
+        this.checkActiveExportJob();
     },
     
     beforeDestroy() {
@@ -4468,6 +4472,68 @@ const ProjectEditorApp = {
         // 更新所有预览图片的缩放
         this.updatePreviewImagesScale();
     },
+    
+    // 定位聚焦到选中节点
+    focusToSelectedNode() {
+        if (!this.currentNode || !this.rootNodeBounds || !this.$refs.previewContainer) return;
+        
+        let node = null;
+        let isRefNode = false;
+        
+        // 查找当前选中节点（先在主节点中查找，再在依赖节点中查找）
+        node = this.nodes.find(n => n.id === this.currentNode.id);
+        
+        if (!node && this.currentNode.isRefNodeSelected) {
+            // 如果是依赖节点，使用当前节点的数据
+            node = this.currentNode;
+            isRefNode = true;
+        }
+        
+        if (!node || !node.absoluteRenderBounds) {
+            console.log('无法找到节点边界信息，无法聚焦');
+            return;
+        }
+        
+        console.log('聚焦到节点:', node.id, node.absoluteRenderBounds);
+        
+        // 获取节点的边界信息
+        const nodeBounds = node.absoluteRenderBounds;
+        const rootBounds = isRefNode && this.refNodeRootBounds ? this.refNodeRootBounds : this.rootNodeBounds;
+        
+        // 计算节点中心相对于根节点的位置
+        const nodeCenterX = nodeBounds.x + nodeBounds.width / 2;
+        const nodeCenterY = nodeBounds.y + nodeBounds.height / 2;
+        const rootCenterX = rootBounds.x + rootBounds.width / 2;
+        const rootCenterY = rootBounds.y + rootBounds.height / 2;
+        
+        // 计算相对偏移量
+        const relativeX = nodeCenterX - rootCenterX;
+        const relativeY = nodeCenterY - rootCenterY;
+        
+        console.log('节点中心:', nodeCenterX, nodeCenterY);
+        console.log('根节点中心:', rootCenterX, rootCenterY);
+        console.log('相对偏移:', relativeX, relativeY);
+        
+        // 计算需要的偏移量，使节点中心位于屏幕中心
+        // 由于预览图片的定位是：calc(50% + 相对偏移 * 缩放 + 拖拽偏移)
+        // 要让节点中心位于屏幕中心，需要设置拖拽偏移为：-相对偏移 * 缩放
+        this.previewOffset = {
+            x: -relativeX * this.zoomLevel,
+            y: -relativeY * this.zoomLevel
+        };
+        
+        console.log('设置预览偏移:', this.previewOffset);
+        
+        // 更新所有预览图片的位置
+        this.updatePreviewImagesScale();
+        
+        // 显示聚焦提示
+        this.$message({
+            message: `已聚焦到节点: ${node.name || node.id}`,
+            type: 'success',
+            duration: 2000
+        });
+    },
         
     // 获取选中节点高层级预览层的样式
     getSelectionOverlayStyle() {
@@ -5389,6 +5455,7 @@ const ProjectEditorApp = {
         startExport() {
             this.exportStatus = 'processing';
             this.exportProgress = 0;
+            console.log('开始导出，设置状态:', this.exportStatus, '进度:', this.exportProgress);
             
             // 发送导出请求，传递默认图片格式和缩放比例
             axios.post(`/figma/project/${this.project.id}/export`, {
@@ -5397,11 +5464,13 @@ const ProjectEditorApp = {
             })
                 .then(response => {
                     this.exportJobId = response.data.job_id;
+                    console.log('导出任务创建成功，jobId:', this.exportJobId);
                     this.checkExportStatus();
                     this.$message.success('导出任务已开始处理');
                 })
                 .catch(error => {
                     this.exportStatus = 'failed';
+                    console.error('导出任务创建失败:', error);
                     this.$message.error(error.response?.data?.error || '开始导出失败');
                 });
         },
@@ -5414,6 +5483,7 @@ const ProjectEditorApp = {
                 axios.get(`/figma/export/${this.exportJobId}`)
                     .then(response => {
                         const { status, progress } = response.data;
+                        console.log('检查导出状态:', status, '进度:', progress);
                         this.exportStatus = status;
                         this.exportProgress = progress;
                         
@@ -5425,10 +5495,13 @@ const ProjectEditorApp = {
                             this.downloadExport();
                         } else if (status === 'failed') {
                             this.$message.error('导出失败');
+                        } else if (status === 'cancelled') {
+                            this.$message.warning('导出任务已被取消');
                         }
                     })
                     .catch(() => {
                         this.exportStatus = 'failed';
+                        console.error('检查导出状态失败');
                         this.$message.error('检查导出状态失败');
                     });
             };
@@ -5441,6 +5514,29 @@ const ProjectEditorApp = {
             if (this.exportStatus !== 'completed') return;
             
             window.location.href = `/figma/export/${this.exportJobId}/download`;
+        },
+        
+        // 检查活跃的导出任务
+        checkActiveExportJob() {
+            if (!this.project || !this.project.id) return;
+            
+            axios.get(`/figma/project/${this.project.id}/export/active`)
+                .then(response => {
+                    if (response.data.has_active_job) {
+                        // 有活跃任务，恢复导出状态
+                        this.exportJobId = response.data.job_id;
+                        this.exportStatus = response.data.status;
+                        this.exportProgress = response.data.progress;
+                        
+                        // 如果任务还在处理中，开始轮询
+                        if (response.data.status === 'processing') {
+                            this.checkExportStatus();
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('检查活跃导出任务失败:', error);
+                });
         },
         
     // 获取当前节点的图片URL

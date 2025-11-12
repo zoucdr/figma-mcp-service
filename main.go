@@ -322,6 +322,7 @@ func main() {
 
 	// 导出功能
 	figmaGroup.POST("/project/:project_id/export", controllers.ExportFigmaDesign)
+	figmaGroup.GET("/project/:project_id/export/active", controllers.GetProjectActiveExportJob)
 	figmaGroup.GET("/export/:job_id", controllers.GetExportStatus)
 	figmaGroup.GET("/export/:job_id/download", controllers.DownloadExport)
 

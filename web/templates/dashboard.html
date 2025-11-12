@@ -223,6 +223,9 @@
                         <el-tooltip content="适应窗口" placement="top">
                             <el-button icon="el-icon-full-screen" size="mini" circle @click="fitToScreen"></el-button>
                         </el-tooltip>
+                        <el-tooltip content="定位聚焦" placement="top">
+                            <el-button icon="el-icon-location" size="mini" circle @click="focusToSelectedNode" :disabled="!currentNode"></el-button>
+                        </el-tooltip>
                     </div>
                 </div>
                 <div class="preview-content" ref="previewContainer" @mousedown="handleMouseDown" @mouseup="handlePreviewMouseUp" @mousemove="handlePreviewMouseMove" @contextmenu.prevent="handleContextMenu" @wheel.prevent="handleMouseWheel">
@@ -966,7 +969,7 @@
                 图文导出
             </el-button>
             
-            <!-- 优化配置按钮 -->
+            <!-- API访问按钮 -->
             <el-button 
                 class="api-download-btn" 
                 type="success" 
@@ -974,8 +977,8 @@
                 @click="handleDownloadButtonClick"
                 @contextmenu.prevent.native="handleDownloadButtonContextMenu"
                 :disabled="!apiDownloadUrl"
-                title="优化配置">
-                优化配置
+                title="API访问">
+                API访问
             </el-button>
             
             <!-- 清除缓存按钮 -->
@@ -992,6 +995,16 @@
         
         <!-- 右侧按钮组 - 放在最右边 -->
         <div class="export-options-right">
+            <!-- 导出进度条 - 放在MCP按钮左边 -->
+            <div class="export-progress" v-if="exportStatus && exportStatus !== ''">
+                <el-progress 
+                    :percentage="exportProgress" 
+                    :status="exportStatus === 'failed' || exportStatus === 'cancelled' ? 'exception' : undefined"
+                    :text-inside="true" 
+                    :stroke-width="18">
+                </el-progress>
+            </div>
+            
             <el-tooltip content="MCP调用记录" placement="top">
                 <el-button 
                     icon="el-icon-connection" 
@@ -1001,15 +1014,6 @@
                     class="mcp-button-bottom">
                 </el-button>
             </el-tooltip>
-        </div>
-        
-        <div class="export-progress" v-if="exportStatus">
-            <el-progress 
-                :percentage="exportProgress" 
-                :status="exportStatus === 'failed' ? 'exception' : undefined"
-                :text-inside="true" 
-                :stroke-width="18">
-            </el-progress>
         </div>
     </div>
     

@@ -677,16 +677,47 @@ func ExportFigmaDesign(c *gin.Context) {
 		requestBody.Scale = 1.0
 	}
 
+	// 从项目设置获取默认格式和缩放
+	var defaultFormat string = "png"
+	var defaultScale float64 = 1.0
+	project, err := models.GetProjectByID(uint(projectID))
+	if err == nil && project.Settings != "" {
+		// 尝试将 Settings（JSON字符串）解析为 map[string]interface{}
+		var settingsMap map[string]interface{}
+		if err := json.Unmarshal([]byte(project.Settings), &settingsMap); err == nil {
+			if v, ok := settingsMap["imageFormat"].(string); ok && v != "" {
+				defaultFormat = v
+			}
+			if v, ok := settingsMap["imageScale"].(float64); ok && v > 0 {
+				defaultScale = v
+			} else if vInt, ok := settingsMap["imageScale"].(int); ok && vInt > 0 {
+				defaultScale = float64(vInt)
+			}
+		}
+	}
+
 	// 验证格式是否有效
 	format := requestBody.Format
-	if format == "" || (format != "png" && format != "jpg" && format != "svg" && format != "pdf") {
-		format = "png" // 默认使用png格式
+	if format == "" {
+		format = defaultFormat // 从项目设置获取默认格式
+	}
+	if format != "png" && format != "jpg" && format != "svg" && format != "pdf" {
+		format = "png" // 如果不可用则强制为png
 	}
 
 	// 验证缩放比例是否有效
 	scale := requestBody.Scale
 	if scale <= 0 || scale > 4.0 {
-		scale = 1.0 // 默认使用1.0倍缩放
+		scale = defaultScale // 从项目设置获取默认缩放
+	}
+
+	// 先取消该项目的所有进行中的导出任务
+	err = models.CancelExportJobsByProject(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "取消之前的导出任务失败: " + err.Error(),
+		})
+		return
 	}
 
 	// 创建导出任务，不需要前端提供路径，使用默认路径
@@ -742,6 +773,59 @@ func GetExportStatus(c *gin.Context) {
 		"error":     job.Error,
 		"file_path": job.FilePath,
 	})
+}
+
+// GetProjectActiveExportJob 获取项目的活跃导出任务
+func GetProjectActiveExportJob(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "项目ID无效",
+		})
+		return
+	}
+
+	// 验证项目是否属于当前用户
+	project, err := models.GetProjectByID(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "项目不存在",
+		})
+		return
+	}
+
+	if project.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "无权访问此项目",
+		})
+		return
+	}
+
+	// 获取项目的活跃导出任务
+	jobs, err := models.GetActiveExportJobsByProject(uint(projectID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取导出任务失败",
+		})
+		return
+	}
+
+	// 如果有活跃任务，返回最新的一个
+	if len(jobs) > 0 {
+		latestJob := jobs[len(jobs)-1] // 获取最新的任务
+		c.JSON(http.StatusOK, gin.H{
+			"has_active_job": true,
+			"job_id":         latestJob.ID,
+			"status":         latestJob.Status,
+			"progress":       latestJob.Progress,
+			"error":          latestJob.Error,
+		})
+	} else {
+		c.JSON(http.StatusOK, gin.H{
+			"has_active_job": false,
+		})
+	}
 }
 
 // DownloadExport 下载导出文件
@@ -1245,12 +1329,19 @@ func ClearProjectImageCache(c *gin.Context) {
 			return
 		}
 
+		// 清除项目导出目录
+		exportCleared, err := services.ClearProjectExportCache(uint(projectID))
+		if err != nil {
+			fmt.Printf("清除项目导出缓存失败: %v\n", err)
+		}
+
 		clearedCount = len(nodeIDs)
 
 		c.JSON(http.StatusOK, gin.H{
-			"message":     fmt.Sprintf("已成功智能清除项目图片缓存，涉及 %d 个节点", clearedCount),
-			"smart_clear": true,
-			"node_count":  clearedCount,
+			"message":      fmt.Sprintf("已成功智能清除项目图片缓存，涉及 %d 个节点，清除 %d 个导出文件", clearedCount, exportCleared),
+			"smart_clear":  true,
+			"node_count":   clearedCount,
+			"export_count": exportCleared,
 		})
 	} else {
 		// 传统清理：清除所有缓存文件
@@ -1262,9 +1353,16 @@ func ClearProjectImageCache(c *gin.Context) {
 			return
 		}
 
+		// 清除项目导出目录
+		exportCleared, err := services.ClearProjectExportCache(uint(projectID))
+		if err != nil {
+			fmt.Printf("清除项目导出缓存失败: %v\n", err)
+		}
+
 		c.JSON(http.StatusOK, gin.H{
-			"message":     "已成功清除项目图片缓存",
-			"smart_clear": false,
+			"message":      fmt.Sprintf("已成功清除项目图片缓存，清除 %d 个导出文件", exportCleared),
+			"smart_clear":  false,
+			"export_count": exportCleared,
 		})
 	}
 }

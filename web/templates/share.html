@@ -106,15 +106,25 @@
                             <div class="share-prompt">
                                 <div class="prompt-header">
                                     <span class="prompt-label">提示词内容：</span>
-                                    <el-button 
-                                        type="text" 
-                                        size="small" 
-                                        icon="el-icon-document-copy"
-                                        @click="copyPrompt(share.prompt)">
-                                        复制
-                                    </el-button>
+                                    <div class="prompt-actions">
+                                        <el-button 
+                                            v-if="share.prompt.length > 300"
+                                            type="text" 
+                                            size="small" 
+                                            @click="togglePromptExpand(share)">
+                                            {{`{{ share.expanded ? '收起' : '展开' }}`}}
+                                        </el-button>
+                                        <el-button 
+                                            type="text" 
+                                            size="small" 
+                                            icon="el-icon-document-copy"
+                                            @click="copyPrompt(share.prompt)">
+                                            复制
+                                        </el-button>
+                                    </div>
                                 </div>
-                                <pre class="prompt-content">{{`{{ share.prompt }}`}}</pre>
+                                <pre class="prompt-content" :class="{ 'prompt-collapsed': !share.expanded && share.prompt.length > 300 }">{{`{{ getDisplayPrompt(share) }}`}}</pre>
+                                <div v-if="!share.expanded && share.prompt.length > 300" class="prompt-fade"></div>
                             </div>
                         </el-card>
                     </div>

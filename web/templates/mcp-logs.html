@@ -7,95 +7,260 @@
     <link rel="stylesheet" href="/static/lib/element-ui/theme-chalk/index.min.css">
     <link rel="stylesheet" href="/static/css/dashboard.css">
     <style>
+        :root {
+            --dark-bg-primary: #0f0f23;
+            --dark-bg-secondary: #1a1a3a;
+            --dark-bg-tertiary: #16213e;
+            --dark-bg-card: #1e1e3f;
+            --dark-text-primary: #e2e8f0;
+            --dark-text-secondary: #cbd5e1;
+            --dark-text-muted: #94a3b8;
+            --dark-border: rgba(148, 163, 184, 0.2);
+            --dark-accent: #667eea;
+            --dark-accent-hover: #764ba2;
+            --dark-danger: #ef4444;
+            --dark-success: #10b981;
+            --dark-shadow: rgba(0, 0, 0, 0.3);
+            --dark-shadow-lg: rgba(0, 0, 0, 0.5);
+        }
+
         body {
             margin: 0;
             padding: 20px;
-            background-color: #f5f5f5;
+            background: linear-gradient(135deg, var(--dark-bg-primary) 0%, var(--dark-bg-secondary) 50%, var(--dark-bg-tertiary) 100%);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: var(--dark-text-primary);
+            min-height: 100vh;
         }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(102, 126, 234, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(118, 75, 162, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
         .mcp-logs-container {
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            background: linear-gradient(145deg, var(--dark-bg-card) 0%, rgba(30, 30, 63, 0.95) 100%);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px var(--dark-shadow-lg);
             overflow: hidden;
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--dark-border);
         }
+
         .mcp-logs-header {
-            padding: 20px;
-            border-bottom: 1px solid #e4e7ed;
-            background: #fafafa;
+            padding: 25px;
+            border-bottom: 1px solid var(--dark-border);
+            background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%);
         }
+
         .mcp-logs-content {
-            padding: 20px;
+            padding: 25px;
             min-height: calc(100vh - 200px);
+            background: linear-gradient(145deg, var(--dark-bg-secondary) 0%, rgba(22, 33, 62, 0.9) 100%);
         }
+
         .log-item {
-            border: 1px solid #e4e7ed;
-            border-radius: 4px;
-            background-color: #f9f9f9;
-            margin-bottom: 8px;
+            border: 1px solid var(--dark-border);
+            border-radius: 8px;
+            background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%);
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px var(--dark-shadow);
         }
+
+        .log-item:hover {
+            background: linear-gradient(145deg, var(--dark-bg-card) 0%, rgba(30, 30, 63, 0.9) 100%);
+            border-color: var(--dark-accent);
+            box-shadow: 0 4px 16px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+        }
+
         .log-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px;
+            padding: 15px;
             cursor: pointer;
-            transition: background-color 0.2s;
+            transition: all 0.3s ease;
         }
+
         .log-header:hover {
-            background-color: #f0f2f5;
+            background: linear-gradient(145deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
         }
+
         .log-header-left {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 12px;
         }
+
         .log-header-right {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 12px;
         }
+
         .log-sequence {
-            background: #409eff;
+            background: linear-gradient(145deg, var(--dark-accent) 0%, var(--dark-accent-hover) 100%);
             color: white;
-            padding: 2px 6px;
-            border-radius: 3px;
+            padding: 4px 8px;
+            border-radius: 6px;
             font-size: 12px;
             font-weight: bold;
-            min-width: 20px;
+            min-width: 24px;
             text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
+
         .log-expand-icon {
-            font-size: 12px;
-            color: #909399;
-            transition: transform 0.2s;
+            font-size: 14px;
+            color: var(--dark-text-muted);
+            transition: transform 0.3s ease;
         }
+
         .log-expand-icon.expanded {
             transform: rotate(90deg);
+            color: var(--dark-accent);
         }
-        .log-details {
-            padding: 0 10px 10px 10px;
-            border-top: 1px solid #e4e7ed;
-            background-color: #fafafa;
+
+        .log-method {
+            color: var(--dark-text-primary);
+            font-weight: 600;
+            font-size: 14px;
         }
-        .log-details > div {
-            margin-bottom: 8px;
-        }
-        .log-details strong {
-            color: #303133;
-        }
-        .log-error {
-            color: #f56c6c;
-        }
-        .log-request, .log-response {
-            font-family: 'Courier New', monospace;
+
+        .log-time {
+            color: var(--dark-text-muted);
             font-size: 12px;
-            background: #f8f8f8;
-            padding: 8px;
-            border-radius: 4px;
+        }
+
+        .log-details {
+            padding: 0 15px 15px 15px;
+            border-top: 1px solid var(--dark-border);
+            background: linear-gradient(145deg, var(--dark-bg-secondary) 0%, rgba(15, 15, 35, 0.8) 100%);
+        }
+
+        .log-details > div {
+            margin-bottom: 12px;
+        }
+
+        .log-details strong {
+            color: var(--dark-text-primary);
+            font-weight: 600;
+        }
+
+        .log-error {
+            color: var(--dark-danger);
+            font-weight: 500;
+        }
+
+        .log-request, .log-response {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%);
+            padding: 12px;
+            border-radius: 8px;
             word-break: break-all;
+            border: 1px solid var(--dark-border);
+            color: var(--dark-text-secondary);
+            line-height: 1.5;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .log-duration {
+            color: var(--dark-text-secondary);
+        }
+
+        /* 按钮样式覆盖 */
+        .el-button {
+            background: linear-gradient(145deg, var(--dark-accent) 0%, var(--dark-accent-hover) 100%) !important;
+            border: 1px solid var(--dark-accent) !important;
+            color: white !important;
+            border-radius: 8px !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .el-button:hover {
+            background: linear-gradient(145deg, var(--dark-accent-hover) 0%, var(--dark-accent) 100%) !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3) !important;
+        }
+
+        .el-button--danger {
+            background: linear-gradient(145deg, var(--dark-danger) 0%, #dc2626 100%) !important;
+            border-color: var(--dark-danger) !important;
+        }
+
+        .el-button--text {
+            background: transparent !important;
+            border: none !important;
+            color: var(--dark-accent) !important;
+        }
+
+        .el-button--text:hover {
+            background: rgba(102, 126, 234, 0.1) !important;
+            color: var(--dark-accent-hover) !important;
+        }
+
+        /* 标签样式 */
+        .el-tag {
+            background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%) !important;
+            border-color: var(--dark-border) !important;
+            color: var(--dark-text-primary) !important;
+            border-radius: 6px !important;
+        }
+
+        .el-tag--success {
+            background: linear-gradient(145deg, var(--dark-success) 0%, #059669 100%) !important;
+            border-color: var(--dark-success) !important;
+            color: white !important;
+        }
+
+        .el-tag--danger {
+            background: linear-gradient(145deg, var(--dark-danger) 0%, #dc2626 100%) !important;
+            border-color: var(--dark-danger) !important;
+            color: white !important;
+        }
+
+        /* 标题样式 */
+        h2 {
+            color: var(--dark-text-primary) !important;
+            margin: 0;
+        }
+
+        p {
+            color: var(--dark-text-secondary) !important;
+        }
+
+        /* 加载和空状态样式 */
+        .el-icon-loading, .el-icon-document {
+            color: var(--dark-accent) !important;
+        }
+
+        /* 消息框样式覆盖 */
+        .el-message-box {
+            background: linear-gradient(145deg, var(--dark-bg-card) 0%, rgba(30, 30, 63, 0.95) 100%) !important;
+            border: 1px solid var(--dark-border) !important;
+            border-radius: 12px !important;
+        }
+
+        .el-message-box__title {
+            color: var(--dark-text-primary) !important;
+        }
+
+        .el-message-box__content {
+            color: var(--dark-text-secondary) !important;
         }
     </style>
 </head>

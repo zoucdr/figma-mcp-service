@@ -83,58 +83,6 @@ func ProcessExportJob(jobID uint) {
 		return
 	}
 
-	// 下载所有可见节点的图片
-	// 首先收集所有需要下载图片的节点ID（包括树中的所有节点）
-	allNodeIDs := make(map[string]bool)
-	for _, node := range figmaNodes {
-		if nodeID, ok := node["id"].(string); ok {
-			allNodeIDs[nodeID] = true
-		}
-	}
-
-	// 下载图片
-	totalNodes := len(allNodeIDs)
-	processedCount := 0
-	for nodeID := range allNodeIDs {
-		// 获取节点设置
-		setting := nodeSettings[nodeID]
-
-		// 获取图片格式
-		format := job.Format // 使用任务中指定的默认格式
-		// 如果节点有自定义格式，优先使用节点的自定义格式
-		if downloadType, ok := setting["img_ext"].(string); ok && downloadType != "" {
-			format = downloadType
-		}
-
-		// 下载图片，使用任务中指定的缩放比例
-		// 这会返回previews目录中按照hash处理后的图片路径
-		imagePath, err := DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, job.Scale, true)
-		if err == nil && imagePath != "" {
-			// 检查图片文件是否存在
-			if _, err := os.Stat(imagePath); err == nil {
-				// 从imagePath提取原始图片文件名（包含hash等信息的完整文件名）
-				imageFileName := filepath.Base(imagePath)
-
-				// 复制到临时目录，使用从imagePath提取的原始图片名
-				destPath := filepath.Join(tempDir, imageFileName)
-				if err := copyFile(imagePath, destPath); err == nil {
-					// 复制成功，记录相对路径（用于metadata.json中的img_path）
-					nodeImages[nodeID] = imageFileName
-					fmt.Printf("成功复制图片: %s -> %s\n", imagePath, destPath)
-				} else {
-					fmt.Printf("复制图片失败: %s -> %s, 错误: %v\n", imagePath, destPath, err)
-				}
-			} else {
-				fmt.Printf("图片文件不存在: %s, 错误: %v\n", imagePath, err)
-			}
-		}
-
-		processedCount++
-		// 更新进度
-		progress := 20 + int(float64(processedCount)/float64(totalNodes)*60)
-		models.UpdateExportJobStatus(jobID, "processing", progress, job.FilePath, "")
-	}
-
 	// 构建树结构（参考 getOptimizedProjectData 的逻辑，使用0级简化）
 	// 首先过滤掉需要移除的节点
 	filteredNodes := filterVisibleAndNonIgnoredNodesForExport(figmaNodes, nodeSettings)
@@ -166,12 +114,56 @@ func ProcessExportJob(jobID uint) {
 			fmt.Printf("节点没有修改信息: nodeID=%s\n", nodeID)
 		}
 
-		// 如果有图片，添加img_path字段
-		if imagePath, hasImage := nodeImages[nodeID]; hasImage {
-			optimizedNode["img_path"] = imagePath
-		}
-
 		optimizedNodes = append(optimizedNodes, optimizedNode)
+	}
+
+	// 从优化后的节点中提取需要下载的图片列表
+	imageDownloadList := extractImageDownloadListFromNodes(optimizedNodes, nodeSettings, job.Format)
+	fmt.Printf("需要下载的图片数量: %d\n", len(imageDownloadList))
+
+	// 下载图片
+	totalImages := len(imageDownloadList)
+	processedCount := 0
+
+	// 如果没有需要下载的图片，直接更新进度到80%
+	if totalImages == 0 {
+		fmt.Printf("没有需要下载的图片，跳过下载阶段\n")
+		models.UpdateExportJobStatus(jobID, "processing", 80, job.FilePath, "")
+	} else {
+		for _, imageInfo := range imageDownloadList {
+			// 下载图片，使用任务中指定的缩放比例
+			// 这会返回previews目录中按照hash处理后的图片路径
+			imagePath, err := downloadImageForExport(user.FigmaToken, project.FileKey, imageInfo.DownloadID, imageInfo.Format, job.Scale, jobID, processedCount, totalImages)
+			if err == nil && imagePath != "" {
+				// 检查图片文件是否存在
+				if _, err := os.Stat(imagePath); err == nil {
+					// 从imagePath提取原始图片文件名（包含hash等信息的完整文件名）
+					imageFileName := filepath.Base(imagePath)
+
+					// 复制到临时目录，使用从imagePath提取的原始图片名
+					destPath := filepath.Join(tempDir, imageFileName)
+					if err := copyFile(imagePath, destPath); err == nil {
+						// 复制成功，记录相对路径（用于metadata.json中的img_path）
+						nodeImages[imageInfo.NodeID] = imageFileName
+						fmt.Printf("成功复制图片: %s -> %s (节点: %s)\n", imagePath, destPath, imageInfo.NodeID)
+					} else {
+						fmt.Printf("复制图片失败: %s -> %s, 错误: %v\n", imagePath, destPath, err)
+					}
+				} else {
+					fmt.Printf("图片文件不存在: %s, 错误: %v\n", imagePath, err)
+				}
+			}
+
+			processedCount++
+		}
+	}
+
+	// 为优化后的节点添加图片路径
+	for i := range optimizedNodes {
+		nodeID := optimizedNodes[i]["id"].(string)
+		if imagePath, hasImage := nodeImages[nodeID]; hasImage {
+			optimizedNodes[i]["img_path"] = imagePath
+		}
 	}
 
 	// 根据res_mode处理节点结构（需要在构建树结构之前处理）
@@ -277,8 +269,8 @@ func ProcessExportJob(jobID uint) {
 	// 更新进度
 	models.UpdateExportJobStatus(jobID, "processing", 90, job.FilePath, "")
 
-	// 创建导出目录 {userid}/temp/exports
-	exportDir := filepath.Join("temp", "exports", fmt.Sprintf("%d", user.ID))
+	// 创建导出目录 temp/exports/{projectid}/
+	exportDir := filepath.Join("temp", "exports", fmt.Sprintf("%d", project.ID))
 	err = os.MkdirAll(exportDir, os.ModePerm)
 	if err != nil {
 		models.UpdateExportJobStatus(jobID, "failed", 0, "", "创建导出目录失败: "+err.Error())
@@ -749,4 +741,78 @@ func removeParentIDFromTree(node gin.H) {
 			removeParentIDFromTree(child)
 		}
 	}
+}
+
+// ImageDownloadInfo 图片下载信息
+type ImageDownloadInfo struct {
+	NodeID     string // 节点ID（用于记录图片路径）
+	DownloadID string // 实际下载的ID（可能是节点ID或img_id）
+	Format     string // 图片格式
+}
+
+// extractImageDownloadListFromNodes 从优化后的节点中提取需要下载的图片列表
+func extractImageDownloadListFromNodes(nodes []gin.H, nodeSettings map[string]map[string]interface{}, defaultFormat string) []ImageDownloadInfo {
+	var imageList []ImageDownloadInfo
+
+	for _, node := range nodes {
+		nodeID := node["id"].(string)
+
+		// 检查节点是否可见
+		if visible, ok := node["visible"].(bool); ok && !visible {
+			fmt.Printf("跳过不可见节点: %s\n", nodeID)
+			continue
+		}
+
+		// 获取节点的修改信息
+		modifys, hasModifys := nodeSettings[nodeID]
+		if !hasModifys {
+			fmt.Printf("节点 %s 没有修改信息，跳过\n", nodeID)
+			continue
+		}
+
+		// 检查res_mode是否为需要下载图片的类型
+		resMode, hasResMode := modifys["res_mode"].(string)
+		if !hasResMode || (resMode != "sprite" && resMode != "texture" && resMode != "slice") {
+			fmt.Printf("节点 %s 的res_mode为 %s，不需要下载图片\n", nodeID, resMode)
+			continue
+		}
+
+		// 确定下载ID：优先使用img_id，否则使用节点ID
+		downloadID := nodeID
+		if imgID, hasImgID := modifys["img_id"].(string); hasImgID && imgID != "" {
+			downloadID = imgID
+			fmt.Printf("节点 %s 使用自定义img_id: %s\n", nodeID, imgID)
+		}
+
+		// 确定图片格式：优先使用节点自定义格式，否则使用默认格式
+		format := defaultFormat
+		if imgExt, hasImgExt := modifys["img_ext"].(string); hasImgExt && imgExt != "" {
+			format = imgExt
+		}
+
+		imageInfo := ImageDownloadInfo{
+			NodeID:     nodeID,
+			DownloadID: downloadID,
+			Format:     format,
+		}
+
+		imageList = append(imageList, imageInfo)
+		fmt.Printf("添加图片下载任务: 节点=%s, 下载ID=%s, 格式=%s\n", nodeID, downloadID, format)
+	}
+
+	return imageList
+}
+
+// downloadImageForExport 专门用于导出时下载图片，会在使用缓存时也更新进度
+func downloadImageForExport(token, fileKey, nodeID, format string, scale float64, jobID uint, processedCount, totalNodes int) (string, error) {
+	// 调用原有的下载方法
+	imagePath, err := DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, format, scale, true)
+
+	// 无论是否使用缓存，都更新进度
+	progress := 20 + int(float64(processedCount+1)/float64(totalNodes)*60)
+	fmt.Printf("更新导出进度: jobID=%d, processedCount=%d, totalNodes=%d, progress=%d%%\n",
+		jobID, processedCount+1, totalNodes, progress)
+	models.UpdateExportJobStatus(jobID, "processing", progress, "", "")
+
+	return imagePath, err
 }

@@ -422,6 +422,12 @@ func DeleteNodeSubtreeModifysAndReturnDeleted(projectID uint, nodeIDs []string) 
 
 // CreateExportJob 创建导出任务
 func CreateExportJob(userID, projectID uint, path, format string) (*ExportJob, error) {
+	// 先取消该项目的所有进行中的导出任务
+	err := CancelExportJobsByProject(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("取消之前的导出任务失败: %v", err)
+	}
+
 	job := ExportJob{
 		UserID:    userID,
 		ProjectID: projectID,
@@ -445,6 +451,26 @@ func UpdateExportJobStatus(jobID uint, status string, progress int, filePath str
 		"file_path": filePath,
 		"error":     errorMsg,
 	}).Error
+}
+
+// CancelExportJobsByProject 取消项目的所有进行中的导出任务
+func CancelExportJobsByProject(projectID uint) error {
+	return DB.Model(&ExportJob{}).
+		Where("project_id = ? AND status IN (?)", projectID, []string{"pending", "processing"}).
+		Updates(map[string]interface{}{
+			"status": "cancelled",
+			"error":  "任务被新的导出任务取消",
+		}).Error
+}
+
+// GetActiveExportJobsByProject 获取项目的所有活跃导出任务
+func GetActiveExportJobsByProject(projectID uint) ([]ExportJob, error) {
+	var jobs []ExportJob
+	result := DB.Where("project_id = ? AND status IN (?)", projectID, []string{"pending", "processing"}).Find(&jobs)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return jobs, nil
 }
 
 // AddRefNode 添加依赖节点
