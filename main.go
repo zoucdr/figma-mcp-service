@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,32 +15,84 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
+// Config 应用配置结构
+type Config struct {
+	App struct {
+		Port          string `yaml:"port"`
+		GinMode       string `yaml:"gin_mode"`
+		SessionSecret string `yaml:"session_secret"`
+	} `yaml:"app"`
+	Database struct {
+		Host     string `yaml:"host"`
+		Port     string `yaml:"port"`
+		User     string `yaml:"user"`
+		Password string `yaml:"password"`
+		Name     string `yaml:"name"`
+	} `yaml:"database"`
+	Storage struct {
+		ExportDir string `yaml:"export_dir"`
+		TempDir   string `yaml:"temp_dir"`
+	} `yaml:"storage"`
+}
+
+var appConfig Config
+
 func main() {
-	// 加载环境变量，尝试多个可能的路径
-	err := godotenv.Load("configs/config.env")
-	if err != nil {
-		// 尝试从上级目录加载
-		err = godotenv.Load("../configs/config.env")
+	// 优先尝试加载 YAML 配置文件
+	if err := loadConfig(); err != nil {
+		log.Printf("YAML配置加载失败，尝试使用 .env 文件: %v", err)
+
+		// 回退到 .env 文件加载
+		err := godotenv.Load("configs/config.env")
 		if err != nil {
-			// 尝试从当前目录加载
-			err = godotenv.Load(".env")
+			// 尝试从上级目录加载
+			err = godotenv.Load("../configs/config.env")
 			if err != nil {
-				log.Println("未找到环境变量文件，使用默认配置")
+				// 尝试从当前目录加载
+				err = godotenv.Load(".env")
+				if err != nil {
+					log.Println("未找到配置文件，使用默认配置")
+				}
 			}
 		}
+
+		// 使用环境变量填充配置结构（兼容模式）
+		appConfig.App.Port = getEnv("PORT", "8080")
+		appConfig.App.GinMode = getEnv("GIN_MODE", "debug")
+		appConfig.App.SessionSecret = getEnv("SESSION_SECRET", "figma-deliver-secret")
+		appConfig.Database.Host = getEnv("DB_HOST", "")
+		appConfig.Database.Port = getEnv("DB_PORT", "")
+		appConfig.Database.User = getEnv("DB_USER", "")
+		appConfig.Database.Password = getEnv("DB_PASS", "")
+		appConfig.Database.Name = getEnv("DB_NAME", "")
+		appConfig.Storage.ExportDir = getEnv("EXPORT_DIR", "./exports")
+		appConfig.Storage.TempDir = getEnv("TEMP_DIR", "./temp")
 	}
 
 	// 打印当前工作目录，帮助调试
 	dir, _ := os.Getwd()
 	log.Printf("当前工作目录: %s", dir)
+	log.Printf("已加载配置: %s 模式", appConfig.App.GinMode)
+
+	// 设置环境变量以供其他模块使用
+	os.Setenv("DB_HOST", appConfig.Database.Host)
+	os.Setenv("DB_PORT", appConfig.Database.Port)
+	os.Setenv("DB_USER", appConfig.Database.User)
+	os.Setenv("DB_PASS", appConfig.Database.Password)
+	os.Setenv("DB_NAME", appConfig.Database.Name)
+	os.Setenv("PORT", appConfig.App.Port)
+	os.Setenv("GIN_MODE", appConfig.App.GinMode)
+	os.Setenv("EXPORT_DIR", appConfig.Storage.ExportDir)
+	os.Setenv("TEMP_DIR", appConfig.Storage.TempDir)
 
 	// 初始化数据库连接
 	models.InitDB()
 
 	// 设置Gin模式
-	gin.SetMode(getEnv("GIN_MODE", "debug"))
+	gin.SetMode(appConfig.App.GinMode)
 
 	// 创建Gin路由
 	r := gin.Default()
@@ -48,7 +101,7 @@ func main() {
 	r.Use(middleware.CORSMiddleware())
 
 	// 设置会话存储
-	store := cookie.NewStore([]byte(getEnv("SESSION_SECRET", "figma-deliver-secret")))
+	store := cookie.NewStore([]byte(appConfig.App.SessionSecret))
 
 	// 配置会话选项
 	store.Options(sessions.Options{
@@ -306,9 +359,97 @@ func main() {
 	apiGroup.GET("/:mcptoken/download_image", controllers.APIDownloadFigmaImage)
 
 	// 启动服务器
-	port := getEnv("PORT", "8080")
-	log.Printf("服务器启动在 http://localhost:%s\n", port)
-	r.Run(":" + port)
+	log.Printf("服务器启动在 http://localhost:%s\n", appConfig.App.Port)
+	r.Run(":" + appConfig.App.Port)
+}
+
+// loadConfig 加载YAML配置文件
+func loadConfig() error {
+	// 尝试多个可能的配置文件路径
+	configPaths := []string{
+		"configs/config.yaml",
+		"./configs/config.yaml",
+		"config.yaml",
+	}
+
+	var configFile string
+	var err error
+
+	// 查找存在的配置文件
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			configFile = path
+			break
+		}
+	}
+
+	if configFile == "" {
+		return fmt.Errorf("未找到配置文件，请确保 config.yaml 存在于 configs 目录")
+	}
+
+	log.Printf("正在加载配置文件: %s", configFile)
+
+	// 读取配置文件
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	// 解析 YAML
+	if err := yaml.Unmarshal(data, &appConfig); err != nil {
+		return fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	// 设置默认值
+	if appConfig.App.Port == "" {
+		appConfig.App.Port = "8080"
+	}
+	if appConfig.App.GinMode == "" {
+		appConfig.App.GinMode = "debug"
+	}
+	if appConfig.App.SessionSecret == "" {
+		appConfig.App.SessionSecret = "figma-deliver-secret"
+	}
+	if appConfig.Storage.ExportDir == "" {
+		appConfig.Storage.ExportDir = "./exports"
+	}
+	if appConfig.Storage.TempDir == "" {
+		appConfig.Storage.TempDir = "./temp"
+	}
+
+	// 环境变量覆盖（支持 K8s ConfigMap/Secret）
+	if port := os.Getenv("PORT"); port != "" {
+		appConfig.App.Port = port
+	}
+	if ginMode := os.Getenv("GIN_MODE"); ginMode != "" {
+		appConfig.App.GinMode = ginMode
+	}
+	if sessionSecret := os.Getenv("SESSION_SECRET"); sessionSecret != "" {
+		appConfig.App.SessionSecret = sessionSecret
+	}
+	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
+		appConfig.Database.Host = dbHost
+	}
+	if dbPort := os.Getenv("DB_PORT"); dbPort != "" {
+		appConfig.Database.Port = dbPort
+	}
+	if dbUser := os.Getenv("DB_USER"); dbUser != "" {
+		appConfig.Database.User = dbUser
+	}
+	if dbPass := os.Getenv("DB_PASS"); dbPass != "" {
+		appConfig.Database.Password = dbPass
+	}
+	if dbName := os.Getenv("DB_NAME"); dbName != "" {
+		appConfig.Database.Name = dbName
+	}
+	if exportDir := os.Getenv("EXPORT_DIR"); exportDir != "" {
+		appConfig.Storage.ExportDir = exportDir
+	}
+	if tempDir := os.Getenv("TEMP_DIR"); tempDir != "" {
+		appConfig.Storage.TempDir = tempDir
+	}
+
+	return nil
 }
 
 // 获取环境变量，如果不存在则返回默认值
