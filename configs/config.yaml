@@ -1,16 +1,21 @@
 # Figma Deliver 配置文件
+
+# 应用配置
 app:
-  port: "8080"
-  gin_mode: "debug"
-  session_secret: "figma-deliver-secret-dev"
+  port: 8080
+  gin_mode: debug
+  session_secret: figma-deliver-secret-key-change-this
 
+# 数据库配置
 database:
-  host: "10.84.97.48"
-  port: "3306"
-  user: "mysqlsiud"
-  password: "mysql!@#456"
-  name: "figma_deliver"
+  host: node1.mysql.figma.deliver.hwhosts.com
+  port: 3306
+  user: mysqlsiud
+  password: mysql!@#456
+  name: figma_deliver
 
+# 文件存储配置
 storage:
-  export_dir: "./exports"
-  temp_dir: "./temp"
+  export_dir: ./exports
+  temp_dir: ./temp
+
