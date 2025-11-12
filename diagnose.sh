@@ -79,3 +79,4 @@ echo "- 是否在正确的目录 (service/) 中运行构建"
 echo "- 是否有其他 Dockerfile 在父目录或其他位置"
 echo "- 是否使用了 Docker Compose 或其他构建工具"
 echo "- CI/CD 系统是否使用了不同的 Dockerfile"
+

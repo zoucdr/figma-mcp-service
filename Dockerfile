@@ -27,13 +27,13 @@ RUN go mod tidy && go mod verify
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -a -installsuffix cgo \
     -ldflags="-w -s -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo 'v1.0.0')" \
-    -o figma-deliver ./cmd/main.go
+    -o figma-deliver-service ./cmd/main.go
 
 # 运行阶段 - 使用精简的基础镜像以减小体积，提高K8s部署速度
 FROM alpine:3.19
 
 # 添加Kubernetes相关标签
-LABEL app.kubernetes.io/name="figma-deliver" \
+LABEL app.kubernetes.io/name="figma-deliver-service" \
       app.kubernetes.io/version="1.0" \
       app.kubernetes.io/component="figma-service" \
       app.kubernetes.io/part-of="figma-deliver-system" \
@@ -58,10 +58,10 @@ RUN addgroup -g 1001 appgroup && \
 WORKDIR /app
 
 # 从构建阶段复制二进制文件
-COPY --from=builder /app/figma-deliver .
+COPY --from=builder /app/figma-deliver-service .
 
-# 复制配置文件（YAML格式）
-COPY --from=builder /app/configs/config.yaml ./configs/
+# 复制配置文件模板
+COPY --from=builder /app/configs/config.example.env ./configs/
 
 # 复制Web静态资源和模板
 COPY --from=builder /app/web ./web
@@ -79,8 +79,8 @@ RUN mkdir -p logs exports temp data && \
     chmod 770 /app/exports && \
     chmod 770 /app/temp && \
     chmod 770 /app/data && \
-    chmod 500 /app/figma-deliver && \
-    chmod 440 /app/configs/config.yaml
+    chmod 500 /app/figma-deliver-service && \
+    chmod 440 /app/configs/config.env
 
 # 切换到非root用户
 USER appuser
@@ -104,4 +104,4 @@ ENV TEMP_DIR=/app/temp
 
 # 入口点和启动命令
 ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
-CMD ["./figma-deliver"]
+CMD ["./figma-deliver-service"]

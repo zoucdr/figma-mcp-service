@@ -105,4 +105,4 @@ Figma Deliver Plugin 是一个 Figma 插件，允许设计师直接从 Figma 界
 
 ## 获取帮助
 
-如果您遇到任何问题或有任何建议，请联系 Figma Deliver 支持团队或在 GitHub 仓库中提交问题。
+如果您遇到任何问题或有任何建议，请联系 Figma Deliver 支持团队或在 GitLab 仓库中提交问题。

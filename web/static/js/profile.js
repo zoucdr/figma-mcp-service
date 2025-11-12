@@ -42,7 +42,14 @@ new Vue({
             },
             unityComponents: "Button, Toggle, Slider, Dropdown, InputField, ScrollView, Scrollbar, ToggleGroup, Mask, GridLayoutGroup, VerticalLayoutGroup, HorizontalLayoutGroup, ContentSizeFitter",
             androidComponents: "Button, CheckBox, RadioButton, Switch, ToggleButton, SeekBar, ProgressBar, Spinner, ListView, GridView, RecyclerView, ScrollView, LinearLayout, RelativeLayout, FrameLayout, ConstraintLayout, ViewPager, Toolbar, CardView, RatingBar, SearchView",
-            iosComponents: "UIButton, UISwitch, UISlider, UIProgressView, UISegmentedControl, UITableView, UICollectionView, UIScrollView, UIStackView, UINavigationBar, UITabBar, UIPageControl, UIPickerView, UIDatePicker, UISearchBar, UIStepper"
+            iosComponents: "UIButton, UISwitch, UISlider, UIProgressView, UISegmentedControl, UITableView, UICollectionView, UIScrollView, UIStackView, UINavigationBar, UITabBar, UIPageControl, UIPickerView, UIDatePicker, UISearchBar, UIStepper",
+            // 模块收起/展开状态
+            sectionStates: {
+                basicInfo: true,
+                mcpConnection: true,
+                controlConfig: true,
+                aiPrompt: true
+            }
         };
     },
     methods: {
@@ -65,6 +72,72 @@ new Vue({
                 // 如果没有历史记录，默认返回项目列表
                 window.location.href = '/projects';
             }
+        },
+
+        // 切换模块收起/展开状态
+        toggleSection(sectionName) {
+            this.sectionStates[sectionName] = !this.sectionStates[sectionName];
+            // 保存状态到localStorage
+            localStorage.setItem('profileSectionStates', JSON.stringify(this.sectionStates));
+            
+            // 在下一个tick中更新DOM类
+            this.$nextTick(() => {
+                this.updateCardStates();
+                this.updateContainerGaps();
+            });
+        },
+
+        // 更新卡片状态
+        updateCardStates() {
+            const cards = document.querySelectorAll('.collapsible-card');
+            cards.forEach(card => {
+                const isExpanded = this.getSectionStateByCard(card);
+                if (isExpanded) {
+                    card.classList.remove('collapsed');
+                } else {
+                    card.classList.add('collapsed');
+                }
+            });
+        },
+
+        // 更新容器间距
+        updateContainerGaps() {
+            const leftContainer = document.querySelector('.profile-left');
+            const rightContainer = document.querySelector('.profile-right');
+            
+            // 检查左侧容器是否有收起的卡片
+            const leftHasCollapsed = leftContainer && leftContainer.querySelector('.collapsible-card.collapsed');
+            if (leftContainer) {
+                if (leftHasCollapsed) {
+                    leftContainer.classList.add('has-collapsed');
+                } else {
+                    leftContainer.classList.remove('has-collapsed');
+                }
+            }
+            
+            // 检查右侧容器是否有收起的卡片
+            const rightHasCollapsed = rightContainer && rightContainer.querySelector('.collapsible-card.collapsed');
+            if (rightContainer) {
+                if (rightHasCollapsed) {
+                    rightContainer.classList.add('has-collapsed');
+                } else {
+                    rightContainer.classList.remove('has-collapsed');
+                }
+            }
+        },
+
+        // 根据卡片元素获取对应的状态
+        getSectionStateByCard(cardElement) {
+            if (cardElement.querySelector('[class*="el-icon-user"]')) {
+                return this.sectionStates.basicInfo;
+            } else if (cardElement.querySelector('[class*="el-icon-connection"]')) {
+                return this.sectionStates.mcpConnection;
+            } else if (cardElement.querySelector('[class*="el-icon-setting"]')) {
+                return this.sectionStates.controlConfig;
+            } else if (cardElement.querySelector('[class*="el-icon-edit-outline"]')) {
+                return this.sectionStates.aiPrompt;
+            }
+            return true;
         },
         // 显示Unity控件示例
         showUnityExamples() {
@@ -286,5 +359,23 @@ new Vue({
         goToSharePage() {
             window.location.href = '/share';
         }
+    },
+    mounted() {
+        // 恢复保存的模块状态
+        const savedStates = localStorage.getItem('profileSectionStates');
+        if (savedStates) {
+            try {
+                const states = JSON.parse(savedStates);
+                this.sectionStates = { ...this.sectionStates, ...states };
+            } catch (error) {
+                console.error('恢复模块状态失败:', error);
+            }
+        }
+
+        // 初始化卡片状态
+        this.$nextTick(() => {
+            this.updateCardStates();
+            this.updateContainerGaps();
+        });
     }
 });

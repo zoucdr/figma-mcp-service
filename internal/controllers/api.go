@@ -105,6 +105,60 @@ func GetProjectsByFileKey(c *gin.Context) {
 	})
 }
 
+// GetProjectsByGroup 获取相同分组下的所有项目
+func GetProjectsByGroup(c *gin.Context) {
+	// 从会话中获取用户ID
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未登录",
+		})
+		return
+	}
+
+	groupName := c.Query("group_name")
+	fileKey := c.Query("file_key")
+	
+	// 如果没有提供分组名称和file_key，返回错误
+	if groupName == "" && fileKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "group_name或file_key参数不能同时为空",
+		})
+		return
+	}
+
+	var projects []models.FigmaProject
+	var err error
+
+	if groupName != "" {
+		// 如果有分组名称，查找相同分组的所有项目
+		err = models.DB.Where("user_id = ? AND group_name = ?", userID, groupName).
+			Order("created_at DESC").Find(&projects).Error
+	} else {
+		// 如果没有分组名称，查找相同file_key且group_name为空的项目
+		err = models.DB.Where("user_id = ? AND file_key = ? AND (group_name = '' OR group_name IS NULL)", userID, fileKey).
+			Order("created_at DESC").Find(&projects).Error
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取项目列表失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 格式化时间
+	for i := range projects {
+		projects[i].CreatedAt = projects[i].CreatedAt.Local()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    projects,
+		"message": "获取项目列表成功",
+	})
+}
+
 // APIGetOptimizedNodes 获取优化后的节点数据（支持3档简化级别）
 func APIGetOptimizedNodes(c *gin.Context) {
 	mcpToken := c.Param("mcptoken")

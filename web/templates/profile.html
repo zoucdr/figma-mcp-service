@@ -25,12 +25,20 @@
         <div class="profile-container">
             <!-- 左侧栏：基本信息 -->
             <div class="profile-left">
-                <el-card class="profile-card">
-                    <div slot="header" class="card-header">
-                        <span><i class="el-icon-user"></i> 基本信息</span>
+                <el-card class="profile-card collapsible-card">
+                    <div slot="header" class="card-header" @click="toggleSection('basicInfo')">
+                        <span><i class="el-icon-user-solid"></i> 基本信息</span>
+                        <el-button 
+                            type="text" 
+                            size="mini" 
+                            @click.stop="toggleSection('basicInfo')"
+                            :icon="sectionStates.basicInfo ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"
+                            class="collapse-btn">
+                        </el-button>
                     </div>
                     
-                    <el-form :model="profileForm" :rules="profileRules" ref="profileForm" label-width="100px">
+                    <div class="card-content" v-show="sectionStates.basicInfo">
+                        <el-form :model="profileForm" :rules="profileRules" ref="profileForm" label-width="100px">
                         <el-form-item label="用户名" prop="username">
                             <el-input v-model="profileForm.username" placeholder="请输入用户名"></el-input>
                         </el-form-item>
@@ -41,16 +49,25 @@
                                 <span>您可以在Figma账户设置中生成个人访问令牌</span>
                             </div>
                         </el-form-item>
-                    </el-form>
+                        </el-form>
+                    </div>
                 </el-card>
 
                 <!-- MCP Token 管理 -->
-                <el-card class="profile-card mcp-card">
-                    <div slot="header" class="card-header">
+                <el-card class="profile-card mcp-card collapsible-card">
+                    <div slot="header" class="card-header" @click="toggleSection('mcpConnection')">
                         <span><i class="el-icon-connection"></i> MCP 连接</span>
+                        <el-button 
+                            type="text" 
+                            size="mini" 
+                            @click.stop="toggleSection('mcpConnection')"
+                            :icon="sectionStates.mcpConnection ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"
+                            class="collapse-btn">
+                        </el-button>
                     </div>
                     
-                    <div class="mcp-token-section">
+                    <div class="card-content" v-show="sectionStates.mcpConnection">
+                        <div class="mcp-token-section">
                         <div v-if="mcpToken" class="token-display">
                             <el-input 
                                 v-model="mcpToken" 
@@ -92,18 +109,27 @@
                             <pre v-if="mcpToken">{{`{{ getCursorConfig() }}`}}</pre>
                             <p v-else class="no-config">生成Token后将显示Cursor配置示例</p>
                         </div>
+                        </div>
                     </div>
                 </el-card>
             </div>
 
             <!-- 右侧栏：配置信息 -->
             <div class="profile-right">
-                <el-card class="profile-card">
-                    <div slot="header" class="card-header">
+                <el-card class="profile-card collapsible-card">
+                    <div slot="header" class="card-header" @click="toggleSection('controlConfig')">
                         <span><i class="el-icon-setting"></i> 控件配置</span>
+                        <el-button 
+                            type="text" 
+                            size="mini" 
+                            @click.stop="toggleSection('controlConfig')"
+                            :icon="sectionStates.controlConfig ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"
+                            class="collapse-btn">
+                        </el-button>
                     </div>
                     
-                    <el-form :model="profileForm" :rules="profileRules" ref="profileFormRight" label-width="100px">
+                    <div class="card-content" v-show="sectionStates.controlConfig">
+                        <el-form :model="profileForm" :rules="profileRules" ref="profileFormRight" label-width="100px">
                         <el-form-item label="控件类型" prop="compTypes">
                             <el-input v-model="profileForm.compTypes" type="textarea" :rows="4" placeholder="输入控件类型列表，用逗号分隔"></el-input>
                             <div class="form-tip">
@@ -116,19 +142,28 @@
                                 <el-button type="text" @click="showIOSExamples" size="mini">🍎 iOS</el-button>
                             </div>
                         </el-form-item>
-                    </el-form>
+                        </el-form>
+                    </div>
                 </el-card>
 
-                <el-card class="profile-card">
+                <el-card class="profile-card collapsible-card">
                     <div slot="header" class="card-header">
-                        <span><i class="el-icon-edit-outline"></i> AI 提示词</span>
+                        <span @click="toggleSection('aiPrompt')" class="header-title-clickable"><i class="el-icon-edit-outline"></i> AI 提示词</span>
                         <div class="header-actions">
-                            <el-button type="primary" size="mini" icon="el-icon-share" @click="showSharePromptDialog">分享提示词</el-button>
-                            <el-button type="default" size="mini" icon="el-icon-s-grid" @click="goToSharePage">提示词广场</el-button>
+                            <el-button type="primary" size="mini" icon="el-icon-share" @click.stop="showSharePromptDialog">分享提示词</el-button>
+                            <el-button type="default" size="mini" icon="el-icon-s-grid" @click.stop="goToSharePage">提示词广场</el-button>
+                            <el-button 
+                                type="text" 
+                                size="mini" 
+                                @click.stop="toggleSection('aiPrompt')"
+                                :icon="sectionStates.aiPrompt ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"
+                                class="collapse-btn">
+                            </el-button>
                         </div>
                     </div>
                     
-                    <el-form :model="profileForm" :rules="profileRules" ref="profileFormPrompt" label-width="100px">
+                    <div class="card-content" v-show="sectionStates.aiPrompt">
+                        <el-form :model="profileForm" :rules="profileRules" ref="profileFormPrompt" label-width="100px">
                         <el-form-item label="修饰提示词" prop="prompts">
                             <el-input v-model="profileForm.prompts" type="textarea" :rows="8" placeholder="输入用于MCP节点修饰的提示词（最多16k字符）" maxlength="16384" show-word-limit></el-input>
                             <div class="form-tip">
@@ -136,7 +171,8 @@
                                 <span>此提示词将在调用get_modify_prompt时返回，用于指导AI如何修饰节点，如果为空，将使用默认提示词：基于mcp获取界面预览图，由当前节点数据，修饰节点，优化层级/显示/命名/布局/父级调整/是否包图/图片名称/图片id/图片格式/组件配置等等</span>
                             </div>
                         </el-form-item>
-                    </el-form>
+                        </el-form>
+                    </div>
                 </el-card>
             </div>
         </div>

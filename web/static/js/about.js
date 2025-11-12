@@ -4,10 +4,10 @@ new Vue({
     data() {
         return {
             // 当前激活的标签页
-            activeTab: 'plugin',
+            activeTab: 'mcp',
             
             // API代码示例标签页
-            activeApiTab: 'python',
+            activeApiTab: 'cursor',
             
             // 当前展开的FAQ项
             activeFaq: ['faq1'],
@@ -21,10 +21,10 @@ new Vue({
                     description: '从 Figma 直接导出设计资源，支持多种格式和缩放比例，无需手动操作'
                 },
                 {
-                    id: 'plugin',
+                    id: 'mcp-integration',
                     icon: 'el-icon-connection',
-                    title: 'Figma 插件支持',
-                    description: '提供原生 Figma 插件，在设计环境中直接操作，提升工作效率'
+                    title: 'MCP 协议集成',
+                    description: '支持 Model Context Protocol，与 AI 编辑器无缝集成，实现智能化设计处理'
                 },
                 {
                     id: 'auto',
@@ -45,10 +45,10 @@ new Vue({
                     description: '支持实时预览设计效果，包括过滤预览和批量预览功能'
                 },
                 {
-                    id: 'mcp',
+                    id: 'ai-assistant',
                     icon: 'el-icon-cpu',
-                    title: 'MCP 协议支持',
-                    description: '集成 Model Context Protocol，支持 AI 辅助的设计处理和优化'
+                    title: 'AI 智能辅助',
+                    description: '通过 MCP 协议提供 AI 智能辅助，自动生成配置提示词和优化建议'
                 },
                 {
                     id: 'batch',
@@ -102,20 +102,20 @@ new Vue({
             faqs: [
                 {
                     id: 'faq1',
-                    question: '如何安装和配置 Figma 插件？',
+                    question: '如何配置和使用 MCP 功能？',
                     answer: `
-                        <p><strong>开发模式安装：</strong></p>
+                        <p><strong>MCP 服务配置：</strong></p>
                         <ol>
-                            <li>打开 Figma 桌面应用</li>
-                            <li>进入 <code>Plugins</code> > <code>Development</code> > <code>Import plugin from manifest...</code></li>
-                            <li>选择项目中的 <code>figma-plugin/manifest.json</code> 文件</li>
-                            <li>插件将出现在 Plugins 菜单中</li>
+                            <li>启动 Figma Deliver 服务：<code>go run cmd/main.go</code></li>
+                            <li>登录 Web 界面，在个人资料页面生成 MCP Token</li>
+                            <li>在支持 MCP 的 AI 编辑器（如 Cursor）中配置服务</li>
+                            <li>MCP 服务地址：<code>http://localhost:8080/mcp</code></li>
                         </ol>
-                        <p><strong>配置连接：</strong></p>
+                        <p><strong>使用 AI 辅助：</strong></p>
                         <ol>
-                            <li>在插件设置中配置服务器地址：<code>http://localhost:8080</code></li>
-                            <li>输入用户名和密码进行认证</li>
-                            <li>认证成功后即可使用</li>
+                            <li>在 AI 编辑器中直接与 Figma 设计交互</li>
+                            <li>获取设计预览、批量配置节点属性</li>
+                            <li>使用 AI 生成的配置提示词和优化建议</li>
                         </ol>
                     `
                 },
@@ -135,31 +135,31 @@ new Vue({
                 },
                 {
                     id: 'faq3',
-                    question: '插件认证失败怎么解决？',
+                    question: 'MCP Token 认证失败怎么解决？',
                     answer: `
-                        <p>认证失败通常由以下原因引起：</p>
+                        <p>MCP Token 认证失败可能的原因：</p>
                         <ul>
-                            <li><strong>服务器地址错误：</strong>确认服务器地址是否正确，默认为 <code>http://localhost:8080</code></li>
-                            <li><strong>用户凭据错误：</strong>检查用户名和密码是否正确</li>
-                            <li><strong>网络连接问题：</strong>确保插件能够访问服务器</li>
-                            <li><strong>CORS 配置：</strong>确认服务器已正确配置 CORS 头</li>
+                            <li><strong>Token 过期：</strong>在个人资料页面重新生成 MCP Token</li>
+                            <li><strong>Token 格式错误：</strong>确保复制的 Token 完整且没有多余空格</li>
+                            <li><strong>服务地址错误：</strong>确认 MCP 服务地址为 <code>http://localhost:8080/mcp</code></li>
+                            <li><strong>网络连接问题：</strong>确保 AI 编辑器能够访问本地服务</li>
                         </ul>
-                        <p>可以先在浏览器中访问服务器地址，确认服务正常运行。</p>
+                        <p>建议先在浏览器中访问 <code>http://localhost:8080/api/your_token</code> 测试 Token 是否有效。</p>
                     `
                 },
                 {
                     id: 'faq4',
-                    question: '导出失败的常见原因？',
+                    question: 'MCP 操作失败的常见原因？',
                     answer: `
-                        <p>导出失败可能的原因：</p>
+                        <p>MCP 操作失败可能的原因：</p>
                         <ul>
-                            <li><strong>Figma API 令牌无效：</strong>检查 Figma API 令牌是否有效且有足够权限</li>
-                            <li><strong>节点选择问题：</strong>确认在 Figma 中选择了有效的设计元素</li>
-                            <li><strong>网络连接：</strong>确保网络连接稳定</li>
-                            <li><strong>文件权限：</strong>检查 Figma 文件是否有访问权限</li>
-                            <li><strong>服务器资源：</strong>确认服务器有足够的存储空间和处理能力</li>
+                            <li><strong>Figma API 令牌无效：</strong>检查服务器的 Figma API 令牌配置是否正确</li>
+                            <li><strong>项目 ID 错误：</strong>确认传入的项目 ID 是否存在且有权限访问</li>
+                            <li><strong>节点 ID 无效：</strong>检查 Figma 节点 ID 是否正确且存在</li>
+                            <li><strong>网络连接：</strong>确保 AI 编辑器与 MCP 服务的网络连接稳定</li>
+                            <li><strong>服务器资源：</strong>确认服务器有足够的处理能力和存储空间</li>
                         </ul>
-                        <p>建议先尝试导出简单的单个元素进行测试。</p>
+                        <p>建议先使用简单的 MCP 命令（如获取用户信息）进行测试。</p>
                     `
                 },
                 {
@@ -201,18 +201,22 @@ new Vue({
                 case 'profile':
                     window.location.href = '/profile';
                     break;
-                case 'settings':
-                    // 跳转到设置页面或显示设置对话框
-                    this.$message.info('设置功能即将推出');
-                    break;
-                case 'about':
-                    // 已经在关于页面，显示提示或滚动到顶部
-                    this.$message.info('您已经在关于页面了');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                case 'projects':
+                    window.location.href = '/projects';
                     break;
                 case 'logout':
                     this.logout();
                     break;
+            }
+        },
+        
+        // 返回上一页
+        goBack() {
+            // 优先返回到项目管理页面
+            if (document.referrer && document.referrer.includes('/projects')) {
+                window.history.back();
+            } else {
+                window.location.href = '/projects';
             }
         },
         
@@ -339,15 +343,17 @@ new Vue({
         // 页面加载完成后的初始化
         this.initAnimations();
         
-        // 监听滚动事件，添加导航栏背景效果
+        // 监听滚动事件，保持暗黑主题
         window.addEventListener('scroll', () => {
             const header = document.querySelector('.about-header');
             if (window.scrollY > 50) {
-                header.style.background = 'rgba(255, 255, 255, 0.95)';
+                header.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%)';
                 header.style.backdropFilter = 'blur(20px)';
+                header.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.3)';
             } else {
-                header.style.background = 'rgba(255, 255, 255, 0.1)';
+                header.style.background = 'linear-gradient(135deg, var(--dark-accent) 0%, var(--dark-accent-hover) 100%)';
                 header.style.backdropFilter = 'blur(10px)';
+                header.style.boxShadow = '0 4px 20px var(--dark-shadow)';
             }
         });
         

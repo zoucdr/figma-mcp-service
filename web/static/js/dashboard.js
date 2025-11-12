@@ -839,22 +839,28 @@ const ProjectEditorApp = {
             return false;
         },
         
-        // 加载相同file_key下的所有项目
+        // 加载相同分组下的所有项目
         loadSiblingProjects() {
-            if (!this.project || !this.project.file_key) return;
+            if (!this.project) return;
             
             this.loadingSiblingProjects = true;
-            axios.get('/figma/projects-by-filekey', {
-                params: {
-                    file_key: this.project.file_key
-                }
-            })
+            
+            // 构建请求参数：如果有分组名称，使用分组名称；否则使用file_key
+            const params = {};
+            if (this.project.group_name) {
+                params.group_name = this.project.group_name;
+            } else {
+                params.file_key = this.project.file_key;
+            }
+            
+            axios.get('/figma/projects-by-group', { params })
             .then(response => {
                 if (response.data.success) {
                     this.siblingProjects = response.data.data;
                     console.log('Loaded sibling projects:', this.siblingProjects);
                     console.log('Current project ID:', this.currentProjectId);
                     console.log('Sibling projects count:', this.siblingProjects.length);
+                    console.log('Group query params:', params);
                     
                     // 如果只有一个项目（当前项目），给用户提示
                     if (this.siblingProjects.length <= 1) {
@@ -865,7 +871,7 @@ const ProjectEditorApp = {
                 }
             })
             .catch(error => {
-                console.error('获取兄弟项目失败:', error);
+                console.error('获取同组项目失败:', error);
                 this.$message.error('获取项目列表失败');
             })
             .finally(() => {

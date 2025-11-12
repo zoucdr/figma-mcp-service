@@ -2,67 +2,22 @@
 <div id="about-app" class="about-container">
     <!-- 顶部导航栏 -->
     <el-header class="about-header">
-        <div class="header-container">
-            <!-- Logo区域 -->
-            <div class="logo-section">
-                <div class="logo-icon">
-                    <i class="el-icon-magic-stick"></i>
-                </div>
-                <div class="logo-text">
-                    <div class="logo-title">Figma Deliver</div>
-                    <div class="logo-subtitle">设计交付平台</div>
-                </div>
-            </div>
-            
-            <!-- 导航菜单 -->
-            <nav class="nav-section">
-                <div class="nav-links">
-                    <a href="/" class="nav-link">
-                        <i class="el-icon-house"></i>
-                        <span>首页</span>
-                    </a>
-                    <a href="/projects" class="nav-link">
-                        <i class="el-icon-folder-opened"></i>
-                        <span>项目管理</span>
-                    </a>
-                    <a href="/about" class="nav-link active">
-                        <i class="el-icon-info"></i>
-                        <span>关于</span>
-                    </a>
-                </div>
-            </nav>
-            
-            <!-- 用户区域 -->
-            <div class="user-section">
+        <div class="logo">Figma Deliver</div>
+        <div class="header-actions">
+            <el-button @click="goBack" icon="el-icon-back">返回</el-button>
+            <div class="user-info">
                 {{ if .username }}
-                <div class="user-info-card">
-                    <el-dropdown trigger="click" @command="handleCommand" placement="bottom-end">
-                        <div class="user-dropdown-trigger">
-                            <div class="user-avatar">
-                                <span>{{ slice .username 0 1 }}</span>
-                            </div>
-                            <div class="user-details">
-                                <div class="user-name">{{ .username }}</div>
-                                <div class="user-status">在线</div>
-                            </div>
-                            <i class="el-icon-arrow-down"></i>
-                        </div>
-                        <el-dropdown-menu slot="dropdown" class="user-dropdown-menu">
-                            <el-dropdown-item command="profile">
-                                <i class="el-icon-user"></i>
-                                个人资料
-                            </el-dropdown-item>
-                            <el-dropdown-item command="settings">
-                                <i class="el-icon-setting"></i>
-                                设置
-                            </el-dropdown-item>
-                            <el-dropdown-item divided command="logout">
-                                <i class="el-icon-switch-button"></i>
-                                退出登录
-                            </el-dropdown-item>
-                        </el-dropdown-menu>
-                    </el-dropdown>
-                </div>
+                <el-dropdown trigger="click" @command="handleCommand">
+                    <span class="el-dropdown-link">
+                        <div class="user-avatar">{{ slice .username 0 1 }}</div>
+                        {{ .username }} <i class="el-icon-arrow-down el-icon--right"></i>
+                    </span>
+                    <el-dropdown-menu slot="dropdown">
+                        <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                        <el-dropdown-item command="projects">项目管理</el-dropdown-item>
+                        <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                    </el-dropdown-menu>
+                </el-dropdown>
                 {{ else }}
                 <div class="auth-buttons">
                     <a href="/login" class="login-btn">
@@ -114,28 +69,29 @@
             <h2 class="section-title">使用方法</h2>
             <div class="usage-tabs">
                 <el-tabs v-model="activeTab" type="border-card">
-                    <el-tab-pane label="Figma 插件" name="plugin">
+                    <el-tab-pane label="MCP 协议" name="mcp">
                         <div class="usage-content">
-                            <h3>通过 Figma 插件导出设计</h3>
+                            <h3>通过 MCP 协议集成 AI 工作流</h3>
                             <ol class="usage-steps">
                                 <li>
-                                    <strong>安装插件</strong>
-                                    <p>在 Figma 桌面应用中，点击菜单 <code>插件</code> > <code>开发</code> > <code>导入插件</code></p>
-                                    <p>选择项目中的 <code>figma-plugin/manifest.json</code> 文件</p>
+                                    <strong>配置 MCP 服务</strong>
+                                    <p>在支持 MCP 的 AI 编辑器（如 Cursor）中配置 Figma Deliver MCP 服务</p>
+                                    <p>服务地址：<code>http://localhost:8080/mcp</code></p>
                                 </li>
                                 <li>
-                                    <strong>配置连接</strong>
-                                    <p>打开插件设置，配置服务器地址：<code>http://localhost:8080</code></p>
-                                    <p>输入用户名和密码进行认证</p>
+                                    <strong>获取 MCP Token</strong>
+                                    <p>登录 Web 界面，在个人资料页面生成 MCP Token</p>
+                                    <p>将 Token 配置到 MCP 客户端中</p>
                                 </li>
                                 <li>
-                                    <strong>导出设计</strong>
-                                    <p>在 Figma 中选择要导出的设计元素</p>
-                                    <p>点击插件中的"导出到服务器"按钮</p>
+                                    <strong>AI 辅助设计处理</strong>
+                                    <p>使用 AI 编辑器直接与 Figma 设计进行交互</p>
+                                    <p>获取设计预览、批量配置节点属性、智能生成配置</p>
                                 </li>
                                 <li>
-                                    <strong>下载资源</strong>
-                                    <p>等待导出完成，可直接下载导出的文件</p>
+                                    <strong>自动化工作流</strong>
+                                    <p>通过 AI 指令自动处理设计资源导出和优化</p>
+                                    <p>支持批量操作和智能决策</p>
                                 </li>
                             </ol>
                         </div>
@@ -170,22 +126,66 @@
                     
                     <el-tab-pane label="API 集成" name="api">
                         <div class="usage-content">
-                            <h3>通过 API 集成到开发工作流</h3>
+                            <h3>MCP 协议 API 集成</h3>
+                            
+                            <!-- MCP协议介绍 -->
+                            <div class="mcp-intro-section">
+                                <h4><i class="el-icon-cpu"></i> MCP 协议介绍</h4>
+                                <p>Model Context Protocol (MCP) 是一个开放标准，用于 AI 应用与外部数据源的安全连接。</p>
+                                <p>Figma Deliver 通过 MCP 协议提供以下能力：</p>
+                                <ul>
+                                    <li>直接从 AI 编辑器访问 Figma 设计数据</li>
+                                    <li>智能生成设计资源配置</li>
+                                    <li>批量处理和优化设计元素</li>
+                                    <li>AI 辅助的设计决策和建议</li>
+                                </ul>
+                            </div>
                             
                             <!-- API认证说明 -->
                             <div class="api-auth-section">
-                                <h4><i class="el-icon-key"></i> 认证方式</h4>
-                                <p>使用 MCP Token 进行身份验证，无需登录状态：</p>
+                                <h4><i class="el-icon-key"></i> MCP Token 认证</h4>
+                                <p>使用 MCP Token 进行身份验证，支持无状态 API 访问：</p>
                                 <ol>
                                     <li>登录 Web 界面 → 个人资料页面</li>
                                     <li>生成或查看 MCP Token</li>
-                                    <li>在 API 调用中使用该 Token</li>
+                                    <li>在 MCP 客户端或 API 调用中使用该 Token</li>
                                 </ol>
                             </div>
 
-                            <!-- 核心API接口 -->
+                            <!-- MCP功能接口 -->
+                            <div class="mcp-functions-section">
+                                <h4><i class="el-icon-connection"></i> MCP 功能接口</h4>
+                                <div class="mcp-functions">
+                                    <div class="mcp-function-group">
+                                        <h5>设计数据获取</h5>
+                                        <div class="mcp-function-item">
+                                            <code>get_preview</code> - 获取 Figma 节点预览图
+                                        </div>
+                                        <div class="mcp-function-item">
+                                            <code>get_node_tree</code> - 获取节点配置信息
+                                        </div>
+                                        <div class="mcp-function-item">
+                                            <code>get_ref_nodes</code> - 获取依赖节点列表
+                                        </div>
+                                    </div>
+                                    <div class="mcp-function-group">
+                                        <h5>配置管理</h5>
+                                        <div class="mcp-function-item">
+                                            <code>set_nodes_modify</code> - 批量设置节点配置
+                                        </div>
+                                        <div class="mcp-function-item">
+                                            <code>get_modify_prompt</code> - 获取 AI 配置提示词
+                                        </div>
+                                        <div class="mcp-function-item">
+                                            <code>clear_nodes_modifys</code> - 清理节点修改
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 传统API接口 -->
                             <div class="api-endpoints-section">
-                                <h4><i class="el-icon-connection"></i> 核心接口</h4>
+                                <h4><i class="el-icon-connection"></i> REST API 接口</h4>
                                 <div class="api-endpoints">
                                     <div class="api-item" v-for="api in apiEndpoints" :key="api.method + api.path">
                                         <div class="api-method" :class="api.method.toLowerCase()" v-text="api.method"></div>
@@ -195,10 +195,35 @@
                                 </div>
                             </div>
 
-                            <!-- 快速开始示例 -->
-                            <div class="api-quickstart">
-                                <h4><i class="el-icon-magic-stick"></i> 快速开始</h4>
+                            <!-- MCP快速开始 -->
+                            <div class="mcp-quickstart">
+                                <h4><i class="el-icon-magic-stick"></i> MCP 快速开始</h4>
                                 <el-tabs v-model="activeApiTab" type="card" class="api-code-tabs">
+                                    <el-tab-pane label="Cursor MCP" name="cursor">
+                                        <div class="code-block">
+                                            <pre><code># 1. 在 Cursor 中配置 MCP 服务
+# 文件: .cursorrules 或 settings.json
+{
+  "mcp": {
+    "servers": {
+      "figma-deliver": {
+        "command": "http://localhost:8080/mcp",
+        "args": ["your_mcp_token_here"]
+      }
+    }
+  }
+}
+
+# 2. 在 Cursor 中使用 AI 命令
+# "获取项目 123 的设计预览"
+# "批量配置节点属性为 PNG 格式"
+# "生成这个设计的配置提示词"
+
+# 3. AI 会自动调用 MCP 功能
+# 无需手动编写 API 调用代码</code></pre>
+                                        </div>
+                                    </el-tab-pane>
+                                    
                                     <el-tab-pane label="Python" name="python">
                                         <div class="code-block">
                                             <pre><code>import requests
@@ -262,6 +287,41 @@ imageUrl.searchParams.append('scale', '2.0');
 const imageResponse = await fetch(imageUrl);
 const imageBlob = await imageResponse.blob();
 const imageUrl2 = URL.createObjectURL(imageBlob);</code></pre>
+                                        </div>
+                                    </el-tab-pane>
+                                    
+                                    <el-tab-pane label="MCP Client" name="mcp-client">
+                                        <div class="code-block">
+                                            <pre><code># MCP 客户端示例 (使用 mcp-client 库)
+import asyncio
+from mcp_client import MCPClient
+
+async def main():
+    # 连接 MCP 服务
+    client = MCPClient("http://localhost:8080/mcp")
+    await client.connect(token="your_mcp_token")
+    
+    # 获取设计预览
+    preview = await client.call_tool(
+        "get_preview",
+        project_id=123,
+        format="png",
+        scale=2.0
+    )
+    
+    # 批量配置节点
+    await client.call_tool(
+        "set_nodes_modify",
+        project_id=123,
+        modifys=[
+            {"id": "1:2", "img_ext": "png", "res_mode": "attach"},
+            {"id": "1:3", "img_ext": "svg", "res_mode": "sprite"}
+        ]
+    )
+    
+    await client.disconnect()
+
+asyncio.run(main())</code></pre>
                                         </div>
                                     </el-tab-pane>
                                     
@@ -341,17 +401,23 @@ go run cmd/main.go</code></pre>
                 </div>
                 
                 <div class="installation-card">
-                    <h3>Figma 插件</h3>
+                    <h3>MCP 服务配置</h3>
                     <div class="code-block">
-                        <pre><code># 1. 进入插件目录
-cd figma-plugin
+                        <pre><code># 1. 启动 MCP 服务
+go run cmd/main.go
 
-# 2. 打包插件
-./package.bat
-
-# 3. 在 Figma 中导入插件
-# 菜单 > 插件 > 开发 > 导入插件
-# 选择 manifest.json 文件</code></pre>
+# 2. 配置 AI 编辑器（Cursor 示例）
+# 在 .cursorrules 或设置中添加：
+{
+  "mcp": {
+    "servers": {
+      "figma-deliver": {
+        "command": "http://localhost:8080/mcp",
+        "args": ["your_mcp_token"]
+      }
+    }
+  }
+}</code></pre>
                     </div>
                 </div>
             </div>
@@ -363,39 +429,58 @@ cd figma-plugin
             <div class="architecture-content">
                 <div class="architecture-diagram">
                     <div class="arch-layer">
-                        <div class="arch-title">前端层</div>
+                        <div class="arch-title">AI 客户端层</div>
                         <div class="arch-components">
+                            <span class="arch-component">Cursor 编辑器</span>
+                            <span class="arch-component">其他 MCP 客户端</span>
                             <span class="arch-component">Web 界面</span>
-                            <span class="arch-component">Figma 插件</span>
                         </div>
                     </div>
                     <div class="arch-arrow">↓</div>
-                    <div class="arch-layer">
-                        <div class="arch-title">服务层</div>
+                    <div class="arch-layer arch-layer-highlight">
+                        <div class="arch-title">MCP 协议层</div>
                         <div class="arch-components">
-                            <span class="arch-component">API 接口</span>
-                            <span class="arch-component">认证中间件</span>
-                            <span class="arch-component">MCP 协议</span>
+                            <span class="arch-component">MCP 服务器</span>
+                            <span class="arch-component">功能路由</span>
+                            <span class="arch-component">Token 认证</span>
                         </div>
                     </div>
                     <div class="arch-arrow">↓</div>
                     <div class="arch-layer">
-                        <div class="arch-title">数据层</div>
+                        <div class="arch-title">业务服务层</div>
+                        <div class="arch-components">
+                            <span class="arch-component">Figma API 集成</span>
+                            <span class="arch-component">设计处理引擎</span>
+                            <span class="arch-component">AI 辅助服务</span>
+                        </div>
+                    </div>
+                    <div class="arch-arrow">↓</div>
+                    <div class="arch-layer">
+                        <div class="arch-title">数据存储层</div>
                         <div class="arch-components">
                             <span class="arch-component">项目数据</span>
                             <span class="arch-component">用户管理</span>
-                            <span class="arch-component">资源存储</span>
+                            <span class="arch-component">资源缓存</span>
                         </div>
                     </div>
                 </div>
                 
                 <div class="architecture-description">
-                    <h4>技术栈</h4>
+                    <h4>技术栈与特色</h4>
                     <ul>
-                        <li><strong>后端：</strong>Go + Gin 框架</li>
-                        <li><strong>前端：</strong>Vue.js + Element UI</li>
-                        <li><strong>插件：</strong>Figma Plugin API</li>
-                        <li><strong>协议：</strong>MCP (Model Context Protocol)</li>
+                        <li><strong>MCP 协议：</strong>Model Context Protocol 支持，实现 AI 原生集成</li>
+                        <li><strong>后端服务：</strong>Go + Gin 框架，高性能并发处理</li>
+                        <li><strong>Web 界面：</strong>Vue.js + Element UI，响应式设计</li>
+                        <li><strong>AI 集成：</strong>支持 Cursor 等 AI 编辑器直接访问</li>
+                        <li><strong>智能化：</strong>AI 辅助的设计决策和配置生成</li>
+                    </ul>
+                    
+                    <h4>MCP 协议优势</h4>
+                    <ul>
+                        <li><strong>无缝集成：</strong>AI 编辑器可直接访问 Figma 设计数据</li>
+                        <li><strong>安全可靠：</strong>基于 Token 的认证机制，保障数据安全</li>
+                        <li><strong>扩展性强：</strong>支持多种 MCP 客户端和 AI 应用</li>
+                        <li><strong>标准化：</strong>遵循 MCP 开放标准，保证兼容性</li>
                     </ul>
                 </div>
             </div>
@@ -422,7 +507,7 @@ cd figma-plugin
                     <div class="contribute-item">
                         <i class="el-icon-warning-outline"></i>
                         <h4>报告问题</h4>
-                        <p>发现 Bug 或有改进建议？请在 GitHub 上提交 Issue</p>
+                        <p>发现 Bug 或有改进建议？请在 GitLab 上提交 Issue</p>
                     </div>
                     <div class="contribute-item">
                         <i class="el-icon-star-on"></i>
@@ -452,7 +537,7 @@ cd figma-plugin
                 <p>基于 MIT 许可证开源</p>
             </div>
             <div class="footer-links">
-                <a href="#" class="footer-link">GitHub</a>
+                <a href="https://gitlab.etouch.cn/wtc/wl-client/wl-client_game/figma-deliver" class="footer-link">GitLab</a>
                 <a href="#" class="footer-link">文档</a>
                 <a href="#" class="footer-link">支持</a>
             </div>

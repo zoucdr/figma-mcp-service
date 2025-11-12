@@ -1048,11 +1048,15 @@ func UpdateProject(c *gin.Context) {
 		return
 	}
 
+	// 获取分组名称（可选）
+	groupName := c.PostForm("group_name")
+
 	// 获取Figma URL（可选）
 	figmaURL := c.PostForm("figma_url")
 
 	// 更新项目信息
 	project.Name = name
+	project.GroupName = groupName
 	project.FigmaURL = figmaURL
 	if err := models.DB.Save(&project).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

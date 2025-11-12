@@ -765,6 +765,6 @@ go test ./...
 ## 📞 支持与联系
 
 - **文档**: 查看 `docs/` 目录获取详细文档
-- **问题报告**: 使用 GitHub Issues
-- **功能请求**: 使用 GitHub Discussions
+- **问题报告**: 使用 GitLab Issues
+- **功能请求**: 使用 GitLab Discussions
 - **安全问题**: 发送邮件至 security@example.com

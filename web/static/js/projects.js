@@ -22,6 +22,7 @@ const ProjectListApp = {
             },
             editForm: {
                 name: '',
+                group_name: '',
                 figma_url: '',
                 file_key: '',
                 root_node_id: ''
@@ -40,7 +41,7 @@ const ProjectListApp = {
     
     // 计算属性
     computed: {
-        // 处理过的项目列表（按FileKey分组）
+        // 处理过的项目列表（按分组名称或FileKey分组）
         processedProjects() {
             // 首先进行搜索过滤
             let result = this.projects;
@@ -49,18 +50,20 @@ const ProjectListApp = {
                 result = result.filter(project => {
                     return project.name.toLowerCase().includes(query) || 
                            project.file_key.toLowerCase().includes(query) ||
+                           (project.group_name && project.group_name.toLowerCase().includes(query)) ||
                            (project.figma_url && project.figma_url.toLowerCase().includes(query));
                 });
             }
             
-            // 按FileKey分组
+            // 按分组名称或FileKey分组
             const groupedProjects = {};
             result.forEach(project => {
-                const fileKey = project.file_key || '未知文件';
-                if (!groupedProjects[fileKey]) {
-                    groupedProjects[fileKey] = [];
+                // 如果有分组名称，使用分组名称；否则使用file_key
+                const groupKey = project.group_name || project.file_key || '未知文件';
+                if (!groupedProjects[groupKey]) {
+                    groupedProjects[groupKey] = [];
                 }
-                groupedProjects[fileKey].push(project);
+                groupedProjects[groupKey].push(project);
             });
             
             // 对每个分组内的项目进行排序
@@ -93,7 +96,7 @@ const ProjectListApp = {
                 });
             });
             
-            // 对分组按FileKey排序
+            // 对分组按分组键排序
             const sortedGroups = Object.keys(groupedProjects).sort((a, b) => {
                 if (this.sortField === 'fileKey') {
                     if (this.sortOrder === 'asc') {
@@ -102,33 +105,45 @@ const ProjectListApp = {
                         return b.localeCompare(a);
                     }
                 }
-                // 默认按FileKey升序排序
+                // 默认按分组键升序排序
                 return a.localeCompare(b);
             });
             
             // 返回分组后的数据结构
-            return sortedGroups.map(fileKey => {
-                const projects = groupedProjects[fileKey];
+            return sortedGroups.map(groupKey => {
+                const projects = groupedProjects[groupKey];
                 let displayName;
                 
-                if (projects.length === 1) {
-                    // 只有一个项目时直接显示项目名
-                    displayName = projects[0].name;
-                } else if (projects.length <= 3) {
-                    // 3个或以下项目时显示所有项目名
-                    displayName = projects.map(p => p.name).join('、');
+                // 检查是否有分组名称
+                const hasGroupName = projects.some(p => p.group_name);
+                const fileKey = projects[0].file_key; // 获取该分组的file_key
+                
+                if (hasGroupName) {
+                    // 如果有分组名称，显示分组名称
+                    displayName = groupKey;
                 } else {
-                    // 超过3个项目时显示前2个项目名 + "等N个项目"
-                    const firstTwo = projects.slice(0, 2).map(p => p.name).join('、');
-                    displayName = `${firstTwo}等${projects.length}个项目`;
+                    // 如果没有分组名称，按原逻辑显示项目名组合
+                    if (projects.length === 1) {
+                        // 只有一个项目时直接显示项目名
+                        displayName = projects[0].name;
+                    } else if (projects.length <= 3) {
+                        // 3个或以下项目时显示所有项目名
+                        displayName = projects.map(p => p.name).join('、');
+                    } else {
+                        // 超过3个项目时显示前2个项目名 + "等N个项目"
+                        const firstTwo = projects.slice(0, 2).map(p => p.name).join('、');
+                        displayName = `${firstTwo}等${projects.length}个项目`;
+                    }
                 }
                 
                 return {
+                    groupKey: groupKey,
                     fileKey: fileKey,
                     projects: projects,
                     projectCount: projects.length,
-                    displayName: displayName, // 项目名组合
-                    expanded: this.expandedGroups[fileKey] === true // 默认收起，除非明确设置为true
+                    displayName: displayName, // 分组显示名称
+                    groupName: hasGroupName ? groupKey : '', // 分组名称
+                    expanded: this.expandedGroups[groupKey] === true // 默认收起，除非明确设置为true
                 };
             });
         }
@@ -231,6 +246,7 @@ const ProjectListApp = {
         showEditDialog(project) {
             this.currentEditProject = project;
             this.editForm.name = project.name;
+            this.editForm.group_name = project.group_name || '';
             this.editForm.figma_url = project.figma_url || '';
             this.editForm.file_key = project.file_key;
             this.editForm.root_node_id = project.root_node_id;
@@ -243,6 +259,7 @@ const ProjectListApp = {
             
             const formData = new FormData();
             formData.append('name', this.editForm.name);
+            formData.append('group_name', this.editForm.group_name);
             formData.append('figma_url', this.editForm.figma_url);
             
             axios.put(`/figma/project/${this.currentEditProject.id}`, formData)
@@ -252,6 +269,7 @@ const ProjectListApp = {
                     const index = this.projects.findIndex(p => p.id === this.currentEditProject.id);
                     if (index !== -1) {
                         this.projects[index].name = this.editForm.name;
+                        this.projects[index].group_name = this.editForm.group_name;
                         this.projects[index].figma_url = this.editForm.figma_url;
                         this.projects = [...this.projects]; // 触发视图更新
                     }
@@ -316,8 +334,8 @@ const ProjectListApp = {
         },
         
         // 切换分组展开状态
-        toggleGroupExpanded(fileKey) {
-            this.$set(this.expandedGroups, fileKey, !this.expandedGroups[fileKey]);
+        toggleGroupExpanded(groupKey) {
+            this.$set(this.expandedGroups, groupKey, !this.expandedGroups[groupKey]);
         },
         
         // 点击分组标题跳转到第一个项目的dashboard
@@ -331,14 +349,14 @@ const ProjectListApp = {
         // 展开所有分组
         expandAllGroups() {
             this.processedProjects.forEach(group => {
-                this.$set(this.expandedGroups, group.fileKey, true);
+                this.$set(this.expandedGroups, group.groupKey, true);
             });
         },
         
         // 收起所有分组
         collapseAllGroups() {
             this.processedProjects.forEach(group => {
-                this.$set(this.expandedGroups, group.fileKey, false);
+                this.$set(this.expandedGroups, group.groupKey, false);
             });
         },
         

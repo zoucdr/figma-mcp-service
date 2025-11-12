@@ -315,5 +315,5 @@ chmod +x backup.sh
 如果遇到问题，请：
 
 1. 查看本文档的故障排除部分
-2. 检查 GitHub Issues
+2. 检查 GitLab Issues
 3. 提交新的 Issue 并附上详细的错误日志

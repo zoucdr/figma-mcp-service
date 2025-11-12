@@ -13,6 +13,7 @@ type FigmaProject struct {
 	FileKey              string      `gorm:"size:100;not null" json:"file_key"`
 	RootNodeID           string      `gorm:"size:100" json:"root_node_id"`
 	Name                 string      `gorm:"size:255" json:"name"`
+	GroupName            string      `gorm:"size:255" json:"group_name"`             // 分组名称
 	FigmaURL             string      `gorm:"size:500" json:"figma_url"`              // Figma设计图地址
 	RefNodes             string      `gorm:"type:text" json:"ref_nodes"`             // 依赖节点ID列表，JSON格式存储
 	Settings             string      `gorm:"type:text" json:"settings"`              // 项目配置信息，JSON格式存储
@@ -42,23 +43,6 @@ type FigmaNode struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
-
-// NodeSetting 节点设置模型 - 不再使用，保留代码以供参考
-// 节点的所有设置现在都存储在FigmaNode的Modifys字段中
-/*
-type NodeSetting struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	NodeID             string    `gorm:"size:100;uniqueIndex;not null" json:"node_id"`
-	NodeType           string    `gorm:"size:50;default:'default'" json:"node_type"`       // 节点类型：default, button, scroll, etc.
-	img_ext  string    `gorm:"size:50;default:'png'" json:"image_download_type"` // 图片下载类型：png, jpg, svg
-	IsVisible          bool      `gorm:"default:true" json:"is_visible"`                   // 是否可见
-	AnchorPoint        string    `gorm:"size:50;default:'center'" json:"anchor_point"`     // 锚点位置
-	CustomName         string    `gorm:"size:255" json:"custom_name"`                      // 自定义节点名称
-	ExcludedChildNodes string    `gorm:"type:text" json:"excluded_child_nodes"`            // 排除的子节点，以JSON数组存储
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-}
-*/
 
 // ExportJob 导出任务模型
 type ExportJob struct {
