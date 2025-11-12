@@ -701,7 +701,7 @@ func ExportFigmaDesign(c *gin.Context) {
 	if format == "" {
 		format = defaultFormat // 从项目设置获取默认格式
 	}
-	if format != "png" && format != "jpg" && format != "svg" && format != "pdf" {
+	if format != "png" && format != "jpg" && format != "svg" {
 		format = "png" // 如果不可用则强制为png
 	}
 
@@ -906,7 +906,7 @@ func GetFigmaImage(c *gin.Context) {
 	}
 
 	// 验证格式
-	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true, "pdf": true}
+	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true}
 	if !validFormats[format] {
 		format = "png" // 如果格式无效，使用默认值
 		fmt.Printf("Controller: 图片格式参数无效，使用默认值: png\n")
@@ -994,7 +994,7 @@ func GetFigmaImages(c *gin.Context) {
 	}
 
 	// 验证格式
-	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true, "pdf": true}
+	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true}
 	if !validFormats[format] {
 		format = "png" // 如果格式无效，使用默认值
 		fmt.Printf("Controller: 图片格式参数无效，使用默认值: png\n")

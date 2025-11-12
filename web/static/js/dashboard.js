@@ -1599,6 +1599,25 @@ const ProjectEditorApp = {
             this.expandedKeys.push('__ref_nodes__');
             // 刷新后不再自动展开第一级子节点
         }
+        
+        },
+        
+        // 辅助方法：根据ID查找节点数据
+        findNodeById(nodeId) {
+            const findInTree = (nodes, id) => {
+                if (!nodes || !Array.isArray(nodes)) return null;
+                
+                for (let node of nodes) {
+                    if (node.id === id) return node;
+                    if (node.children && node.children.length > 0) {
+                        const found = findInTree(node.children, id);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            };
+            
+            return findInTree(this.treeData, nodeId);
         },
         
         // 确保依赖节点分组被展开（但不展开第一级子节点）
@@ -4952,20 +4971,21 @@ const ProjectEditorApp = {
                             if (treeNode) {
                                 // 更新节点标签为原始名称（优先使用originalName，如果没有则使用name）
                                 const originalName = this.currentNode.originalName || this.currentNode.name || this.currentNode.id;
-                                treeNode.data.label = originalName;
-                                // 确保原始名称被保存
-                                treeNode.data.name = originalName;
-                                // 移除修改标记
-                                treeNode.data.modifys = null;
-                                // 强制更新节点
-                                treeNode.data = {...treeNode.data};
                                 
-                                // 强制刷新树视图
-                                this.$nextTick(() => {
-                                    // 触发树的更新
-                                    this.treeData = [...this.treeData];
-                                });
+                                // 使用Vue.set确保响应式更新
+                                this.$set(treeNode.data, 'label', originalName);
+                                this.$set(treeNode.data, 'name', originalName);
+                                this.$set(treeNode.data, 'modifys', null);
+                                
+                                // 强制Vue更新树节点显示
+                                this.$forceUpdate();
                             }
+                        }
+                        
+                        // 同时更新nodes数组中的数据
+                        const nodeInArray = this.nodes.find(n => n.id === nodeId);
+                        if (nodeInArray && nodeInArray.modifys) {
+                            delete nodeInArray.modifys;
                         }
                     }
                     
@@ -5487,7 +5507,10 @@ const ProjectEditorApp = {
                         this.exportStatus = status;
                         this.exportProgress = progress;
                         
-                        if (status === 'processing') {
+                        if (status === 'pending' || status === 'processing') {
+                            if (status === 'pending') {
+                                console.log('任务排队中，等待处理...');
+                            }
                             setTimeout(checkStatus, 1000);
                         } else if (status === 'completed') {
                             this.$message.success('导出完成，正在下载文件...');

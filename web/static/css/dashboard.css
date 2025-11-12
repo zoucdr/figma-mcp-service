@@ -794,18 +794,18 @@ body.resizing {
 }
 
 .custom-tree-node .modified-node {
-    color: #409EFF;
+    color: #67C23A !important;
     font-weight: bold;
 }
 
 .custom-tree-node .ignored-node {
-    color: #F56C6C;
+    color: #F56C6C !important;
     font-weight: bold;
     text-decoration: line-through;
 }
 
 .custom-tree-node .cutout-node {
-    color: #E6A23C;
+    color: #E6A23C !important;
     font-weight: bold;
     text-decoration: line-through;
 }
@@ -1083,22 +1083,6 @@ body.resizing {
     100% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5); }
 }
 
-/* 选中节点的高层级预览层 */
-.selection-overlay {
-    position: absolute;
-    pointer-events: none; /* 不拦截鼠标事件 */
-    z-index: 100; /* 修改为较低层级，确保不会遮挡缩略图 */
-}
-
-/* 选中节点的轮廓效果 */
-.selection-outline {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    border: 2px solid #409EFF;
-    box-sizing: border-box;
-    pointer-events: none;
-}
 
 /* 选中节点的四角标记 */
 .corner-indicator {
@@ -3526,19 +3510,19 @@ h1, h2, h3, h4, h5, h6, p, span, div {
     border-radius: 6px !important;
 }
 
-/* Element UI 树形控件当前选中节点样式 */
+/* 禁用 Element UI 树形控件的默认选中节点样式，使用自定义样式 */
 .el-tree-node.is-current > .el-tree-node__content {
-    background: linear-gradient(145deg, rgba(102, 126, 234, 0.2) 0%, rgba(118, 75, 162, 0.2) 100%) !important;
-    border: 1px solid var(--dark-accent) !important;
-    border-radius: 6px !important;
-    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2) !important;
-    color: var(--dark-accent) !important;
-    font-weight: 600 !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: inherit !important;
+    font-weight: inherit !important;
 }
 
 .el-tree-node.is-current > .el-tree-node__content:hover {
-    background: linear-gradient(145deg, rgba(102, 126, 234, 0.25) 0%, rgba(118, 75, 162, 0.25) 100%) !important;
-    transform: translateX(2px) !important;
+    background: linear-gradient(145deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%) !important;
+    transform: none !important;
 }
 
 /* 树形控件展开/收起图标样式 */
@@ -3554,6 +3538,13 @@ h1, h2, h3, h4, h5, h6, p, span, div {
 
 .el-tree-node__expand-icon.expanded {
     color: var(--dark-accent) !important;
+}
+
+/* 叶子节点不显示展开图标 */
+.el-tree-node__expand-icon.is-leaf {
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 /* 通用下拉框样式 - 覆盖所有 Element UI 下拉框 */

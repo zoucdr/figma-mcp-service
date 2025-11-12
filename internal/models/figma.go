@@ -52,7 +52,7 @@ type ExportJob struct {
 	Status    string    `gorm:"size:50;default:'pending'" json:"status"` // pending, processing, completed, failed
 	Progress  int       `gorm:"default:0" json:"progress"`               // 0-100
 	FilePath  string    `gorm:"size:255" json:"file_path"`               // 导出文件路径
-	Format    string    `gorm:"size:10;default:'png'" json:"format"`     // 导出图片格式：png, jpg, svg, pdf
+	Format    string    `gorm:"size:10;default:'png'" json:"format"`     // 导出图片格式：png, jpg, svg
 	Scale     float64   `gorm:"default:1.0" json:"scale"`                // 图片缩放比例：0.5, 1.0, 2.0, 3.0, 4.0
 	Error     string    `gorm:"type:text" json:"error"`                  // 错误信息
 	CreatedAt time.Time `json:"created_at"`

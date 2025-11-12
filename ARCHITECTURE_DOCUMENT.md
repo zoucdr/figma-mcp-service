@@ -236,7 +236,7 @@ async function getPreview(nodeId, options) {
 ### 5. 导出系统模块
 
 #### 功能特性
-- **多格式支持**：PNG、JPG、SVG、PDF
+- **多格式支持**：PNG、JPG、SVG
 - **多规格导出**：0.5x到4.0x的灵活缩放
 - **批量导出**：支持整个项目的批量导出
 - **异步处理**：后台任务处理大型导出作业
@@ -407,7 +407,7 @@ CREATE TABLE export_jobs (
     status VARCHAR(50) DEFAULT 'pending',  -- pending, processing, completed, failed
     progress INT DEFAULT 0,                -- 0-100
     file_path VARCHAR(255),
-    format VARCHAR(10) DEFAULT 'png',      -- png, jpg, svg, pdf
+    format VARCHAR(10) DEFAULT 'png',      -- png, jpg, svg
     scale DECIMAL(3,1) DEFAULT 1.0,        -- 0.5-4.0
     error TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

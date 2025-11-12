@@ -109,8 +109,13 @@
                         v-else
                         ref="nodeTree"
                         :data="treeData" 
-                        :props="{label: 'label'}" 
-                        highlight-current
+                        :props="{
+                            label: 'label',
+                            children: 'children',
+                            isLeaf: (data, node) => {
+                                return !data.children || data.children.length === 0;
+                            }
+                        }" 
                         node-key="id"
                         :expand-on-click-node="false"
                         :default-expanded-keys="expandedKeys">
@@ -123,21 +128,29 @@
                             <i v-else-if="data.isRefNode && data.error" class="el-icon-circle-close" style="color: #F56C6C;" title="依赖节点加载错误"></i>
                             <i v-else-if="data.isRefNode && data.isRefChild" class="el-icon-paperclip" style="color: #909399;" title="依赖节点子节点"></i>
                             <!-- 普通节点图标（包括依赖节点中的普通类型） -->
-                            <i v-else-if="data.type === 'FRAME'" class="el-icon-picture-outline" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
-                            <i v-else-if="data.type === 'GROUP'" class="el-icon-folder" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <!-- FRAME类型：有子节点显示图框图标，无子节点显示图片图标 -->
+                            <i v-else-if="data.type === 'FRAME' && data.children && data.children.length > 0" class="el-icon-picture-outline" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <i v-else-if="data.type === 'FRAME'" class="el-icon-picture" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <!-- GROUP类型：有子节点显示文件夹图标，无子节点显示文件图标 -->
+                            <i v-else-if="data.type === 'GROUP' && data.children && data.children.length > 0" class="el-icon-folder" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <i v-else-if="data.type === 'GROUP'" class="el-icon-document" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <!-- COMPONENT类型 -->
                             <i v-else-if="data.type === 'COMPONENT'" class="el-icon-s-grid" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <!-- INSTANCE类型 -->
                             <i v-else-if="data.type === 'INSTANCE'" class="el-icon-copy-document" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
+                            <!-- TEXT类型 -->
                             <i v-else-if="data.type === 'TEXT'" class="el-icon-document" :style="data.isRefNode ? 'color: #409EFF;' : ''"></i>
                             <!-- 依赖节点通用图标（当没有具体类型时） -->
                             <i v-else-if="data.isRefNode" class="el-icon-connection" style="color: #409EFF;" title="依赖节点"></i>
-                            <!-- 默认图标 -->
-                            <i v-else class="el-icon-tickets"></i>
+                            <!-- 默认图标：有子节点显示票据图标，无子节点显示文件图标 -->
+                            <i v-else-if="data.children && data.children.length > 0" class="el-icon-tickets"></i>
+                            <i v-else class="el-icon-document"></i>
                             
                             <!-- 显示节点名称，如果有修改则使用自定义名称，如果被忽略则显示为红色，如果res_mode为cutout则显示黄色删除线 -->
                             <span :class="{
-                                'modified-node': hasNodeModifys(data.modifys) && !data.modifys.ignore, 
                                 'ignored-node': data.modifys && data.modifys.ignore,
-                                'cutout-node': data.modifys && data.modifys.res_mode === 'cutout'
+                                'cutout-node': data.modifys && data.modifys.res_mode === 'cutout' && !data.modifys.ignore,
+                                'modified-node': hasNodeModifys(data.modifys) && !data.modifys.ignore && (!data.modifys.res_mode || data.modifys.res_mode !== 'cutout')
                             }">
                                 {{`{{ node.label }}`}}
                                 <span v-if="data.name && node.label && node.label !== data.name" style="color: #909399; font-size: 12px; margin-left: 4px;">
@@ -893,7 +906,6 @@
                                                 <el-option label="PNG" value="png"></el-option>
                                                 <el-option label="JPG" value="jpg"></el-option>
                                                 <el-option label="SVG" value="svg"></el-option>
-                                                <el-option label="PDF" value="pdf"></el-option>
                                             </el-select>
                                         </el-form-item>
                                     </template>
@@ -951,7 +963,6 @@
                 <el-option label="PNG" value="png"></el-option>
                 <el-option label="JPG" value="jpg"></el-option>
                 <el-option label="SVG" value="svg"></el-option>
-                <el-option label="PDF" value="pdf"></el-option>
             </el-select>
             <el-select v-model="defaultImageScale" placeholder="缩放比例" size="small" style="width: 100px; margin-right: 10px;">
                 <el-option label="0.5x" :value="0.5"></el-option>
@@ -1079,7 +1090,7 @@
                             <span class="tool-name">获取节点预览</span>
                         </div>
                         <div class="tool-description">
-                            获取Figma节点的预览图，支持PNG、JPG、SVG、PDF格式，可设置缩放比例
+                            获取Figma节点的预览图，支持PNG、JPG、SVG格式，可设置缩放比例
                         </div>
                     </div>
                     

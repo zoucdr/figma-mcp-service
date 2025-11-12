@@ -11,7 +11,7 @@ Figma Deliver 是一个全功能的 Figma 设计资源管理和导出平台，�
 - **批量操作**: 支持批量导出、重命名和配置节点
 
 ### 智能导出系统
-- **多格式支持**: PNG、JPG、SVG、PDF 格式导出
+- **多格式支持**: PNG、JPG、SVG 格式导出
 - **缩放选项**: 0.5x 到 4.0x 的灵活缩放比例
 - **优化 JSON**: 生成包含图片路径的结构化数据
 - **异步处理**: 后台任务处理大型项目导出
@@ -164,7 +164,7 @@ package.bat
 - **导出控制**: 底部设置导出参数
 
 #### 3. 导出功能
-- **格式选择**: PNG、JPG、SVG、PDF
+- **格式选择**: PNG、JPG、SVG
 - **缩放设置**: 0.5x - 4.0x 灵活缩放
 - **批量导出**: 一键导出所有标记节点
 - **JSON 数据**: 包含图片路径的结构化数据
@@ -471,7 +471,7 @@ GET /api/{mcptoken}/download_image?file_key={file_key}&node_id={node_id}&format=
 **查询参数**:
 - `file_key` (必需): Figma 文件键
 - `node_id` (必需): 节点ID
-- `format` (可选): 图片格式 (png|jpg|svg|pdf，默认png)
+- `format` (可选): 图片格式 (png|jpg|svg，默认png)
 - `scale` (可选): 缩放比例 (0.5-4.0，默认1.0)
 
 **请求示例**:

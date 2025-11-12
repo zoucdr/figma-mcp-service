@@ -468,7 +468,7 @@ func handleMCPRequest(_ *gin.Context, userID uint, connectionID, method, path, q
 												"res_mode":   gin.H{"type": "string", "description": "资源模式", "enum": []string{"attach", "sprite", "slice", "texture", "cutout"}},
 												"img_name":   gin.H{"type": "string", "description": "图片名称"},
 												"img_id":     gin.H{"type": "string", "description": "图片重定向节点, 如果为空，则不重定向"},
-												"img_ext":    gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg", "pdf"}},
+												"img_ext":    gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg"}},
 												"components": gin.H{"type": "array", "items": gin.H{"type": "string"}, "description": "组件列表"},
 											},
 											"required": []string{"node_id"},
@@ -575,7 +575,7 @@ func handleMCPProtocolRequest(userID uint, connectionID string, request map[stri
 							"properties": gin.H{
 								"project_id": gin.H{"type": "number", "description": "项目ID"},
 								"node_id":    gin.H{"type": "string", "description": "节点ID（可选，默认使用项目根节点）"},
-								"format":     gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg", "pdf"}, "default": "png"},
+								"format":     gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg"}, "default": "png"},
 								"scale":      gin.H{"type": "number", "description": "缩放比例 (0.1-4.0)", "minimum": 0.1, "maximum": 4.0, "default": 0.1},
 							},
 							"required": []string{"project_id"},
@@ -615,7 +615,7 @@ func handleMCPProtocolRequest(userID uint, connectionID string, request map[stri
 											"res_mode":   gin.H{"type": "string", "description": "资源模式", "enum": []string{"attach", "sprite", "slice", "texture", "cutout"}},
 											"img_name":   gin.H{"type": "string", "description": "图片名称"},
 											"img_id":     gin.H{"type": "string", "description": "图片ID"},
-											"img_ext":    gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg", "pdf"}},
+											"img_ext":    gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg"}},
 											"components": gin.H{"type": "array", "items": gin.H{"type": "string"}, "description": "组件列表"},
 										},
 										"required": []string{"id"},
@@ -1675,7 +1675,7 @@ func getMCPPreviewImage(userID uint, projectIDStr, nodeID, format string, scale 
 	}
 
 	// 验证格式和缩放参数
-	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true, "pdf": true}
+	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true}
 	if !validFormats[format] {
 		format = "png"
 	}

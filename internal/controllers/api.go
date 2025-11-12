@@ -118,7 +118,7 @@ func GetProjectsByGroup(c *gin.Context) {
 
 	groupName := c.Query("group_name")
 	fileKey := c.Query("file_key")
-	
+
 	// 如果没有提供分组名称和file_key，返回错误
 	if groupName == "" && fileKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -593,7 +593,7 @@ func APIDownloadFigmaImage(c *gin.Context) {
 	}
 
 	// 验证格式
-	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true, "pdf": true}
+	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true}
 	if !validFormats[format] {
 		format = "png"
 	}
@@ -910,7 +910,7 @@ func findLatestNodeImage(tempDir, safeNodeID string, scale float64) string {
 	scaleStr := formatScaleForFilename(scale)
 
 	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
-	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg", ".pdf"}
+	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
@@ -971,7 +971,7 @@ func cleanupOldNodeImages(tempDir, safeNodeID string, scale float64, keepCount i
 	scaleStr := formatScaleForFilename(scale)
 
 	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
-	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg", ".pdf"}
+	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
@@ -1032,8 +1032,6 @@ func getContentTypeByExtension(ext string) string {
 		return "image/jpeg"
 	case ".svg":
 		return "image/svg+xml"
-	case ".pdf":
-		return "application/pdf"
 	default:
 		return "application/octet-stream"
 	}
@@ -1048,8 +1046,6 @@ func getFileExtensionByContentType(contentType, requestFormat string) string {
 		return ".jpg"
 	} else if strings.HasPrefix(contentType, "image/svg") {
 		return ".svg"
-	} else if strings.HasPrefix(contentType, "application/pdf") {
-		return ".pdf"
 	}
 
 	// 如果Content-Type无法判断，使用请求的格式
@@ -1060,8 +1056,6 @@ func getFileExtensionByContentType(contentType, requestFormat string) string {
 		return ".jpg"
 	case "svg":
 		return ".svg"
-	case "pdf":
-		return ".pdf"
 	default:
 		return ".png" // 默认为PNG
 	}
@@ -1197,7 +1191,7 @@ func clearCacheByNodeIDs(fileKey string, nodeIDs []string) (int, error) {
 				originalNodeID := nodeIDs[i]
 
 				// 支持多种图片格式
-				supportedExts := []string{".png", ".jpg", ".jpeg", ".svg", ".pdf"}
+				supportedExts := []string{".png", ".jpg", ".svg"}
 
 				for _, ext := range supportedExts {
 					// 查找以节点ID为前缀的文件

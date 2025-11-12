@@ -185,7 +185,6 @@ new Vue({
                             <li><strong>PNG：</strong>适用于大多数图片资源，支持透明背景</li>
                             <li><strong>JPG：</strong>适用于照片类图片，文件体积较小</li>
                             <li><strong>SVG：</strong>矢量格式，适用于图标和简单图形</li>
-                            <li><strong>PDF：</strong>适用于文档和打印用途</li>
                         </ul>
                         <p>同时支持多种缩放比例：0.5x、1x、2x、3x、4x，满足不同分辨率需求。</p>
                     `

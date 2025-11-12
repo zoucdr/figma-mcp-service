@@ -59,7 +59,7 @@ go build -o cmd/figma-deliver.exe cmd/main.go
 5. 等待导出完成，可以下载导出的文件
 
 #### 支持的导出格式
-- **图片格式**：PNG、JPG、SVG、PDF
+- **图片格式**：PNG、JPG、SVG
 - **缩放比例**：0.5x、1x、2x、3x、4x
 - **批量导出**：支持选择多个节点同时导出
 

@@ -518,7 +518,7 @@ func findLatestNodeImage(tempDir, safeNodeID string, imageScale float64) string 
 	// 构建缩放等级字符串（用于匹配文件名）
 	scaleStr := formatScaleForFilename(imageScale)
 
-	supportedExts := []string{".png", ".svg", ".jpg", ".pdf"}
+	supportedExts := []string{".png", ".svg", ".jpg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
@@ -593,7 +593,7 @@ func cleanupOldNodeImages(tempDir, safeNodeID string, imageScale float64, keepCo
 	scaleStr := formatScaleForFilename(imageScale)
 
 	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
-	supportedExts := []string{".png", ".svg", ".jpg", ".pdf"}
+	supportedExts := []string{".png", ".svg", ".jpg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
@@ -719,7 +719,7 @@ func ClearProjectImageCacheByNodeIDs(fileKey string, nodeIDs []string) error {
 			}
 
 			// 删除所有图片文件（支持多种格式）
-			supportedExts := []string{"*.png", "*.jpg", "*.jpeg", "*.svg", "*.pdf"}
+			supportedExts := []string{"*.png", "*.jpg", "*.jpeg", "*.svg"}
 			for _, ext := range supportedExts {
 				pattern := filepath.Join(tempDir, ext)
 				files, err := filepath.Glob(pattern)
@@ -795,7 +795,7 @@ func ClearProjectImageCacheByNodeIDs(fileKey string, nodeIDs []string) error {
 				originalNodeID := nodeIDs[i]
 
 				// 支持多种图片格式
-				supportedExts := []string{".png", ".jpg", ".jpeg", ".svg", ".pdf"}
+				supportedExts := []string{".png", ".jpg", ".jpeg", ".svg"}
 
 				for _, ext := range supportedExts {
 					// 查找以节点ID为前缀的文件
@@ -1277,8 +1277,6 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 			finalFileExt = ".jpg"
 		case "image/png":
 			finalFileExt = ".png"
-		case "application/pdf":
-			finalFileExt = ".pdf"
 		}
 	}
 
@@ -1541,8 +1539,6 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 			tempFileExt = ".jpg"
 		case "image/png":
 			tempFileExt = ".png"
-		case "application/pdf":
-			tempFileExt = ".pdf"
 		}
 	}
 
@@ -1601,8 +1597,6 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 			resultFileExt = ".jpg"
 		case "image/png":
 			resultFileExt = ".png"
-		case "application/pdf":
-			resultFileExt = ".pdf"
 		}
 	}
 
