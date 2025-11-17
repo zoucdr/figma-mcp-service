@@ -987,6 +987,10 @@ const ProjectEditorApp = {
                 group_name: '',
                 link: ''
             };
+            
+            // 从当前项目列表中获取默认组名
+            this.loadDefaultGroupNameFromSiblingProjects();
+            
             this.createProjectDialogVisible = true;
             // 关闭下拉框
             this.$nextTick(() => {
@@ -996,6 +1000,21 @@ const ProjectEditorApp = {
                     selectComponent.__vue__.blur();
                 }
             });
+        },
+        
+        // 从当前项目列表中加载默认组名
+        loadDefaultGroupNameFromSiblingProjects() {
+            // 从 siblingProjects 中获取任意一个有组名的项目的组名
+            if (this.siblingProjects && this.siblingProjects.length > 0) {
+                // 查找第一个有组名的项目
+                for (let i = 0; i < this.siblingProjects.length; i++) {
+                    const project = this.siblingProjects[i];
+                    if (project.group_name && project.group_name.trim() !== '') {
+                        this.createProjectForm.group_name = project.group_name.trim();
+                        return; // 找到第一个就返回
+                    }
+                }
+            }
         },
         
         // 创建项目
@@ -1017,8 +1036,8 @@ const ProjectEditorApp = {
         parseFigmaLinkAndCreate() {
             const link = this.createProjectForm.link;
             
-            // 解析Figma链接
-            const figmaUrlPattern = /figma\.com\/file\/([a-zA-Z0-9]+)\/[^?]*(?:\?.*node-id=([^&]+))?/;
+            // 解析Figma链接（支持 file 和 design 两种格式）
+            const figmaUrlPattern = /figma\.com\/(?:file|design)\/([a-zA-Z0-9]+)\/[^?]*(?:\?.*node-id=([^&]+))?/;
             const match = link.match(figmaUrlPattern);
             
             if (!match) {
@@ -1035,32 +1054,58 @@ const ProjectEditorApp = {
                 nodeId = decodeURIComponent(nodeId);
             }
             
-            // 发送创建请求
-            const formData = new FormData();
-            formData.append('name', this.createProjectForm.name);
-            formData.append('group_name', this.createProjectForm.group_name);
-            formData.append('figma_url', link);
+            // 直接创建项目，组名已经在打开对话框或输入链接时加载了
+            // 构建查询参数
+            const params = new URLSearchParams({
+                name: this.createProjectForm.name,
+                figma_url: link
+            });
+            if (this.createProjectForm.group_name) {
+                params.append('group_name', this.createProjectForm.group_name);
+            }
             
-            fetch(`/api/figma/${fileKey}/${nodeId}?name=${encodeURIComponent(this.createProjectForm.name)}&figma_url=${encodeURIComponent(link)}`, {
+            fetch(`/figma/node/${fileKey}/${nodeId}?${params.toString()}`, {
                 method: 'GET',
                 headers: {
                     'X-CSRF-Token': window.initialData?.csrfToken || ''
                 }
             })
-            .then(response => response.json())
+            .then(response => {
+                // 检查响应状态
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                        try {
+                            const errorData = JSON.parse(text);
+                            if (errorData.error) {
+                                errorMessage = errorData.error;
+                            }
+                        } catch (e) {
+                            // 如果不是JSON，使用原始文本
+                            if (text) {
+                                errorMessage = text.substring(0, 200);
+                            }
+                        }
+                        throw new Error(errorMessage);
+                    });
+                }
+                
+                // 检查内容类型
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    return response.text().then(text => {
+                        throw new Error('服务器返回的不是JSON格式: ' + text.substring(0, 200));
+                    });
+                }
+                
+                return response.json();
+            })
             .then(data => {
                 if (data.error) {
                     throw new Error(data.error);
                 }
                 
-                // 创建成功后，如果有分组名称，需要更新项目信息
-                if (this.createProjectForm.group_name && data.project) {
-                    return this.updateProjectGroupName(data.project.id, this.createProjectForm.group_name);
-                }
-                
-                return data;
-            })
-            .then(data => {
+                // 后端已支持 group_name 参数，直接使用返回的数据
                 this.$message.success('项目创建成功！');
                 this.createProjectDialogVisible = false;
                 this.creatingProject = false;
