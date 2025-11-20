@@ -8,12 +8,12 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/figma-deliver/internal/models"
-	"github.com/figma-deliver/internal/services"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
@@ -549,10 +549,6 @@ func handleMCPProtocolRequest(userID uint, connectionID string, request map[stri
 					"tools": gin.H{
 						"listChanged": true,
 					},
-					"resources": gin.H{
-						"subscribe":   false,
-						"listChanged": true,
-					},
 				},
 				"serverInfo": gin.H{
 					"name":    "figma-deliver-mcp",
@@ -686,25 +682,6 @@ func handleMCPProtocolRequest(userID uint, connectionID string, request map[stri
 
 		return handleToolCall(userID, connectionID, toolName, arguments, id)
 
-	case "resources/list":
-		return handleResourcesList(userID, connectionID, id)
-
-	case "resources/read":
-		params, _ := request["params"].(map[string]interface{})
-		if params == nil {
-			return gin.H{
-				"jsonrpc": "2.0",
-				"id":      id,
-				"error": gin.H{
-					"code":    -32602,
-					"message": "Invalid params",
-				},
-			}
-		}
-
-		resourceURI, _ := params["uri"].(string)
-		return handleResourceRead(userID, connectionID, resourceURI, id)
-
 	default:
 		return gin.H{
 			"jsonrpc": "2.0",
@@ -821,7 +798,7 @@ func getProjectRootNodeID(userID uint, projectIDInt uint) (string, error) {
 	return "0:0", nil
 }
 
-// getProjectNodeTree 获取项目的节点树信息
+// getProjectNodeTree 获取项目的节点树信息（仅从缓存获取，不访问 Figma API）
 func getProjectNodeTree(userID uint, projectIDInt uint, nodeID string) (map[string]interface{}, error) {
 	// 获取项目信息
 	project, err := models.GetProjectByID(projectIDInt)
@@ -834,17 +811,6 @@ func getProjectNodeTree(userID uint, projectIDInt uint, nodeID string) (map[stri
 		return nil, fmt.Errorf("无权限访问此项目")
 	}
 
-	// 获取用户信息
-	user, err := models.FindUserByID(userID)
-	if err != nil {
-		return nil, fmt.Errorf("用户不存在: %v", err)
-	}
-
-	// 检查用户是否有Figma token
-	if user.FigmaToken == "" {
-		return nil, fmt.Errorf("用户未绑定Figma token")
-	}
-
 	// 如果没有提供节点ID，使用项目的根节点ID
 	if nodeID == "" {
 		if project.RootNodeID != "" {
@@ -854,15 +820,22 @@ func getProjectNodeTree(userID uint, projectIDInt uint, nodeID string) (map[stri
 		}
 	}
 
-	// 获取Figma节点数据
-	nodes, err := services.GetFigmaNodes(user.FigmaToken, project.FileKey, nodeID)
+	// 从数据库缓存获取节点树数据
+	nodes, err := getNodesFromCache(project.FileKey, nodeID)
 	if err != nil {
-		return nil, fmt.Errorf("获取Figma节点数据失败: %v", err)
+		return nil, fmt.Errorf("获取节点树数据失败（缓存未找到）: %v", err)
+	}
+
+	// 如果节点列表为空，返回错误
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("节点树数据为空（请先在 Dashboard 中刷新节点树）")
 	}
 
 	// 如果节点ID是根节点ID，并且nodes不为空，则使用nodes中的第一个节点ID
 	if nodeID == project.RootNodeID && len(nodes) > 0 {
-		nodeID = nodes[0]["id"].(string)
+		if firstNodeID, ok := nodes[0]["id"].(string); ok {
+			nodeID = firstNodeID
+		}
 	}
 
 	// 获取所有节点的修改信息
@@ -887,6 +860,151 @@ func getProjectNodeTree(userID uint, projectIDInt uint, nodeID string) (map[stri
 	filteredTree := buildFilteredNodeTree(nodes, nodeID, nodeModifys)
 
 	return filteredTree, nil
+}
+
+// getNodesFromCache 从数据库缓存获取节点树（支持子树查找）
+func getNodesFromCache(fileKey, nodeID string) ([]map[string]interface{}, error) {
+	// 1. 先尝试直接查找该节点ID的缓存
+	cache, err := models.GetFileCache(fileKey, nodeID)
+	if err == nil && cache != nil && cache.Status == "loaded" && cache.FileData != "" {
+		// 解析缓存的节点数据
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(cache.FileData), &result); err == nil {
+			nodes := parseFigmaNodes(result, nodeID)
+			if len(nodes) > 0 {
+				log.Printf("✅ [MCP] 从数据库缓存获取节点树: fileKey=%s, nodeID=%s, 节点数=%d",
+					fileKey, nodeID, len(nodes))
+				return nodes, nil
+			}
+		}
+	}
+
+	// 2. 如果没有找到，尝试从根节点缓存中查找子树
+	// 查找所有该 fileKey 的缓存记录
+	var caches []models.FigmaFileCache
+	if err := models.DB.Where("file_key = ? AND status = ?", fileKey, "loaded").Find(&caches).Error; err != nil {
+		return nil, fmt.Errorf("查询缓存失败: %v", err)
+	}
+
+	// 遍历所有缓存，查找包含目标节点ID的缓存
+	for _, cache := range caches {
+		// 检查 node_ids 字段是否包含目标节点ID
+		if cache.NodeIDs != "" && strings.Contains(cache.NodeIDs, nodeID) {
+			// 解析缓存的节点数据
+			var result map[string]interface{}
+			if err := json.Unmarshal([]byte(cache.FileData), &result); err == nil {
+				// 解析所有节点
+				nodes := parseFigmaNodes(result, cache.RootNodeID)
+
+				// 从所有节点中筛选出目标节点的子树
+				filteredNodes := filterNodeSubtree(nodes, nodeID)
+				if len(filteredNodes) > 0 {
+					log.Printf("✅ [MCP] 从父缓存中提取子树: fileKey=%s, parentNodeID=%s, targetNodeID=%s, 节点数=%d",
+						fileKey, cache.RootNodeID, nodeID, len(filteredNodes))
+					return filteredNodes, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("缓存中未找到节点树数据 (fileKey=%s, nodeID=%s)", fileKey, nodeID)
+}
+
+// parseFigmaNodes 解析 Figma API 响应为节点列表（从 figma.go 复制）
+func parseFigmaNodes(result map[string]interface{}, nodeID string) []map[string]interface{} {
+	nodes := []map[string]interface{}{}
+
+	// 尝试从 nodes 字段解析（单节点查询）
+	if nodesObj, ok := result["nodes"].(map[string]interface{}); ok {
+		if nodeData, ok := nodesObj[nodeID].(map[string]interface{}); ok {
+			if document, ok := nodeData["document"].(map[string]interface{}); ok {
+				flattenNode(document, nil, &nodes)
+			}
+		}
+	}
+
+	// 尝试从 document 字段解析（整个文件查询）
+	if document, ok := result["document"].(map[string]interface{}); ok {
+		flattenNode(document, nil, &nodes)
+	}
+
+	return nodes
+}
+
+// flattenNode 递归扁平化节点树（从 figma.go 复制）
+func flattenNode(node map[string]interface{}, parentID interface{}, nodes *[]map[string]interface{}) {
+	if node == nil {
+		return
+	}
+
+	// 创建节点副本
+	flatNode := make(map[string]interface{})
+	for k, v := range node {
+		if k != "children" {
+			flatNode[k] = v
+		}
+	}
+
+	// 添加父节点ID
+	if parentID != nil {
+		flatNode["parent_id"] = parentID
+	}
+
+	// 添加到节点列表
+	*nodes = append(*nodes, flatNode)
+
+	// 递归处理子节点
+	if children, ok := node["children"].([]interface{}); ok {
+		currentID := node["id"]
+		for _, child := range children {
+			if childMap, ok := child.(map[string]interface{}); ok {
+				flattenNode(childMap, currentID, nodes)
+			}
+		}
+	}
+}
+
+// filterNodeSubtree 从节点列表中筛选出指定节点的子树
+func filterNodeSubtree(nodes []map[string]interface{}, targetNodeID string) []map[string]interface{} {
+	// 构建节点ID到节点的映射
+	nodeMap := make(map[string]map[string]interface{})
+	for _, node := range nodes {
+		if nodeID, ok := node["id"].(string); ok {
+			nodeMap[nodeID] = node
+		}
+	}
+
+	// 查找目标节点
+	targetNode, found := nodeMap[targetNodeID]
+	if !found {
+		return nil
+	}
+
+	// 递归收集子树的所有节点
+	subtreeNodes := []map[string]interface{}{}
+	collectSubtreeNodes(targetNode, nodeMap, nodes, &subtreeNodes)
+
+	return subtreeNodes
+}
+
+// collectSubtreeNodes 递归收集子树的所有节点
+func collectSubtreeNodes(node map[string]interface{}, nodeMap map[string]map[string]interface{},
+	allNodes []map[string]interface{}, result *[]map[string]interface{}) {
+
+	nodeID, ok := node["id"].(string)
+	if !ok {
+		return
+	}
+
+	// 添加当前节点
+	*result = append(*result, node)
+
+	// 查找所有子节点
+	for _, n := range allNodes {
+		if parentID, ok := n["parent_id"].(string); ok && parentID == nodeID {
+			collectSubtreeNodes(n, nodeMap, allNodes, result)
+		}
+	}
 }
 
 // buildFilteredNodeTree 构建过滤后的节点树
@@ -1663,17 +1781,6 @@ func getMCPPreviewImage(userID uint, projectIDStr, nodeID, format string, scale 
 		return "", "", fmt.Errorf("无权限访问此项目")
 	}
 
-	// 获取用户信息
-	user, err := models.FindUserByID(userID)
-	if err != nil {
-		return "", "", fmt.Errorf("用户不存在: %v", err)
-	}
-
-	// 检查用户是否有Figma token
-	if user.FigmaToken == "" {
-		return "", "", fmt.Errorf("用户未绑定Figma token")
-	}
-
 	// 验证格式和缩放参数
 	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true}
 	if !validFormats[format] {
@@ -1685,12 +1792,13 @@ func getMCPPreviewImage(userID uint, projectIDStr, nodeID, format string, scale 
 	}
 
 	nodeID = strings.ReplaceAll(nodeID, "-", ":")
-	// 获取预览图
-	log.Printf("MCP: 开始获取预览图 - 项目ID: %d, 节点ID: %s, 格式: %s, 缩放: %.1f", projectID, nodeID, format, scale)
 
-	imagePath, err := services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, true)
+	// 仅从缓存获取预览图（不访问 Figma API）
+	log.Printf("📷 [MCP] 从缓存获取预览图 - 项目ID: %d, 节点ID: %s, 格式: %s, 缩放: %.1f", projectID, nodeID, format, scale)
+
+	imagePath, err := getImageFromCacheOnly(project.FileKey, nodeID, format, scale)
 	if err != nil {
-		return "", "", fmt.Errorf("下载预览图失败: %v", err)
+		return "", "", fmt.Errorf("获取预览图失败（缓存未找到）: %v，请先在 Dashboard 中渲染该节点", err)
 	}
 
 	// 读取图片文件并转换为base64
@@ -1702,284 +1810,90 @@ func getMCPPreviewImage(userID uint, projectIDStr, nodeID, format string, scale 
 	// 编码为base64
 	imageBase64 := base64.StdEncoding.EncodeToString(imageData)
 
-	log.Printf("MCP: 预览图获取成功 - 路径: %s, 大小: %d bytes", imagePath, len(imageData))
+	log.Printf("✅ [MCP] 预览图获取成功 - 路径: %s, 大小: %d bytes", imagePath, len(imageData))
 
 	return imagePath, imageBase64, nil
 }
 
-// handleResourcesList 处理MCP资源列表请求
-func handleResourcesList(userID uint, _ string, requestID interface{}) gin.H {
-	// 获取用户信息
-	user, err := models.FindUserByID(userID)
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": fmt.Sprintf("获取用户信息失败: %v", err),
-			},
+// getImageFromCacheOnly 仅从本地缓存、数据库、OBS、CDN 获取图片（不访问 Figma API）
+func getImageFromCacheOnly(fileKey, nodeID, format string, scale float64) (string, error) {
+	// 构建本地缓存路径
+	safeNodeID := strings.NewReplacer(
+		":", "_", ";", "_", "/", "_", "\\", "_",
+		"*", "_", "?", "_", "\"", "_", "<", "_",
+		">", "_", "|", "_", ",", "_",
+	).Replace(nodeID)
+
+	// 构建图片文件名（与渲染队列保持一致）
+	scaleStr := fmt.Sprintf("%.1fx", scale)
+	fileName := fmt.Sprintf("%s-%s.%s", safeNodeID, scaleStr, format)
+
+	// 检查本地缓存目录
+	cacheDirs := []string{
+		fmt.Sprintf("temp/%s/%s/%s", fileKey, format, scaleStr),
+		fmt.Sprintf("temp/images/%s/%s_%s", fileKey, format, scaleStr),
+	}
+
+	// 1. 先检查本地文件缓存
+	for _, cacheDir := range cacheDirs {
+		localPath := fmt.Sprintf("%s/%s", cacheDir, fileName)
+		if fileInfo, err := ioutil.ReadFile(localPath); err == nil && len(fileInfo) > 0 {
+			log.Printf("✅ [MCP] 从本地缓存获取图片: %s", localPath)
+			return localPath, nil
 		}
 	}
 
-	// 检查用户是否有Figma token
-	if user.FigmaToken == "" {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"result": gin.H{
-				"resources": []gin.H{},
-			},
+	// 2. 查询数据库中的图片记录
+	var imageCache models.FigmaNodeImage
+	err := models.DB.Where("file_key = ? AND node_id = ? AND format = ? AND scale = ?",
+		fileKey, nodeID, format, scale).First(&imageCache).Error
+
+	if err == nil && (imageCache.Status == "obs_synced" || imageCache.Status == "figma_cdn") {
+		// 2.1 如果有 OBS Key，尝试从 OBS 下载
+		if imageCache.OBSKey != "" && globalOBSService != nil && globalOBSService.IsEnabled() {
+			log.Printf("🔄 [MCP] 尝试从 OBS 下载图片: %s", imageCache.OBSKey)
+			imageData, _, err := globalOBSService.DownloadImage(imageCache.OBSKey)
+			if err == nil && len(imageData) > 0 {
+				// 保存到本地缓存
+				localPath := cacheDirs[0] + "/" + fileName
+				if err := os.MkdirAll(cacheDirs[0], 0755); err == nil {
+					if err := ioutil.WriteFile(localPath, imageData, 0644); err == nil {
+						log.Printf("✅ [MCP] 从 OBS 下载并缓存图片成功: %s", localPath)
+						return localPath, nil
+					}
+				}
+			} else {
+				log.Printf("⚠️ [MCP] 从 OBS 下载图片失败: %v", err)
+			}
+		}
+
+		// 2.2 如果有 Figma CDN URL，尝试从 CDN 下载
+		if imageCache.FigmaCDNURL != "" {
+			log.Printf("🔄 [MCP] 尝试从 Figma CDN 下载图片: %s", imageCache.FigmaCDNURL)
+			resp, err := http.Get(imageCache.FigmaCDNURL)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				imageData, err := ioutil.ReadAll(resp.Body)
+				if err == nil && len(imageData) > 0 {
+					// 保存到本地缓存
+					localPath := cacheDirs[0] + "/" + fileName
+					if err := os.MkdirAll(cacheDirs[0], 0755); err == nil {
+						if err := ioutil.WriteFile(localPath, imageData, 0644); err == nil {
+							log.Printf("✅ [MCP] 从 Figma CDN 下载并缓存图片成功: %s", localPath)
+							return localPath, nil
+						}
+					}
+				}
+			} else {
+				log.Printf("⚠️ [MCP] 从 Figma CDN 下载图片失败: status=%v, err=%v",
+					resp.StatusCode, err)
+			}
 		}
 	}
 
-	// 获取用户的所有项目
-	var projects []models.FigmaProject
-	err = models.DB.Where("user_id = ?", userID).Find(&projects).Error
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": fmt.Sprintf("获取项目列表失败: %v", err),
-			},
-		}
-	}
-
-	// 构建资源列表
-	resources := []gin.H{}
-	for _, project := range projects {
-		// 获取项目的根节点ID
-		rootNodeID := project.RootNodeID
-		if rootNodeID == "" {
-			rootNodeID = "0:0"
-		}
-
-		// 为每个项目创建一个ui_preview资源
-		resourceURI := fmt.Sprintf("figma://project/%d/ui_preview", project.ID)
-		resourceName := project.Name
-		if resourceName == "" {
-			resourceName = fmt.Sprintf("项目 %d", project.ID)
-		}
-
-		// 获取预览图URL（异步生成）
-		previewURL, err := getProjectPreviewURL(userID, project.ID, rootNodeID, user.FigmaToken, project.FileKey)
-
-		resource := gin.H{
-			"uri":         resourceURI,
-			"name":        fmt.Sprintf("[UI预览] %s", resourceName),
-			"description": fmt.Sprintf("项目 %s 的UI预览图 (文件: %s, 根节点: %s)", resourceName, project.FileKey, rootNodeID),
-			"mimeType":    "image/png",
-		}
-
-		if err != nil {
-			// 如果获取预览URL失败，仍然返回资源，但添加错误信息到描述中
-			log.Printf("MCP: 获取项目 %d 预览URL失败: %v", project.ID, err)
-			resource["description"] = fmt.Sprintf("%s (预览图生成失败: %v)", resource["description"], err)
-		} else {
-			resource["url"] = previewURL
-		}
-
-		resources = append(resources, resource)
-	}
-
-	return gin.H{
-		"jsonrpc": "2.0",
-		"id":      requestID,
-		"result": gin.H{
-			"resources": resources,
-		},
-	}
-}
-
-// getProjectPreviewURL 获取项目预览图URL
-func getProjectPreviewURL(userID uint, projectID uint, rootNodeID, figmaToken, fileKey string) (string, error) {
-	// 验证项目权限
-	project, err := models.GetProjectByID(projectID)
-	if err != nil {
-		return "", fmt.Errorf("项目不存在: %v", err)
-	}
-
-	if project.UserID != userID {
-		return "", fmt.Errorf("无权限访问此项目")
-	}
-
-	// 使用默认格式和缩放参数下载预览图
-	format := "png"
-	scale := 0.1
-
-	log.Printf("MCP Resource: 开始获取项目 %d 的预览图 - 文件: %s, 节点: %s", projectID, fileKey, rootNodeID)
-
-	imagePath, err := services.DownloadPreviewFigmaImageWithOptions(figmaToken, fileKey, rootNodeID, format, scale, true)
-	if err != nil {
-		return "", fmt.Errorf("下载预览图失败: %v", err)
-	}
-
-	// 读取图片文件并转换为base64 data URL
-	imageData, err := ioutil.ReadFile(imagePath)
-	if err != nil {
-		return "", fmt.Errorf("读取图片文件失败: %v", err)
-	}
-
-	// 编码为base64 data URL
-	imageBase64 := base64.StdEncoding.EncodeToString(imageData)
-	dataURL := fmt.Sprintf("data:image/png;base64,%s", imageBase64)
-
-	log.Printf("MCP Resource: 预览图获取成功 - 项目ID: %d, 大小: %d bytes", projectID, len(imageData))
-
-	return dataURL, nil
-}
-
-// handleResourceRead 处理MCP资源读取请求
-func handleResourceRead(userID uint, _ string, resourceURI string, requestID interface{}) gin.H {
-	// 解析资源URI: figma://project/{project_id}/ui_preview
-	if !strings.HasPrefix(resourceURI, "figma://project/") {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32602,
-				"message": fmt.Sprintf("不支持的资源URI格式: %s", resourceURI),
-			},
-		}
-	}
-
-	// 移除前缀并解析
-	uriPath := strings.TrimPrefix(resourceURI, "figma://project/")
-	parts := strings.Split(uriPath, "/")
-
-	if len(parts) != 2 || parts[1] != "ui_preview" {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32602,
-				"message": fmt.Sprintf("无效的资源URI: %s", resourceURI),
-			},
-		}
-	}
-
-	// 解析项目ID
-	projectIDStr := parts[0]
-	projectID, err := strconv.ParseUint(projectIDStr, 10, 32)
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32602,
-				"message": fmt.Sprintf("无效的项目ID: %s", projectIDStr),
-			},
-		}
-	}
-
-	// 获取项目信息
-	project, err := models.GetProjectByID(uint(projectID))
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": fmt.Sprintf("项目不存在: %v", err),
-			},
-		}
-	}
-
-	// 验证用户权限
-	if project.UserID != userID {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": "无权限访问此项目",
-			},
-		}
-	}
-
-	// 获取用户信息
-	user, err := models.FindUserByID(userID)
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": fmt.Sprintf("获取用户信息失败: %v", err),
-			},
-		}
-	}
-
-	// 检查用户是否有Figma token
-	if user.FigmaToken == "" {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": "用户未绑定Figma token",
-			},
-		}
-	}
-
-	// 获取根节点ID
-	rootNodeID := project.RootNodeID
-	if rootNodeID == "" {
-		rootNodeID = "0:0"
-	}
-
-	// 获取预览图
-	format := "png"
-	scale := 0.1
-
-	log.Printf("MCP Resource Read: 开始获取项目 %d 的预览图 - 文件: %s, 节点: %s", projectID, project.FileKey, rootNodeID)
-
-	imagePath, err := services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, rootNodeID, format, scale, true)
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": fmt.Sprintf("下载预览图失败: %v", err),
-			},
-		}
-	}
-
-	// 读取图片文件并转换为base64
-	imageData, err := ioutil.ReadFile(imagePath)
-	if err != nil {
-		return gin.H{
-			"jsonrpc": "2.0",
-			"id":      requestID,
-			"error": gin.H{
-				"code":    -32603,
-				"message": fmt.Sprintf("读取图片文件失败: %v", err),
-			},
-		}
-	}
-
-	// 编码为base64
-	imageBase64 := base64.StdEncoding.EncodeToString(imageData)
-
-	log.Printf("MCP Resource Read: 预览图获取成功 - 项目ID: %d, 大小: %d bytes", projectID, len(imageData))
-
-	// 返回资源内容
-	return gin.H{
-		"jsonrpc": "2.0",
-		"id":      requestID,
-		"result": gin.H{
-			"contents": []gin.H{
-				{
-					"uri":      resourceURI,
-					"mimeType": "image/png",
-					"blob":     imageBase64,
-				},
-			},
-		},
-	}
+	// 所有缓存都未找到
+	return "", fmt.Errorf("图片缓存未找到 (fileKey=%s, nodeID=%s, format=%s, scale=%.1f)",
+		fileKey, nodeID, format, scale)
 }
 
 // getProjectRefNodes 获取项目中的依赖节点列表

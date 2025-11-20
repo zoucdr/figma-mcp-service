@@ -467,6 +467,24 @@
     position: relative;
 }
 
+/* 渲染进度显示样式 */
+/* 顶部导航栏的渲染进度样式已移除，改为预览区左上角卡片 */
+
+@keyframes rotating {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.render-progress-text {
+    font-size: 13px;
+    color: #fff;
+    white-space: nowrap;
+}
+
 .user-info {
     cursor: pointer;
     display: flex;
@@ -1751,6 +1769,208 @@ body.resizing {
     backdrop-filter: blur(10px);
 }
 
+/* ========== 渲染进度卡片样式（左上角） ========== */
+.render-progress-card {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    width: 280px;
+    background: linear-gradient(145deg, var(--dark-bg-card) 0%, rgba(30, 30, 63, 0.95) 100%);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px var(--dark-shadow-lg);
+    backdrop-filter: blur(10px);
+    z-index: 1000;
+    overflow: hidden;
+    border: 1px solid var(--dark-border);
+    pointer-events: auto !important;
+    transition: all 0.3s ease;
+}
+
+.render-progress-card.failed {
+    border: 1px solid var(--dark-danger);
+    background: linear-gradient(145deg, rgba(245, 101, 101, 0.1) 0%, rgba(30, 30, 63, 0.95) 100%);
+}
+
+.render-progress-card.collapsed {
+    width: 40px !important; /* 收起后只显示一个图标按钮的宽度 */
+    height: 40px !important;
+    min-height: 40px;
+    max-height: 40px;
+    overflow: hidden;
+    pointer-events: auto !important;
+    cursor: pointer;
+    border-radius: 50%; /* 收起后变成圆形 */
+}
+
+.render-progress-card.collapsed .render-progress-body {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+.render-progress-header {
+    padding: 8px 12px;
+    background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%);
+    border-bottom: 1px solid var(--dark-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-radius: 8px 8px 0 0;
+    pointer-events: auto !important;
+}
+
+.render-progress-card.collapsed .render-progress-header {
+    border-bottom: none;
+    border-radius: 50%; /* 收起后圆形 */
+    padding: 0;
+    width: 40px;
+    height: 40px;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(145deg, var(--dark-accent) 0%, rgba(64, 158, 255, 0.9) 100%);
+    pointer-events: auto !important;
+}
+
+/* 收起状态下隐藏标题文字 */
+.render-progress-card.collapsed .render-progress-title {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+/* 收起状态下只显示图标按钮 */
+.render-progress-card.collapsed .expand-toggle-btn {
+    position: static;
+    margin: 0;
+    padding: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none !important;
+    border: none !important;
+    pointer-events: auto !important;
+    border-radius: 50%;
+}
+
+.render-progress-card.collapsed .expand-toggle-btn i {
+    font-size: 20px;
+    color: #fff !important;
+    pointer-events: none; /* 防止图标本身阻挡事件 */
+}
+
+/* 收起状态下的悬停效果 */
+.render-progress-card.collapsed:hover {
+    transform: scale(1.05);
+    box-shadow: 0 10px 40px rgba(64, 158, 255, 0.5);
+}
+
+/* 渲染进度卡片的展开按钮样式 */
+.render-progress-card .expand-toggle-btn {
+    background: none;
+    border: none;
+    color: var(--dark-text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    font-size: 14px;
+    pointer-events: auto !important;
+}
+
+.render-progress-card .expand-toggle-btn:hover {
+    background: rgba(64, 158, 255, 0.1);
+    color: var(--dark-accent);
+}
+
+.render-progress-card .expand-toggle-btn i {
+    font-size: 14px;
+    pointer-events: none;
+}
+
+.render-progress-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--dark-text-primary);
+    pointer-events: none; /* 防止事件穿透 */
+}
+
+.render-progress-title i {
+    font-size: 14px;
+    color: var(--dark-accent);
+    pointer-events: none; /* 防止事件穿透 */
+}
+
+.render-progress-title i.el-icon-loading {
+    animation: rotating 2s linear infinite;
+}
+
+.render-progress-body {
+    padding: 12px;
+    pointer-events: auto !important; /* 允许内容区域交互 */
+}
+
+.render-status-info {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: auto; /* 允许内容区域交互 */
+}
+
+.status-row {
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    gap: 8px;
+}
+
+.status-label {
+    color: var(--dark-text-secondary);
+    min-width: 65px;
+    font-weight: 500;
+}
+
+.status-value {
+    color: var(--dark-text-primary);
+    flex: 1;
+    font-weight: 400;
+}
+
+.status-value.wait-time {
+    color: var(--dark-accent);
+    font-weight: 600;
+}
+
+.render-progress-card .el-progress {
+    width: 100%;
+}
+
+.render-progress-card .el-progress__text {
+    color: var(--dark-text-primary) !important;
+    font-size: 12px !important;
+}
+
+.render-progress-card .el-tag {
+    font-size: 11px;
+}
+
+/* 渲染进度卡片动画 */
+@keyframes render-pulse {
+    0%, 100% {
+        box-shadow: 0 8px 32px var(--dark-shadow-lg);
+    }
+    50% {
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+    }
+}
+
+.render-progress-card:not(.collapsed) {
+    animation: render-pulse 3s ease-in-out infinite;
+}
+
 /* 收起状态的样式 */
 .minimap-container.collapsed {
     height: auto !important;
@@ -2339,52 +2559,6 @@ body.resizing {
 }
 
 /* 底部控制区右侧容器 */
-/* 清除缓存按钮 - 特殊形状样式 */
-.clear-cache-btn {
-    margin-right: 10px;
-    border-radius: 20px 4px 20px 4px !important; /* 不对称圆角，形成特殊形状 */
-    position: relative;
-    overflow: hidden;
-    transition: all 0.3s ease;
-}
-
-.clear-cache-btn::before {
-    content: '';
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-    transform: rotate(45deg);
-    transition: all 0.5s;
-    opacity: 0;
-}
-
-.clear-cache-btn:hover::before {
-    opacity: 1;
-    animation: shine 1.5s infinite;
-}
-
-.clear-cache-btn:hover {
-    transform: translateY(-2px) scale(1.05);
-    box-shadow: 0 4px 12px rgba(230, 162, 60, 0.4);
-}
-
-.clear-cache-btn:active {
-    transform: translateY(0) scale(1);
-    box-shadow: 0 2px 6px rgba(230, 162, 60, 0.3);
-}
-
-@keyframes shine {
-    0% {
-        left: -50%;
-    }
-    100% {
-        left: 150%;
-    }
-}
-
 .export-options-right {
     display: flex;
     align-items: center;
@@ -2412,10 +2586,6 @@ body.resizing {
 }
 
 /* 图文导出按钮样式 */
-.export-project-btn {
-    margin-right: 10px;
-}
-
 .export-project-btn:hover {
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(103, 194, 58, 0.3);
@@ -2426,11 +2596,7 @@ body.resizing {
     box-shadow: 0 1px 4px rgba(103, 194, 58, 0.2);
 }
 
-/* 优化配置按钮样式 */
-.api-download-btn {
-    margin-left: 15px;
-}
-
+/* API访问按钮样式 */
 .api-download-btn:hover {
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(103, 194, 58, 0.3);
@@ -2620,6 +2786,61 @@ body.resizing {
 /* 对话框样式 */
 .custom-dialog .el-dialog__body {
     padding: 20px 20px 10px;
+}
+
+/* 渲染预览对话框特殊样式 */
+.custom-dialog .el-alert {
+    background: linear-gradient(145deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    border-radius: 8px;
+}
+
+.custom-dialog .el-alert--warning {
+    background: linear-gradient(145deg, rgba(237, 137, 54, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+    border-color: rgba(237, 137, 54, 0.4);
+}
+
+.custom-dialog .el-alert--error {
+    background: linear-gradient(145deg, rgba(245, 101, 101, 0.15) 0%, rgba(239, 68, 68, 0.15) 100%);
+    border-color: rgba(245, 101, 101, 0.4);
+}
+
+.custom-dialog .el-alert__title {
+    color: var(--dark-text-primary) !important;
+    font-weight: 600;
+}
+
+.custom-dialog .el-alert__description {
+    color: var(--dark-text-secondary) !important;
+}
+
+.custom-dialog .el-tag {
+    background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    color: var(--dark-text-primary);
+}
+
+.custom-dialog .el-form-item__label {
+    color: var(--dark-text-primary) !important;
+    font-weight: 500;
+}
+
+.custom-dialog .el-select,
+.custom-dialog .el-input {
+    width: 100%;
+}
+
+.custom-dialog .el-switch__core {
+    background: var(--dark-bg-tertiary) !important;
+    border-color: var(--dark-border) !important;
+}
+
+.custom-dialog .el-switch.is-checked .el-switch__core {
+    background: linear-gradient(90deg, var(--dark-accent) 0%, var(--dark-accent-hover) 100%) !important;
+}
+
+.custom-dialog .el-progress__text {
+    color: var(--dark-text-primary) !important;
 }
 
 /* 表单提示样式 */
@@ -4015,4 +4236,119 @@ h1, h2, h3, h4, h5, h6, p, span, div {
         padding: 10px 16px !important;
         font-size: 13px !important;
     }
+}
+
+/* ==================== 底部渲染状态栏 ==================== */
+.dashboard-footer-status {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 50px;
+    background: linear-gradient(90deg, #1e1e2e 0%, #252536 100%);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+}
+
+.dashboard-footer-status.status-failed {
+    background: linear-gradient(90deg, rgba(245, 101, 101, 0.2) 0%, rgba(230, 162, 60, 0.2) 100%);
+    border-top: 1px solid var(--dark-danger);
+}
+
+.status-content {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.status-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 150px;
+}
+
+.status-left i {
+    font-size: 18px;
+    color: #409EFF;
+}
+
+.status-left i.el-icon-loading {
+    animation: rotating 2s linear infinite;
+}
+
+.status-text {
+    font-size: 14px;
+    color: #fff;
+    font-weight: 500;
+}
+
+.wait-time-hint {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 400;
+    margin-left: 5px;
+}
+
+.status-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    max-width: 600px;
+}
+
+.status-numbers {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+    white-space: nowrap;
+    min-width: 120px;
+}
+
+.status-progress {
+    flex: 1;
+}
+
+.status-progress .el-progress-bar__outer {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.status-progress .el-progress-bar__inner {
+    background: linear-gradient(90deg, #409EFF 0%, #66D9EF 100%);
+}
+
+.status-percentage {
+    font-size: 13px;
+    color: #409EFF;
+    font-weight: 600;
+    min-width: 45px;
+    text-align: right;
+}
+
+.status-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-right i {
+    font-size: 16px;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.status-right i:hover {
+    color: #409EFF;
+}
+
+/* 当有底部状态栏时，调整主内容区域 */
+.app-container:has(.dashboard-footer-status) {
+    padding-bottom: 50px;
 }

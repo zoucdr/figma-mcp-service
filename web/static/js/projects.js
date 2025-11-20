@@ -4,6 +4,9 @@
 
 // 项目列表页面
 const ProjectListApp = {
+    // 混入渲染功能
+    mixins: [window.FigmaRenderMixin],
+    
     data() {
         return {
             projects: window.initialData?.projects || [],
@@ -117,29 +120,22 @@ const ProjectListApp = {
                 
                 // 检查是否有分组名称
                 const hasGroupName = projects.some(p => p.group_name);
-                const fileKey = projects[0].file_key; // 获取该分组的file_key
                 
-                if (hasGroupName) {
-                    // 如果有分组名称，显示分组名称
-                    displayName = groupKey;
+                // 统一按项目名组合方式显示
+                if (projects.length === 1) {
+                    // 只有一个项目时直接显示项目名
+                    displayName = projects[0].name;
+                } else if (projects.length <= 3) {
+                    // 3个或以下项目时显示所有项目名
+                    displayName = projects.map(p => p.name).join('、');
                 } else {
-                    // 如果没有分组名称，按原逻辑显示项目名组合
-                    if (projects.length === 1) {
-                        // 只有一个项目时直接显示项目名
-                        displayName = projects[0].name;
-                    } else if (projects.length <= 3) {
-                        // 3个或以下项目时显示所有项目名
-                        displayName = projects.map(p => p.name).join('、');
-                    } else {
-                        // 超过3个项目时显示前2个项目名 + "等N个项目"
-                        const firstTwo = projects.slice(0, 2).map(p => p.name).join('、');
-                        displayName = `${firstTwo}等${projects.length}个项目`;
-                    }
+                    // 超过3个项目时显示前2个项目名 + "等N个项目"
+                    const firstTwo = projects.slice(0, 2).map(p => p.name).join('、');
+                    displayName = `${firstTwo}等${projects.length}个项目`;
                 }
                 
                 return {
                     groupKey: groupKey,
-                    fileKey: fileKey,
                     projects: projects,
                     projectCount: projects.length,
                     displayName: displayName, // 分组显示名称
@@ -424,6 +420,405 @@ const ProjectListApp = {
             }
             
             document.body.removeChild(textArea);
+        },
+        
+        // ========== 渲染功能 ==========
+        
+        /**
+         * 渲染项目节点
+         * @param {Object} project - 项目对象
+         * @deprecated 此方法已废弃，单个项目渲染请在 Dashboard 页面进行
+         * @description 保留此方法仅用于向后兼容，界面上已移除渲染按钮
+         */
+        async renderProjectNodes(project) {
+            if (!project.file_key) {
+                this.$message.warning('该项目缺少文件Key');
+                return;
+            }
+            
+            // 显示加载状态
+            const loading = this.$loading({
+                lock: true,
+                text: '正在获取节点信息...',
+                spinner: 'el-icon-loading'
+            });
+            
+            try {
+                // 获取项目的渲染节点（包含依赖节点）
+                const response = await axios.get(`/figma/project/${project.id}/render_nodes`);
+                
+                if (response.data.code === 0) {
+                    const nodeIds = response.data.data.node_ids || [];
+                    
+                    if (nodeIds.length === 0) {
+                        this.$message.warning('该项目没有可渲染的节点');
+                        loading.close();
+                        return;
+                    }
+                    
+                    loading.close();
+                    
+                    // 显示渲染对话框（传递项目ID）
+                    console.log('🚀 [renderProjectNodes] 调用 showRenderDialog，项目ID:', project.id);
+                    this.showRenderDialog(response.data.data.file_key, nodeIds, [project.id]);
+                } else {
+                    throw new Error(response.data.message || '获取节点信息失败');
+                }
+            } catch (error) {
+                loading.close();
+                console.error('获取节点失败:', error);
+                
+                // 检查是否是 Figma API 错误
+                if (error.response?.data?.code === 1001) {
+                    // Token 冷却中
+                    this.$alert(
+                        error.response.data.message || 'Token 冷却中，请稍后重试',
+                        'Figma API 限制',
+                        {
+                            confirmButtonText: '确定',
+                            type: 'warning'
+                        }
+                    );
+                } else if (error.response?.status === 429) {
+                    // 速率限制
+                    this.$alert(
+                        'Figma API 请求过于频繁，请稍后重试',
+                        '速率限制',
+                        {
+                            confirmButtonText: '确定',
+                            type: 'warning'
+                        }
+                    );
+                } else {
+                    this.$message.error(error.message || '获取节点信息失败');
+                }
+            }
+        },
+        
+        /**
+         * 渲染整个分组的所有项目节点
+         * @param {Object} group - 分组对象
+         */
+        async renderGroupNodes(group) {
+            // 显示加载状态
+            const loading = this.$loading({
+                lock: true,
+                text: '正在收集节点信息...',
+                spinner: 'el-icon-loading'
+            });
+            
+            try {
+                // 按 file_key 对项目进行分组（因为不同 file_key 需要分别渲染）
+                const projectsByFileKey = {};
+                
+                for (const project of group.projects) {
+                    const fileKey = project.file_key;
+                    if (!fileKey) {
+                        continue;
+                    }
+                    
+                    if (!projectsByFileKey[fileKey]) {
+                        projectsByFileKey[fileKey] = {
+                            fileKey: fileKey,
+                            nodeIds: new Set(),
+                            projectIds: new Set(), // 收集项目ID列表
+                            projectCount: 0
+                        };
+                    }
+                    
+                    // 获取项目渲染节点（包含依赖节点）
+                    try {
+                        const response = await axios.get(`/figma/project/${project.id}/render_nodes`);
+                        
+                        if (response.data && response.data.code === 0 && response.data.data) {
+                            const nodeIds = response.data.data.node_ids || [];
+                            if (nodeIds.length > 0) {
+                                nodeIds.forEach(nodeId => {
+                                    projectsByFileKey[fileKey].nodeIds.add(nodeId);
+                                });
+                                projectsByFileKey[fileKey].projectIds.add(project.id); // 添加项目ID
+                                projectsByFileKey[fileKey].projectCount++;
+                            } else {
+                                console.warn(`项目 ${project.id} (${project.name}) 没有可渲染的节点`);
+                            }
+                        } else {
+                            console.warn(`项目 ${project.id} (${project.name}) 返回数据格式异常:`, response.data);
+                        }
+                    } catch (error) {
+                        console.error(`获取项目 ${project.id} (${project.name}) 渲染节点失败:`, error);
+                        // 继续处理其他项目，不中断整个流程
+                    }
+                }
+                
+                loading.close();
+                
+                const fileKeys = Object.keys(projectsByFileKey);
+                
+                if (fileKeys.length === 0) {
+                    this.$message.warning('该分组没有可渲染的节点');
+                    return;
+                }
+                
+                // 如果只有一个 file_key，直接渲染
+                if (fileKeys.length === 1) {
+                    const fileKey = fileKeys[0];
+                    const data = projectsByFileKey[fileKey];
+                    
+                    if (data.nodeIds.size === 0) {
+                        this.$message.warning('该分组没有可渲染的节点');
+                        return;
+                    }
+                    
+                    // 显示渲染对话框（传递项目ID列表）
+                    const projectIds = Array.from(data.projectIds);
+                    console.log('🚀 [renderGroupNodes] 调用 showRenderDialog，项目IDs:', projectIds);
+                    this.showRenderDialog(fileKey, Array.from(data.nodeIds), projectIds);
+                } else {
+                    // 多个 file_key，询问用户如何处理
+                    const fileKeysInfo = fileKeys.map(fk => {
+                        const data = projectsByFileKey[fk];
+                        return `- ${fk.substring(0, 8)}...（${data.projectCount}个项目，${data.nodeIds.size}个节点）`;
+                    }).join('\n');
+                    
+                    this.$confirm(
+                        `该分组包含 ${fileKeys.length} 个不同的 Figma 文件：\n\n${fileKeysInfo}\n\n将为每个文件分别创建渲染队列。`,
+                        '渲染多个文件',
+                        {
+                            confirmButtonText: '确定',
+                            cancelButtonText: '取消',
+                            type: 'warning'
+                        }
+                    ).then(async () => {
+                        // 为每个 file_key 分别创建渲染队列
+                        let successCount = 0;
+                        let totalNodes = 0;
+                        
+                        for (const fileKey of fileKeys) {
+                            const data = projectsByFileKey[fileKey];
+                            const nodeIds = Array.from(data.nodeIds);
+                            const projectIds = Array.from(data.projectIds); // 转换为数组
+                            
+                            if (nodeIds.length === 0) {
+                                continue;
+                            }
+                            
+                            try {
+                                // 创建渲染队列（传递 project_ids）
+                                console.log('📤 [renderGroupNodes] 批量渲染请求:', { 
+                                    file_key: fileKey, 
+                                    node_ids_count: nodeIds.length, 
+                                    project_ids: projectIds 
+                                });
+                                const response = await axios.post('/figma/manual/render', {
+                                    file_key: fileKey,
+                                    node_ids: nodeIds,
+                                    project_ids: projectIds, // 传递项目ID列表
+                                    format: 'png',
+                                    scale: 2.0
+                                });
+                                
+                                if (response.data.code === 0) {
+                                    successCount++;
+                                    totalNodes += nodeIds.length;
+                                }
+                            } catch (error) {
+                                console.error(`创建渲染队列失败 (${fileKey}):`, error);
+                            }
+                        }
+                        
+                        if (successCount > 0) {
+                            this.$message.success(`已为 ${successCount} 个文件创建渲染队列，共 ${totalNodes} 个节点`);
+                        } else {
+                            this.$message.error('创建渲染队列失败');
+                        }
+                    }).catch(() => {
+                        // 用户取消
+                    });
+                }
+            } catch (error) {
+                loading.close();
+                console.error('收集节点失败:', error);
+                this.$message.error('收集节点信息失败，请稍后重试');
+            }
+        },
+        
+        /**
+         * 批量更新分组的节点树
+         * @param {Object} group - 分组对象
+         */
+        async batchRefreshNodeTree(group) {
+            // 收集该分组的所有项目
+            const projects = group.projects || [];
+            
+            if (projects.length === 0) {
+                this.$message.warning('该分组没有项目');
+                return;
+            }
+            
+            // 按 file_key 分组
+            const projectsByFileKey = {};
+            
+            for (const project of projects) {
+                const fileKey = project.file_key;
+                const rootNodeId = project.root_node_id;
+                
+                if (!fileKey || !rootNodeId) {
+                    console.warn('项目缺少 file_key 或 root_node_id:', project);
+                    continue;
+                }
+                
+                if (!projectsByFileKey[fileKey]) {
+                    projectsByFileKey[fileKey] = {
+                        fileKey: fileKey,
+                        nodeIds: new Set(),
+                        projectNames: []
+                    };
+                }
+                
+                projectsByFileKey[fileKey].nodeIds.add(rootNodeId);
+                projectsByFileKey[fileKey].projectNames.push(project.name);
+            }
+            
+            const fileKeys = Object.keys(projectsByFileKey);
+            
+            if (fileKeys.length === 0) {
+                this.$message.warning('没有找到有效的项目');
+                return;
+            }
+            
+            // 显示确认对话框
+            const totalProjects = projects.length;
+            const totalNodes = Array.from(new Set(projects.map(p => p.root_node_id))).length;
+            const fileKeysInfo = fileKeys.map(fk => {
+                const data = projectsByFileKey[fk];
+                return `- ${fk.substring(0, 12)}... (${data.nodeIds.size}个节点)`;
+            }).join('\n');
+            
+            try {
+                await this.$confirm(
+                    `将批量更新以下节点树：\n\n` +
+                    `📁 分组：${group.displayName}\n` +
+                    `📊 包含：${totalProjects}个项目，${totalNodes}个节点\n` +
+                    `📦 涉及 ${fileKeys.length} 个 Figma 文件：\n\n${fileKeysInfo}\n\n` +
+                    `确认要批量更新吗？`,
+                    '批量更新节点树',
+                    {
+                        confirmButtonText: '确定更新',
+                        cancelButtonText: '取消',
+                        type: 'warning',
+                        dangerouslyUseHTMLString: false
+                    }
+                );
+            } catch {
+                // 用户取消
+                return;
+            }
+            
+            // 显示加载状态
+            const loading = this.$loading({
+                lock: true,
+                text: '正在批量更新节点树...',
+                spinner: 'el-icon-loading'
+            });
+            
+            try {
+                let successCount = 0;
+                let queuedCount = 0;
+                let errorCount = 0;
+                const errors = [];
+                
+                // 为每个 file_key 调用批量更新接口
+                for (const fileKey of fileKeys) {
+                    const data = projectsByFileKey[fileKey];
+                    const nodeIds = Array.from(data.nodeIds);
+                    
+                    try {
+                        console.log('📤 [batchRefreshNodeTree] 批量更新请求:', { 
+                            file_key: fileKey, 
+                            node_ids: nodeIds 
+                        });
+                        
+                        const response = await axios.post('/figma/batch-refresh-node-tree', {
+                            file_key: fileKey,
+                            node_ids: nodeIds
+                        });
+                        
+                        if (response.data.success) {
+                            if (response.data.status === 'queued') {
+                                queuedCount++;
+                                const cooldown = response.data.cooldown_remaining || 0;
+                                console.log(`⏰ [batchRefreshNodeTree] 文件 ${fileKey} 加入队列，等待 ${cooldown} 秒`);
+                            } else if (response.data.status === 'success') {
+                                successCount++;
+                                console.log(`✅ [batchRefreshNodeTree] 文件 ${fileKey} 更新成功`);
+                            }
+                        } else {
+                            errorCount++;
+                            errors.push(`${fileKey}: ${response.data.error || '未知错误'}`);
+                        }
+                    } catch (error) {
+                        errorCount++;
+                        const errorMsg = error.response?.data?.error || error.message || '请求失败';
+                        errors.push(`${fileKey}: ${errorMsg}`);
+                        console.error(`批量更新失败 (${fileKey}):`, error);
+                    }
+                }
+                
+                loading.close();
+                
+                // 显示结果
+                if (successCount > 0 || queuedCount > 0) {
+                    let message = '';
+                    if (successCount > 0) {
+                        message += `✅ ${successCount} 个文件更新成功`;
+                    }
+                    if (queuedCount > 0) {
+                        if (message) message += '，';
+                        message += `⏰ ${queuedCount} 个文件加入队列`;
+                    }
+                    if (errorCount > 0) {
+                        if (message) message += '，';
+                        message += `❌ ${errorCount} 个文件失败`;
+                    }
+                    
+                    if (errorCount > 0) {
+                        this.$notify({
+                            title: '批量更新完成（部分失败）',
+                            message: message,
+                            type: 'warning',
+                            duration: 5000
+                        });
+                        
+                        // 显示错误详情
+                        this.$alert(
+                            errors.join('\n'),
+                            '更新失败详情',
+                            {
+                                confirmButtonText: '确定',
+                                type: 'error'
+                            }
+                        );
+                    } else {
+                        this.$message.success(message);
+                    }
+                } else {
+                    this.$message.error('批量更新全部失败');
+                    if (errors.length > 0) {
+                        this.$alert(
+                            errors.join('\n'),
+                            '更新失败详情',
+                            {
+                                confirmButtonText: '确定',
+                                type: 'error'
+                            }
+                        );
+                    }
+                }
+            } catch (error) {
+                loading.close();
+                console.error('批量更新异常:', error);
+                this.$message.error('批量更新过程中发生异常');
+            }
         }
     }
 };

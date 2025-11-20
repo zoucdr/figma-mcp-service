@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -154,16 +155,18 @@ func Profile(c *gin.Context) {
 	mcpToken := user.MCPToken
 
 	c.HTML(http.StatusOK, "standalone.html", gin.H{
-		"title":       "个人资料 - Figma Deliver",
-		"username":    username,
-		"figmaToken":  user.FigmaToken,
-		"compTypes":   user.CompTypes,
-		"prompts":     user.Prompts,
-		"codePrompts": user.CodePrompts,
-		"mcpToken":    mcpToken,
-		"timestamp":   time.Now().Unix(),
-		"csrf_token":  csrfToken,
-		"template":    "profile",
+		"title":        "个人资料 - Figma Deliver",
+		"username":     username,
+		"figmaToken":   user.FigmaToken,
+		"compTypes":    user.CompTypes,
+		"prompts":      user.Prompts,
+		"codePrompts":  user.CodePrompts,
+		"mcpToken":     mcpToken,
+		"proxyEnabled": user.ProxyEnabled,
+		"proxyUrl":     user.ProxyURL,
+		"timestamp":    time.Now().Unix(),
+		"csrf_token":   csrfToken,
+		"template":     "profile",
 	})
 }
 
@@ -176,6 +179,8 @@ func UpdateProfile(c *gin.Context) {
 	compTypes := c.PostForm("comp_types")
 	prompts := c.PostForm("prompts")
 	codePrompts := c.PostForm("code_prompts")
+	proxyEnabled := c.PostForm("proxy_enabled") == "true"
+	proxyURL := c.PostForm("proxy_url")
 
 	// 如果用户名不为空，检查是否已存在
 	if username != "" {
@@ -229,6 +234,8 @@ func UpdateProfile(c *gin.Context) {
 		user.CompTypes = compTypes
 		user.Prompts = prompts
 		user.CodePrompts = codePrompts
+		user.ProxyEnabled = proxyEnabled
+		user.ProxyURL = proxyURL
 		models.DB.Save(&user)
 
 		// 设置会话
@@ -257,7 +264,7 @@ func UpdateProfile(c *gin.Context) {
 	}
 
 	// 更新用户资料
-	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts)
+	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts, proxyEnabled, proxyURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -357,6 +364,77 @@ func RevokeMCPToken(c *gin.Context) {
 	})
 }
 
+// ChangePassword 修改密码
+func ChangePassword(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未登录",
+		})
+		return
+	}
+
+	oldPassword := c.PostForm("old_password")
+	newPassword := c.PostForm("new_password")
+
+	// 验证必要字段
+	if oldPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "旧密码不能为空",
+		})
+		return
+	}
+
+	if newPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "新密码不能为空",
+		})
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	err := models.DB.First(&user, userID.(uint)).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "用户不存在",
+		})
+		return
+	}
+
+	// 验证旧密码
+	if !user.CheckPassword(oldPassword) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "旧密码错误",
+		})
+		return
+	}
+
+	// 设置新密码
+	err = user.SetPassword(newPassword)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// 保存到数据库
+	err = models.DB.Save(&user).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "密码更新失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "密码修改成功",
+	})
+}
+
 // 生成随机密码
 func generateRandomPassword() string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+"
@@ -382,4 +460,125 @@ func generateRandomMCPToken() string {
 	}
 
 	return fmt.Sprintf("mcp_%s", string(result))
+}
+
+// GetTokenCooldownInfo 获取Token冷却信息
+// GET /profile/api/cooldown-info
+func GetTokenCooldownInfo(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+
+	// 获取用户信息
+	user, err := models.FindUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户信息失败"})
+		return
+	}
+
+	if user.FigmaToken == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success":                  true,
+			"last_file_request_time":   0,
+			"last_image_request_time":  0,
+			"file_cooldown_remaining":  0,
+			"image_cooldown_remaining": 0,
+		})
+		return
+	}
+
+	// 查询或创建冷却记录
+	cooldown, err := models.GetOrCreateTokenCooldown(user.FigmaToken)
+	if err != nil {
+		// 查询失败，返回默认值
+		c.JSON(http.StatusOK, gin.H{
+			"success":                  true,
+			"last_file_request_time":   0,
+			"last_image_request_time":  0,
+			"file_cooldown_remaining":  0,
+			"image_cooldown_remaining": 0,
+		})
+		return
+	}
+
+	// 计算剩余冷却时间（默认冷却30秒）
+	now := uint32(time.Now().Unix())
+	fileRemaining := int64(0)
+	imageRemaining := int64(0)
+	cooldownSeconds := uint32(30) // 默认冷却30秒
+
+	if cooldown.LastFileRequestTime > now {
+		// 未来时间（来自Retry-After）
+		fileRemaining = int64(cooldown.LastFileRequestTime - now)
+	} else if now-cooldown.LastFileRequestTime < cooldownSeconds {
+		// 正常冷却中
+		fileRemaining = int64(cooldownSeconds) - int64(now-cooldown.LastFileRequestTime)
+	}
+
+	if cooldown.LastImageRequestTime > now {
+		// 未来时间（来自Retry-After）
+		imageRemaining = int64(cooldown.LastImageRequestTime - now)
+	} else if now-cooldown.LastImageRequestTime < cooldownSeconds {
+		// 正常冷却中
+		imageRemaining = int64(cooldownSeconds) - int64(now-cooldown.LastImageRequestTime)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":                  true,
+		"last_file_request_time":   cooldown.LastFileRequestTime,
+		"last_image_request_time":  cooldown.LastImageRequestTime,
+		"file_cooldown_remaining":  fileRemaining,
+		"image_cooldown_remaining": imageRemaining,
+	})
+}
+
+// ResetTokenCooldown 重置Token冷却时间
+// POST /profile/api/reset-cooldown
+func ResetTokenCooldown(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+
+	// 获取用户信息
+	user, err := models.FindUserByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户信息失败"})
+		return
+	}
+
+	if user.FigmaToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未设置Figma Token"})
+		return
+	}
+
+	// 重置冷却时间（将时间设置为0，表示很久之前，确保下次请求不受冷却限制）
+	// 查询或创建冷却记录
+	cooldown, err := models.GetOrCreateTokenCooldown(user.FigmaToken)
+	if err != nil {
+		log.Printf("❌ [ResetTokenCooldown] 获取冷却记录失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重置失败"})
+		return
+	}
+
+	// 更新冷却记录（设置为0，表示很久之前）
+	cooldown.LastFileRequestTime = 0
+	cooldown.LastImageRequestTime = 0
+	if err := models.DB.Save(cooldown).Error; err != nil {
+		log.Printf("❌ [ResetTokenCooldown] 更新冷却记录失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重置失败"})
+		return
+	}
+
+	log.Printf("✅ [ResetTokenCooldown] Token冷却已重置: %s...", user.FigmaToken[:10])
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "冷却时间已重置",
+	})
 }

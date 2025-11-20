@@ -12,6 +12,7 @@ import (
 	"github.com/figma-deliver/internal/controllers"
 	"github.com/figma-deliver/internal/middleware"
 	"github.com/figma-deliver/internal/models"
+	"github.com/figma-deliver/internal/services"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,32 @@ type Config struct {
 		ExportDir string `yaml:"export_dir"`
 		TempDir   string `yaml:"temp_dir"`
 	} `yaml:"storage"`
+	FigmaAPI struct {
+		FileAPICooldown    int `yaml:"file_api_cooldown"`
+		ImagesAPICooldown  int `yaml:"images_api_cooldown"`
+		MaxNodesPerRequest int `yaml:"max_nodes_per_request"`
+		ImagesAPIRateLimit int `yaml:"images_api_rate_limit"` // 保留兼容
+	} `yaml:"figma_api"`
+	Cache struct {
+		OBSExpiresDays int `yaml:"obs_expires_days"`
+	} `yaml:"cache"`
+	HuaweiCloud struct {
+		OBS struct {
+			Enabled              bool   `yaml:"enabled"`
+			Endpoint             string `yaml:"endpoint"`
+			AccessKeyID          string `yaml:"access_key_id"`
+			SecretAccessKey      string `yaml:"secret_access_key"`
+			BucketName           string `yaml:"bucket_name"`
+			Region               string `yaml:"region"`
+			PathPrefix           string `yaml:"path_prefix"`
+			UploadConcurrency    int    `yaml:"upload_concurrency"`
+			UploadTimeoutSeconds int    `yaml:"upload_timeout_seconds"`
+		} `yaml:"obs"`
+	} `yaml:"huawei_cloud"`
+	Scheduler struct {
+		RenderQueueInterval  int `yaml:"render_queue_interval"`
+		QueueCleanupInterval int `yaml:"queue_cleanup_interval"`
+	} `yaml:"scheduler"`
 }
 
 var appConfig Config
@@ -71,12 +98,35 @@ func main() {
 		appConfig.Database.Name = getEnv("DB_NAME", "")
 		appConfig.Storage.ExportDir = getEnv("EXPORT_DIR", "./exports")
 		appConfig.Storage.TempDir = getEnv("TEMP_DIR", "./temp")
+
+		// Figma API 配置默认值
+		rateLimitStr := getEnv("FIGMA_API_RATE_LIMIT", "10")
+		if rateLimit, err := strconv.Atoi(rateLimitStr); err == nil && rateLimit > 0 {
+			appConfig.FigmaAPI.ImagesAPIRateLimit = rateLimit
+		} else {
+			appConfig.FigmaAPI.ImagesAPIRateLimit = 10 // 默认10秒
+		}
 	}
 
 	// 打印当前工作目录，帮助调试
 	dir, _ := os.Getwd()
 	log.Printf("当前工作目录: %s", dir)
 	log.Printf("已加载配置: %s 模式", appConfig.App.GinMode)
+	log.Printf("Figma API 配置:")
+	log.Printf("  - File API 冷却: %d 秒", appConfig.FigmaAPI.FileAPICooldown)
+	log.Printf("  - Images API 冷却: %d 秒", appConfig.FigmaAPI.ImagesAPICooldown)
+	log.Printf("  - 最大节点数: %d", appConfig.FigmaAPI.MaxNodesPerRequest)
+	log.Printf("缓存配置:")
+	log.Printf("  - OBS 过期时间: %d 天", appConfig.Cache.OBSExpiresDays)
+	log.Printf("华为云 OBS:")
+	log.Printf("  - 启用状态: %v", appConfig.HuaweiCloud.OBS.Enabled)
+	if appConfig.HuaweiCloud.OBS.Enabled {
+		log.Printf("  - Endpoint: %s", appConfig.HuaweiCloud.OBS.Endpoint)
+		log.Printf("  - Bucket: %s", appConfig.HuaweiCloud.OBS.BucketName)
+	}
+	log.Printf("调度器配置:")
+	log.Printf("  - 渲染队列处理间隔: %d 秒", appConfig.Scheduler.RenderQueueInterval)
+	log.Printf("  - 队列清理间隔: %d 小时", appConfig.Scheduler.QueueCleanupInterval)
 
 	// 设置环境变量以供其他模块使用
 	os.Setenv("DB_HOST", appConfig.Database.Host)
@@ -91,6 +141,55 @@ func main() {
 
 	// 初始化数据库连接
 	models.InitDB()
+
+	// 初始化 services 配置
+	initServicesConfig()
+
+	// 初始化OBS服务
+	obsService, err := services.NewOBSService(services.OBSConfig{
+		Enabled:              appConfig.HuaweiCloud.OBS.Enabled,
+		Endpoint:             appConfig.HuaweiCloud.OBS.Endpoint,
+		AccessKeyID:          appConfig.HuaweiCloud.OBS.AccessKeyID,
+		SecretAccessKey:      appConfig.HuaweiCloud.OBS.SecretAccessKey,
+		BucketName:           appConfig.HuaweiCloud.OBS.BucketName,
+		Region:               appConfig.HuaweiCloud.OBS.Region,
+		PathPrefix:           appConfig.HuaweiCloud.OBS.PathPrefix,
+		UploadConcurrency:    appConfig.HuaweiCloud.OBS.UploadConcurrency,
+		UploadTimeoutSeconds: appConfig.HuaweiCloud.OBS.UploadTimeoutSeconds,
+	})
+	if err != nil {
+		log.Fatalf("❌ OBS服务初始化失败: %v", err)
+	}
+	defer obsService.Close()
+
+	// 设置全局 OBS 服务实例（供图片控制器和服务使用）
+	controllers.SetGlobalOBSService(obsService)
+	services.SetGlobalOBSService(obsService)
+
+	// 初始化缓存和队列服务
+	cacheService := services.NewCacheService(
+		uint32(appConfig.FigmaAPI.FileAPICooldown),
+		uint32(appConfig.FigmaAPI.ImagesAPICooldown),
+		uint32(appConfig.Cache.OBSExpiresDays),
+	)
+	queueService := services.NewQueueService(
+		uint(appConfig.FigmaAPI.MaxNodesPerRequest),
+		cacheService,
+	)
+	log.Printf("✅ 缓存和队列服务初始化完成")
+
+	// 初始化调度服务
+	schedulerService := services.NewSchedulerService(
+		cacheService,
+		queueService,
+		obsService,
+		appConfig.Scheduler.RenderQueueInterval,
+		appConfig.Scheduler.QueueCleanupInterval,
+	)
+	log.Printf("✅ 调度服务初始化完成")
+
+	// 启动调度器
+	schedulerService.Start()
 
 	// 设置Gin模式
 	gin.SetMode(appConfig.App.GinMode)
@@ -231,6 +330,13 @@ func main() {
 	// 公开的个人资料更新接口 - 用于注册
 	r.POST("/profile/update", controllers.UpdateProfile)
 
+	// Token冷却信息和重置接口
+	r.GET("/profile/api/cooldown-info", controllers.GetTokenCooldownInfo)
+	r.POST("/profile/api/reset-cooldown", controllers.ResetTokenCooldown)
+
+	// 测试代理连接接口
+	r.POST("/api/test-proxy", controllers.TestProxy)
+
 	// 提示词分享页面 - 公开访问
 	shareGroup := r.Group("/share")
 	shareGroup.GET("", controllers.SharePage)
@@ -253,6 +359,7 @@ func main() {
 	profileGroup.Use(middleware.RequireLogin())
 	profileGroup.POST("/generate-mcp-token", controllers.GenerateMCPToken)
 	profileGroup.POST("/revoke-mcp-token", controllers.RevokeMCPToken)
+	profileGroup.POST("/change-password", controllers.ChangePassword)
 	profileGroup.GET("", func(c *gin.Context) {
 		// 确保CSRF令牌存在
 		session := sessions.Default(c)
@@ -286,8 +393,8 @@ func main() {
 	figmaGroup.GET("/node/:file_key/:node_id", controllers.GetFigmaNode)
 	figmaGroup.GET("/node/:file_key", controllers.GetFigmaNode)
 
-	// 新API - 通过项目ID和节点ID获取节点信息
-	figmaGroup.GET("/project/:project_id/nodes", controllers.GetFigmaNodeInfo)
+	// 新API - 获取项目渲染节点（包含依赖节点，排除ignore节点）
+	figmaGroup.GET("/project/:project_id/render_nodes", controllers.GetFigmaRenderNodeInfo)
 
 	// 节点设置 - 新API
 	figmaGroup.GET("/project/:project_id/node/:node_id/settings", controllers.GetNodeSettings)
@@ -323,7 +430,6 @@ func main() {
 
 	// 获取Figma节点树和节点修改信息
 	// 注意：更具体的路由应该先注册
-	figmaGroup.GET("/project/:project_id/node-tree/refresh", controllers.RefreshFigmaNodeTree)
 	figmaGroup.GET("/project/:project_id/node-tree", controllers.GetFigmaNodeTree)
 	figmaGroup.GET("/project/:project_id/node-modifys", controllers.GetProjectNodeModifys)
 
@@ -339,6 +445,19 @@ func main() {
 
 	// 清除项目图片缓存
 	figmaGroup.POST("/project/:project_id/clear-cache", controllers.ClearProjectImageCache)
+
+	// 缓存和队列管理（新增）
+	cacheController := controllers.NewCacheController(cacheService, queueService, obsService)
+	figmaGroup.GET("/project/:project_id/node-tree/refresh", cacheController.RefreshProjectNodeTree) // 节点树刷新（带冷却检查）
+	figmaGroup.POST("/file/refresh", cacheController.RefreshFile)                                    // 节点树刷新
+	figmaGroup.POST("/batch-refresh-node-tree", cacheController.BatchRefreshNodeTree)                // 批量刷新节点树（支持多个root节点）
+	figmaGroup.GET("/file/cache/status/:cache_id", cacheController.GetFileCacheStatus)               // 获取节点树状态
+	figmaGroup.POST("/project/:project_id/render", cacheController.RenderProject)                    // 项目渲染
+	figmaGroup.POST("/manual/render", cacheController.ManualRender)                                  // 手动渲染
+	figmaGroup.GET("/render/queue", cacheController.GetRenderQueue)                                  // 获取队列信息
+	figmaGroup.GET("/render/queue/stats", cacheController.GetQueueStatistics)                        // 获取队列统计
+	figmaGroup.GET("/project/:project_id/render/progress", cacheController.GetProjectRenderProgress) // 获取项目渲染进度
+	figmaGroup.GET("/node/image", cacheController.GetNodeImage)                                      // 获取节点图片
 
 	// 导出功能
 	figmaGroup.POST("/project/:project_id/export", controllers.ExportFigmaDesign)
@@ -451,6 +570,44 @@ func loadConfig() error {
 		appConfig.Storage.TempDir = "./temp"
 	}
 
+	// Figma API 配置默认值
+	if appConfig.FigmaAPI.FileAPICooldown <= 0 {
+		appConfig.FigmaAPI.FileAPICooldown = 30 // 默认30秒
+	}
+	if appConfig.FigmaAPI.ImagesAPICooldown <= 0 {
+		appConfig.FigmaAPI.ImagesAPICooldown = 30 // 默认30秒
+	}
+	if appConfig.FigmaAPI.MaxNodesPerRequest <= 0 {
+		appConfig.FigmaAPI.MaxNodesPerRequest = 1000 // 默认1000个节点
+	}
+	if appConfig.FigmaAPI.ImagesAPIRateLimit <= 0 {
+		appConfig.FigmaAPI.ImagesAPIRateLimit = 10 // 保留兼容，默认10秒
+	}
+
+	// 缓存配置默认值
+	if appConfig.Cache.OBSExpiresDays <= 0 {
+		appConfig.Cache.OBSExpiresDays = 30 // 默认30天
+	}
+
+	// 华为云OBS配置默认值
+	if appConfig.HuaweiCloud.OBS.PathPrefix == "" {
+		appConfig.HuaweiCloud.OBS.PathPrefix = "figma_images/"
+	}
+	if appConfig.HuaweiCloud.OBS.UploadConcurrency <= 0 {
+		appConfig.HuaweiCloud.OBS.UploadConcurrency = 5
+	}
+	if appConfig.HuaweiCloud.OBS.UploadTimeoutSeconds <= 0 {
+		appConfig.HuaweiCloud.OBS.UploadTimeoutSeconds = 300
+	}
+
+	// 调度器配置默认值
+	if appConfig.Scheduler.RenderQueueInterval <= 0 {
+		appConfig.Scheduler.RenderQueueInterval = 5 // 默认5秒
+	}
+	if appConfig.Scheduler.QueueCleanupInterval <= 0 {
+		appConfig.Scheduler.QueueCleanupInterval = 1 // 默认1小时
+	}
+
 	// 环境变量覆盖（支持 K8s ConfigMap/Secret）
 	if port := os.Getenv("PORT"); port != "" {
 		appConfig.App.Port = port
@@ -493,4 +650,21 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// initServicesConfig 初始化 services 包的配置
+func initServicesConfig() {
+	// 设置 Figma API 速率限制配置到环境变量
+	// 优先使用新的 images_api_cooldown 配置，如果不存在则使用旧的 images_api_rate_limit
+	cooldown := appConfig.FigmaAPI.ImagesAPICooldown
+	if cooldown == 0 {
+		cooldown = appConfig.FigmaAPI.ImagesAPIRateLimit
+	}
+	if cooldown == 0 {
+		cooldown = 30 // 默认30秒
+	}
+
+	os.Setenv("FIGMA_API_RATE_LIMIT", strconv.Itoa(cooldown))
+
+	log.Printf("Services 配置已初始化: Figma Images API 速率限制=%d秒", cooldown)
 }

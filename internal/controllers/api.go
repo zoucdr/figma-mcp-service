@@ -1,11 +1,14 @@
 package controllers
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +20,7 @@ import (
 	"github.com/figma-deliver/internal/models"
 	"github.com/figma-deliver/internal/services"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/proxy"
 )
 
 // formatScaleForFilename 格式化缩放等级用于文件名
@@ -736,19 +740,7 @@ func downloadFigmaImageWithCache(token, fileKey, nodeIDs, format string, scale f
 		return existingFile, nil
 	}
 
-	// 调用Figma API获取图片URL
-	imageURL, err := getFigmaImageURL(token, fileKey, nodeIDs, format, scale)
-	if err != nil {
-		return "", fmt.Errorf("获取图片URL失败: %v", err)
-	}
-
-	// 下载并缓存图片
-	imagePath, err := downloadAndCacheImage(imageURL, tempDir, safeNodeIDs, format, scale)
-	if err != nil {
-		return "", fmt.Errorf("下载并缓存图片失败: %v", err)
-	}
-
-	return imagePath, nil
+	return "", nil
 }
 
 // getFigmaImageURL 通过Figma API获取图片URL
@@ -1887,4 +1879,90 @@ func markNodeAndChildrenAsExcluded(nodeID string, childrenMap map[string][]strin
 			markNodeAndChildrenAsExcluded(childID, childrenMap, excludedNodeIDs)
 		}
 	}
+}
+
+// TestProxy 测试代理连接
+func TestProxy(c *gin.Context) {
+	var req struct {
+		ProxyURL string `json:"proxy_url"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误",
+		})
+		return
+	}
+
+	if req.ProxyURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "代理地址不能为空",
+		})
+		return
+	}
+
+	// 解析代理URL
+	parsedURL, err := url.Parse(req.ProxyURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("代理URL解析失败: %v", err),
+		})
+		return
+	}
+
+	// 创建带代理的HTTP客户端（支持HTTP/HTTPS/SOCKS5）
+	transport := &http.Transport{}
+
+	if parsedURL.Scheme == "socks5" {
+		// SOCKS5代理
+		dialer, dialErr := proxy.SOCKS5("tcp", parsedURL.Host, nil, proxy.Direct)
+		if dialErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("SOCKS5代理配置失败: %v", dialErr),
+			})
+			return
+		}
+		// 使用 DialContext 支持 context 和超时控制
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+	} else if parsedURL.Scheme == "http" || parsedURL.Scheme == "https" {
+		// HTTP/HTTPS代理
+		transport.Proxy = http.ProxyURL(parsedURL)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("不支持的代理类型: %s，仅支持 http/https/socks5", parsedURL.Scheme),
+		})
+		return
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
+	}
+
+	// 测试请求Figma API
+	testURL := "https://api.figma.com/"
+	httpReq, err := http.NewRequest("GET", testURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "创建测试请求失败",
+		})
+		return
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("代理连接失败: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// 测试成功
+	c.JSON(http.StatusOK, gin.H{
+		"message": "代理连接测试成功",
+		"status":  resp.StatusCode,
+	})
 }

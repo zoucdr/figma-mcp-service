@@ -13,11 +13,12 @@ type FigmaProject struct {
 	FileKey              string      `gorm:"size:100;not null" json:"file_key"`
 	RootNodeID           string      `gorm:"size:100" json:"root_node_id"`
 	Name                 string      `gorm:"size:255" json:"name"`
-	GroupName            string      `gorm:"size:255" json:"group_name"`             // 分组名称
-	FigmaURL             string      `gorm:"size:500" json:"figma_url"`              // Figma设计图地址
-	RefNodes             string      `gorm:"type:text" json:"ref_nodes"`             // 依赖节点ID列表，JSON格式存储
-	Settings             string      `gorm:"type:text" json:"settings"`              // 项目配置信息，JSON格式存储
-	InterfaceDescription string      `gorm:"type:text" json:"interface_description"` // 界面描述信息，用于MCP提示词
+	GroupName            string      `gorm:"size:255" json:"group_name"`                     // 分组名称
+	FigmaURL             string      `gorm:"size:500" json:"figma_url"`                      // Figma设计图地址
+	RefNodes             string      `gorm:"type:text" json:"ref_nodes"`                     // 依赖节点ID列表，JSON格式存储
+	Settings             string      `gorm:"type:text" json:"settings"`                      // 项目配置信息，JSON格式存储
+	InterfaceDescription string      `gorm:"type:text" json:"interface_description"`         // 界面描述信息，用于MCP提示词
+	RenderID             uint        `gorm:"default:0;index:idx_render_id" json:"render_id"` // 关联的渲染队列ID
 	CreatedAt            time.Time   `json:"created_at"`
 	UpdatedAt            time.Time   `json:"updated_at"`
 	Nodes                []FigmaNode `gorm:"foreignKey:ProjectID" json:"nodes,omitempty"`

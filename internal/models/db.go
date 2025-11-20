@@ -1,6 +1,8 @@
 package models
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -12,10 +14,32 @@ import (
 
 var DB *gorm.DB
 
+// CustomLogger 自定义日志记录器，截断过长的 SQL 语句
+type CustomLogger struct {
+	logger.Interface
+	maxSQLLength int
+}
+
+// Trace 实现 logger.Interface 的 Trace 方法
+func (l *CustomLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+	// 获取原始 SQL 和影响行数
+	sql, rows := fc()
+
+	// 如果 SQL 超过最大长度，则截断
+	if len(sql) > l.maxSQLLength {
+		sql = sql[:l.maxSQLLength] + fmt.Sprintf("... (截断, 总长度: %d)", len(sql))
+	}
+
+	// 调用底层 logger 的 Trace 方法
+	l.Interface.Trace(ctx, begin, func() (string, int64) {
+		return sql, rows
+	}, err)
+}
+
 // 初始化数据库连接
 func InitDB() {
 	// 配置GORM日志
-	newLogger := logger.New(
+	baseLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
 		logger.Config{
 			SlowThreshold:             time.Second,
@@ -24,6 +48,12 @@ func InitDB() {
 			Colorful:                  true,
 		},
 	)
+
+	// 包装为自定义 logger，最大 SQL 长度限制为 500 字符
+	newLogger := &CustomLogger{
+		Interface:    baseLogger,
+		maxSQLLength: 500,
+	}
 
 	// 从环境变量获取数据库配置
 	dbHost := getEnv("DB_HOST", "localhost")
@@ -90,13 +120,49 @@ func InitDB() {
 	}
 
 	// 自动迁移数据库表结构
-	err = DB.AutoMigrate(&User{}, &FigmaProject{}, &FigmaNode{}, &ExportJob{},
-		&MCPConnection{}, &MCPCallLog{}, &PromptShare{}, &PromptLike{})
+	err = DB.AutoMigrate(
+		&User{},
+		&FigmaProject{},
+		&FigmaNode{},
+		&ExportJob{},
+		&MCPConnection{},
+		&MCPCallLog{},
+		&PromptShare{},
+		&PromptLike{},
+		// 缓存与速率限制相关表
+		&FigmaTokenCooldown{},
+		&FigmaFileCache{},
+		&FigmaRenderQueue{},
+		&FigmaNodeImage{},
+	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 
-	log.Printf("数据库连接和迁移成功")
+	log.Printf("数据库连接和迁移成功（包含缓存表）")
+
+	// 重置所有处理中的渲染队列任务
+	resetProcessingRenderQueues()
+}
+
+// resetProcessingRenderQueues 重置所有状态为 processing 的渲染队列任务为 waiting
+// 用于服务重启时恢复未完成的任务
+func resetProcessingRenderQueues() {
+	result := DB.Model(&FigmaRenderQueue{}).
+		Where("status = ?", "processing").
+		Updates(map[string]interface{}{
+			"status":     "waiting",
+			"started_at": 0,
+			"updated_at": uint32(time.Now().Unix()),
+		})
+
+	if result.Error != nil {
+		log.Printf("⚠️ 重置渲染队列失败: %v", result.Error)
+	} else if result.RowsAffected > 0 {
+		log.Printf("✅ 已重置 %d 个处理中的渲染队列任务为 waiting 状态", result.RowsAffected)
+	} else {
+		log.Printf("✅ 没有需要重置的渲染队列任务")
+	}
 }
 
 // 获取环境变量，如果不存在则返回默认值

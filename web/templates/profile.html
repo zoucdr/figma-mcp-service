@@ -49,7 +49,73 @@
                                 <span>您可以在Figma账户设置中生成个人访问令牌</span>
                             </div>
                         </el-form-item>
+                        <el-form-item label="API冷却">
+                            <div style="display: flex; align-items: center; gap: 15px;">
+                                <div style="flex: 1; display: flex; flex-direction: column; gap: 8px;">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <el-tag size="small" type="info" style="min-width: 100px;">文件请求</el-tag>
+                                        <span style="font-size: 13px; color: #606266;">{{`{{ formatCooldownTime(cooldownInfo.lastFileRequestTime) }}`}}</span>
+                                        <span v-if="cooldownInfo.fileCooldownRemaining > 0" style="font-size: 12px; color: #E6A23C;">
+                                            (剩余 {{`{{ formatDuration(cooldownInfo.fileCooldownRemaining) }}`}})
+                                        </span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <el-tag size="small" type="success" style="min-width: 100px;">图片请求</el-tag>
+                                        <span style="font-size: 13px; color: #606266;">{{`{{ formatCooldownTime(cooldownInfo.lastImageRequestTime) }}`}}</span>
+                                        <span v-if="cooldownInfo.imageCooldownRemaining > 0" style="font-size: 12px; color: #E6A23C;">
+                                            (剩余 {{`{{ formatDuration(cooldownInfo.imageCooldownRemaining) }}`}})
+                                        </span>
+                                    </div>
+                                </div>
+                                <el-button 
+                                    type="warning" 
+                                    size="small" 
+                                    icon="el-icon-refresh" 
+                                    @click="resetCooldown"
+                                    :loading="cooldownResetLoading"
+                                    title="重置API冷却时间">
+                                    重置冷却
+                                </el-button>
+                            </div>
+                            <div class="form-tip">
+                                <i class="el-icon-info"></i>
+                                <span>显示上次调用Figma API的时间，重置后可立即发起请求</span>
+                            </div>
+                        </el-form-item>
                         </el-form>
+                        
+                        <!-- 修改密码按钮 -->
+                        <div class="password-button-section">
+                            <el-button 
+                                type="warning" 
+                                size="small"
+                                @click="togglePasswordForm"
+                                plain>
+                                <span class="password-icon">{{`{{ showPasswordForm ? '✕' : '🔒' }}`}}</span>
+                                {{`{{ showPasswordForm ? '取消修改' : '修改密码' }}`}}
+                            </el-button>
+                        </div>
+                        
+                        <!-- 修改密码区域 -->
+                        <transition name="password-slide">
+                            <div class="password-section" v-show="showPasswordForm">
+                                <el-form :model="passwordForm" :rules="passwordRules" ref="passwordForm" label-width="100px">
+                                    <el-form-item label="旧密码" prop="oldPassword">
+                                        <el-input v-model="passwordForm.oldPassword" type="password" placeholder="请输入旧密码" show-password></el-input>
+                                    </el-form-item>
+                                    <el-form-item label="新密码" prop="newPassword">
+                                        <el-input v-model="passwordForm.newPassword" type="password" placeholder="请输入新密码（至少6位）" show-password></el-input>
+                                    </el-form-item>
+                                    <el-form-item label="确认密码" prop="confirmPassword">
+                                        <el-input v-model="passwordForm.confirmPassword" type="password" placeholder="请再次输入新密码" show-password></el-input>
+                                    </el-form-item>
+                                    <el-form-item>
+                                        <el-button type="primary" @click="changePassword" :loading="passwordLoading" size="small">确认修改</el-button>
+                                        <el-button @click="togglePasswordForm" size="small">取消</el-button>
+                                    </el-form-item>
+                                </el-form>
+                            </div>
+                        </transition>
                     </div>
                 </el-card>
 
@@ -109,6 +175,83 @@
                             <pre v-if="mcpToken">{{`{{ getCursorConfig() }}`}}</pre>
                             <p v-else class="no-config">生成Token后将显示Cursor配置示例</p>
                         </div>
+                        </div>
+                    </div>
+                </el-card>
+
+                <!-- 代理配置 -->
+                <el-card class="profile-card proxy-card collapsible-card">
+                    <div slot="header" class="card-header" @click="toggleSection('proxyConfig')">
+                        <span><i class="el-icon-link"></i> 代理配置</span>
+                        <el-button 
+                            type="text" 
+                            size="mini" 
+                            @click.stop="toggleSection('proxyConfig')"
+                            :icon="sectionStates.proxyConfig ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"
+                            class="collapse-btn">
+                        </el-button>
+                    </div>
+                    
+                    <div class="card-content" v-show="sectionStates.proxyConfig">
+                        <div class="proxy-section">
+                            <el-form :model="proxyForm" :rules="proxyRules" ref="proxyForm" label-width="100px">
+                                <el-form-item label="启用代理">
+                                    <el-switch 
+                                        v-model="proxyForm.proxyEnabled"
+                                        active-text="开启"
+                                        inactive-text="关闭"
+                                        @change="onProxyEnableChange">
+                                    </el-switch>
+                                    <div class="form-tip">
+                                        <i class="el-icon-info"></i>
+                                        <span>启用后，所有 Figma API 请求将通过代理服务器</span>
+                                    </div>
+                                </el-form-item>
+                                
+                                <el-form-item label="代理地址" prop="proxyUrl" v-show="proxyForm.proxyEnabled">
+                                    <el-input 
+                                        v-model="proxyForm.proxyUrl" 
+                                        placeholder="例如: http://127.0.0.1:7890"
+                                        :disabled="!proxyForm.proxyEnabled">
+                                    </el-input>
+                                    <div class="form-tip">
+                                        <i class="el-icon-info"></i>
+                                        <span>支持 HTTP、HTTPS 和 SOCKS5 代理</span>
+                                    </div>
+                                </el-form-item>
+                            </el-form>
+                            
+                            <div class="proxy-examples">
+                                <p><strong>代理格式示例：</strong></p>
+                                <ul class="proxy-example-list">
+                                    <li><code>http://127.0.0.1:7890</code> - HTTP 代理</li>
+                                    <li><code>https://proxy.example.com:8080</code> - HTTPS 代理</li>
+                                    <li><code>socks5://127.0.0.1:1080</code> - SOCKS5 代理</li>
+                                    <li><code>http://user:pass@proxy.com:8080</code> - 带认证的代理</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="proxy-tips">
+                                <el-alert
+                                    title="为什么需要代理？"
+                                    type="info"
+                                    description="当遇到 Figma API 请求限制（429 错误）时，使用代理可以更换 IP 地址，绕过基于 IP 的速率限制。"
+                                    :closable="false"
+                                    show-icon>
+                                </el-alert>
+                            </div>
+                            
+                            <div class="proxy-actions">
+                                <el-button 
+                                    type="primary" 
+                                    @click="testProxy" 
+                                    :loading="proxyTestLoading"
+                                    :disabled="!proxyForm.proxyEnabled || !proxyForm.proxyUrl"
+                                    icon="el-icon-connection"
+                                    size="small">
+                                    测试代理连接
+                                </el-button>
+                            </div>
                         </div>
                     </div>
                 </el-card>
@@ -328,6 +471,8 @@ window.profileData = {
     prompts: '{{ .prompts }}',
     codePrompts: '{{ .codePrompts }}',
     mcpToken: '{{ .mcpToken }}',
+    proxyEnabled: {{ .proxyEnabled }},
+    proxyUrl: '{{ .proxyUrl }}',
     csrfToken: '{{ .csrf_token }}'
 };
 </script>

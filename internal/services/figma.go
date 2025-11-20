@@ -1,26 +1,245 @@
 package services
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/figma-deliver/internal/models"
+	"golang.org/x/net/proxy"
 )
 
 // FigmaService Figma API服务
 type FigmaService struct {
 	Token string
+}
+
+// figmaImagesAPIRateLimiter 单个 Token 的 Figma Images API 速率限制器
+type figmaImagesAPIRateLimiter struct {
+	mu           sync.Mutex
+	lastCallTime time.Time
+	minInterval  time.Duration
+	token        string // 标识哪个 token
+}
+
+// figmaImagesAPIRateLimiterManager 管理所有 token 的速率限制器
+type figmaImagesAPIRateLimiterManager struct {
+	mu          sync.RWMutex
+	limiters    map[string]*figmaImagesAPIRateLimiter
+	minInterval time.Duration
+}
+
+// 全局速率限制器管理器
+var globalFigmaImagesAPILimiterManager = &figmaImagesAPIRateLimiterManager{
+	limiters:    make(map[string]*figmaImagesAPIRateLimiter),
+	minInterval: getFigmaAPIRateLimit(),
+}
+
+// 全局 OBS 服务实例（由 main.go 设置）
+var globalOBSService *OBSService
+
+// SetGlobalOBSService 设置全局 OBS 服务实例
+func SetGlobalOBSService(obs *OBSService) {
+	globalOBSService = obs
+}
+
+// getFigmaAPIRateLimit 从环境变量或配置文件获取速率限制配置（单位：秒）
+func getFigmaAPIRateLimit() time.Duration {
+	rateLimitStr := os.Getenv("FIGMA_API_RATE_LIMIT")
+	if rateLimitStr == "" {
+		// 默认值：10秒
+		return 10 * time.Second
+	}
+
+	rateLimit := 10 // 默认值
+	if val, err := strconv.Atoi(rateLimitStr); err == nil && val > 0 {
+		rateLimit = val
+	}
+
+	return time.Duration(rateLimit) * time.Second
+}
+
+// getOrCreateLimiter 获取或创建指定 token 的速率限制器
+func (m *figmaImagesAPIRateLimiterManager) getOrCreateLimiter(token string) *figmaImagesAPIRateLimiter {
+	// 生成 token 的简短标识（用于日志）
+	tokenID := token
+	if len(token) > 10 {
+		tokenID = token[:10] + "***"
+	}
+
+	// 先尝试读锁获取
+	m.mu.RLock()
+	limiter, exists := m.limiters[token]
+	m.mu.RUnlock()
+
+	if exists {
+		return limiter
+	}
+
+	// 不存在则创建新的限制器
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 双重检查，防止并发创建
+	limiter, exists = m.limiters[token]
+	if exists {
+		return limiter
+	}
+
+	// 创建新的限制器
+	limiter = &figmaImagesAPIRateLimiter{
+		minInterval: m.minInterval,
+		token:       tokenID,
+	}
+	m.limiters[token] = limiter
+
+	fmt.Printf("🔑 为 Token [%s] 创建独立速率限制器，间隔=%s\n", tokenID, m.minInterval)
+
+	return limiter
+}
+
+// Wait 等待直到允许调用 API（如果需要排队则阻塞）
+func (rl *figmaImagesAPIRateLimiter) Wait() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	timeSinceLastCall := now.Sub(rl.lastCallTime)
+
+	if timeSinceLastCall < rl.minInterval {
+		// 需要等待
+		waitDuration := rl.minInterval - timeSinceLastCall
+		fmt.Printf("⏱️ [Token:%s] Figma Images API 速率限制: 距离上次调用仅 %.1f 秒，需要等待 %.1f 秒\n",
+			rl.token, timeSinceLastCall.Seconds(), waitDuration.Seconds())
+		time.Sleep(waitDuration)
+	}
+
+	// 更新最后调用时间
+	rl.lastCallTime = time.Now()
+	fmt.Printf("✅ [Token:%s] Figma Images API 调用已允许，下次可调用时间: %s\n",
+		rl.token, rl.lastCallTime.Add(rl.minInterval).Format("15:04:05"))
+}
+
+// CreateProxyFunc 根据代理URL创建代理函数（支持HTTP/HTTPS/SOCKS5）
+func CreateProxyFunc(proxyURL string) (func(*http.Request) (*url.URL, error), error) {
+	if proxyURL == "" {
+		return nil, nil
+	}
+
+	parsedURL, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("无效的代理URL: %v", err)
+	}
+
+	// 对于HTTP/HTTPS代理，使用标准的ProxyURL
+	if parsedURL.Scheme == "http" || parsedURL.Scheme == "https" {
+		return http.ProxyURL(parsedURL), nil
+	}
+
+	// SOCKS5代理不能通过ProxyURL设置，需要在Transport层面处理
+	// 这里返回nil，让CreateHTTPClientWithToken特殊处理
+	return nil, nil
+}
+
+// CreateHTTPClientWithToken 根据token查找用户并创建支持代理的HTTP客户端（支持HTTP/HTTPS/SOCKS5）
+func CreateHTTPClientWithToken(token string) *http.Client {
+	// 查找使用该token的用户
+	var user models.User
+	err := models.DB.Where("figma_token = ?", token).First(&user).Error
+
+	transport := &http.Transport{}
+
+	// 如果找到用户且启用了代理，配置代理
+	if err == nil && user.ProxyEnabled && user.ProxyURL != "" {
+		parsedURL, parseErr := url.Parse(user.ProxyURL)
+		if parseErr != nil {
+			fmt.Printf("⚠️ 用户 %s 代理URL解析失败，使用直连: %v\n", user.Username, parseErr)
+		} else {
+			// 根据协议类型选择不同的代理方式
+			if parsedURL.Scheme == "socks5" {
+				// SOCKS5代理
+				dialer, dialErr := proxy.SOCKS5("tcp", parsedURL.Host, nil, proxy.Direct)
+				if dialErr != nil {
+					fmt.Printf("⚠️ 用户 %s SOCKS5代理配置失败，使用直连: %v\n", user.Username, dialErr)
+				} else {
+					// 使用 DialContext 支持 context 和超时控制
+					transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+						return dialer.Dial(network, addr)
+					}
+					fmt.Printf("✅ 用户 %s 使用SOCKS5代理: %s\n", user.Username, user.ProxyURL)
+				}
+			} else if parsedURL.Scheme == "http" || parsedURL.Scheme == "https" {
+				// HTTP/HTTPS代理
+				transport.Proxy = http.ProxyURL(parsedURL)
+				fmt.Printf("✅ 用户 %s 使用HTTP代理: %s\n", user.Username, user.ProxyURL)
+			} else {
+				fmt.Printf("⚠️ 用户 %s 不支持的代理类型: %s，使用直连\n", user.Username, parsedURL.Scheme)
+			}
+		}
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}
+}
+
+// CreateHTTPClient 根据userID创建支持代理的HTTP客户端（支持HTTP/HTTPS/SOCKS5）
+func CreateHTTPClient(userID uint) *http.Client {
+	// 获取用户配置
+	var user models.User
+	models.DB.First(&user, userID)
+
+	transport := &http.Transport{}
+
+	// 如果启用了代理，配置代理
+	if user.ProxyEnabled && user.ProxyURL != "" {
+		parsedURL, parseErr := url.Parse(user.ProxyURL)
+		if parseErr != nil {
+			fmt.Printf("⚠️ 用户 %s 代理URL解析失败，使用直连: %v\n", user.Username, parseErr)
+		} else {
+			// 根据协议类型选择不同的代理方式
+			if parsedURL.Scheme == "socks5" {
+				// SOCKS5代理
+				dialer, dialErr := proxy.SOCKS5("tcp", parsedURL.Host, nil, proxy.Direct)
+				if dialErr != nil {
+					fmt.Printf("⚠️ 用户 %s SOCKS5代理配置失败，使用直连: %v\n", user.Username, dialErr)
+				} else {
+					// 使用 DialContext 支持 context 和超时控制
+					transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+						return dialer.Dial(network, addr)
+					}
+					fmt.Printf("✅ 用户 %s 使用SOCKS5代理: %s\n", user.Username, user.ProxyURL)
+				}
+			} else if parsedURL.Scheme == "http" || parsedURL.Scheme == "https" {
+				// HTTP/HTTPS代理
+				transport.Proxy = http.ProxyURL(parsedURL)
+				fmt.Printf("✅ 用户 %s 使用HTTP代理: %s\n", user.Username, user.ProxyURL)
+			} else {
+				fmt.Printf("⚠️ 用户 %s 不支持的代理类型: %s，使用直连\n", user.Username, parsedURL.Scheme)
+			}
+		}
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}
 }
 
 // formatScaleForFilename 格式化缩放等级用于文件名
@@ -33,6 +252,58 @@ func formatScaleForFilename(scale float64) string {
 	}
 	// 如果是非整数，保持小数点格式
 	return fmt.Sprintf("%.1f", scale)
+}
+
+// printDetailedHTTPError 打印详细的HTTP错误信息，包括响应头和响应体
+func printDetailedHTTPError(resp *http.Response, responseBody []byte) {
+	fmt.Println("========== HTTP 错误详情 ==========")
+	fmt.Printf("状态码: %d %s\n", resp.StatusCode, resp.Status)
+
+	// 打印响应头
+	fmt.Println("\n--- 响应头 (Response Headers) ---")
+	for key, values := range resp.Header {
+		for _, value := range values {
+			fmt.Printf("  %s: %s\n", key, value)
+		}
+	}
+
+	// 打印响应体
+	fmt.Println("\n--- 响应体 (Response Body) ---")
+	if len(responseBody) > 0 {
+		fmt.Printf("%s\n", string(responseBody))
+
+		// 尝试解析JSON以获取更多信息
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal(responseBody, &jsonData); err == nil {
+			if errMsg, ok := jsonData["err"].(string); ok {
+				fmt.Printf("\n  错误消息: %s\n", errMsg)
+			}
+			if status, ok := jsonData["status"].(float64); ok {
+				fmt.Printf("  状态: %.0f\n", status)
+			}
+		}
+	} else {
+		fmt.Println("  (响应体为空)")
+	}
+
+	// 特别处理429错误
+	if resp.StatusCode == http.StatusTooManyRequests {
+		fmt.Println("\n⚠️  已达到 Figma API 请求速率限制")
+		if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+			fmt.Printf("⏱️  建议等待时间: %s 秒\n", retryAfter)
+		}
+		if xRateLimit := resp.Header.Get("X-RateLimit-Limit"); xRateLimit != "" {
+			fmt.Printf("📊  速率限制: %s 请求/分钟\n", xRateLimit)
+		}
+		if xRateLimitRemaining := resp.Header.Get("X-RateLimit-Remaining"); xRateLimitRemaining != "" {
+			fmt.Printf("📊  剩余配额: %s\n", xRateLimitRemaining)
+		}
+		if xRateLimitReset := resp.Header.Get("X-RateLimit-Reset"); xRateLimitReset != "" {
+			fmt.Printf("🔄  配额重置时间: %s\n", xRateLimitReset)
+		}
+	}
+
+	fmt.Println("===================================")
 }
 
 // ParseFigmaLink 解析Figma链接
@@ -99,14 +370,163 @@ func GetFigmaProjectNodes(userID, projectID uint, fileKey, nodeID string) ([]mod
 	return savedNodes, nil
 }
 
-// GetFigmaNodes 获取Figma节点，支持缓存
-func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, error) {
-	// 检查是否存在缓存
-	cachedNodes, err := loadCachedNodes(fileKey, nodeID)
-	if err == nil && cachedNodes != nil {
-		fmt.Printf("使用缓存的节点树数据: fileKey=%s, nodeID=%s\n", fileKey, nodeID)
-		return cachedNodes, nil
+// GetFigmaNodesBatch 批量获取Figma节点（支持多个节点ID，一次API调用）
+func GetFigmaNodesBatch(token, fileKey string, nodeIDs []string) (map[string][]map[string]interface{}, error) {
+	if len(nodeIDs) == 0 {
+		return nil, fmt.Errorf("节点ID列表为空")
 	}
+
+	// 拼接所有节点ID（用逗号分隔）
+	idsParam := strings.Join(nodeIDs, ",")
+	fmt.Printf("📡 批量调用 Figma API 获取节点树: fileKey=%s, nodeIDs=%v\n", fileKey, nodeIDs)
+
+	// 构建API URL
+	url := fmt.Sprintf("https://api.figma.com/v1/files/%s/nodes?ids=%s", fileKey, idsParam)
+
+	// 创建请求
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 设置请求头
+	req.Header.Set("X-Figma-Token", token)
+
+	// 发送请求（使用支持代理的客户端）
+	client := CreateHTTPClientWithToken(token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// 先读取响应体（无论状态码如何都需要读取）
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		// 处理速率限制和 Retry-After
+		if CheckAndHandleRateLimitResponse(token, resp) {
+			return nil, FormatRetryError(resp)
+		}
+
+		// 打印详细的错误信息
+		printDetailedHTTPError(resp, respBody)
+		return nil, fmt.Errorf("API请求失败: %s", resp.Status)
+	}
+
+	// 即使成功，也检查是否有 Retry-After（预防性处理）
+	HandleRetryAfter(token, resp)
+
+	// 解析响应
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+
+	// 解析每个节点的数据
+	allNodesData := make(map[string][]map[string]interface{})
+
+	// Figma API 返回格式：{"nodes": {"nodeID1": {...}, "nodeID2": {...}}}
+	nodesMap, ok := result["nodes"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("响应格式错误：缺少 nodes 字段")
+	}
+
+	// 遍历每个节点
+	for _, nodeID := range nodeIDs {
+		nodeData, exists := nodesMap[nodeID]
+		if !exists {
+			fmt.Printf("⚠️ 节点 %s 不存在于响应中\n", nodeID)
+			continue
+		}
+
+		// 构造单个节点的响应格式（与 GetFigmaNodesNoCache 一致）
+		singleNodeResult := map[string]interface{}{
+			"nodes": map[string]interface{}{
+				nodeID: nodeData,
+			},
+		}
+
+		// 解析节点数据
+		nodes := parseFigmaNodes(singleNodeResult, nodeID)
+		allNodesData[nodeID] = nodes
+
+		// 缓存单个节点数据到本地文件
+		singleNodeJSON, err := json.Marshal(singleNodeResult)
+		if err != nil {
+			fmt.Printf("⚠️ 序列化节点 %s 数据失败: %v\n", nodeID, err)
+			continue
+		}
+
+		if err := cacheNodes(fileKey, nodeID, singleNodeJSON); err != nil {
+			fmt.Printf("⚠️ 缓存节点 %s 到本地文件失败: %v\n", nodeID, err)
+		} else {
+			fmt.Printf("✅ 节点 %s 已缓存到本地文件\n", nodeID)
+		}
+
+		// 异步保存到数据库
+		go func(nID string, nData []byte) {
+			// 提取所有可见节点ID（排除 visible=false 的节点）
+			nodeIDList, err := models.ExtractVisibleNodeIDs(string(nData))
+			if err != nil {
+				fmt.Printf("⚠️ 提取节点 %s 的ID失败: %v\n", nID, err)
+				nodeIDList = []string{}
+			}
+			nodeIDsStr := strings.Join(nodeIDList, ",")
+
+			now := uint32(time.Now().Unix())
+
+			// 检查数据库中是否已有记录
+			existingCache, err := models.GetFileCache(fileKey, nID)
+			if err != nil || existingCache == nil {
+				// 创建新记录
+				cache := &models.FigmaFileCache{
+					FigmaToken:   token,
+					FileKey:      fileKey,
+					RootNodeID:   nID,
+					FileData:     string(nData),
+					NodeIDs:      nodeIDsStr,
+					Status:       "loaded",
+					FileVersion:  "",
+					HitCount:     0,
+					ErrorMessage: "",
+					CreatedAt:    now,
+					UpdatedAt:    now,
+				}
+
+				if err := models.CreateFileCache(cache); err != nil {
+					fmt.Printf("❌ 保存节点 %s 到数据库失败: %v\n", nID, err)
+				} else {
+					fmt.Printf("✅ 节点 %s 已保存到数据库: token=%s..., 节点数=%d\n", nID, token[:10], len(nodeIDList))
+				}
+			} else {
+				// 更新已有记录
+				existingCache.FileData = string(nData)
+				existingCache.NodeIDs = nodeIDsStr
+				existingCache.Status = "loaded"
+				existingCache.ErrorMessage = ""
+				existingCache.UpdatedAt = now
+
+				if err := models.UpdateFileCache(existingCache); err != nil {
+					fmt.Printf("❌ 更新节点 %s 到数据库失败: %v\n", nID, err)
+				} else {
+					fmt.Printf("✅ 节点 %s 已更新到数据库\n", nID)
+				}
+			}
+		}(nodeID, singleNodeJSON)
+	}
+
+	fmt.Printf("✅ 批量获取节点成功: 共 %d 个节点\n", len(allNodesData))
+	return allNodesData, nil
+}
+
+// GetFigmaNodesNoCache 获取Figma节点（不使用缓存，直接调用API并保存到缓存）
+func GetFigmaNodesNoCache(token, fileKey, nodeID string) ([]map[string]interface{}, error) {
+	fmt.Printf("📡 调用 Figma API 获取节点树（跳过缓存）: fileKey=%s, nodeID=%s\n", fileKey, nodeID)
 
 	// 构建API URL
 	url := fmt.Sprintf("https://api.figma.com/v1/files/%s", fileKey)
@@ -123,24 +543,34 @@ func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, err
 	// 设置请求头
 	req.Header.Set("X-Figma-Token", token)
 
-	// 发送请求
-	client := &http.Client{Timeout: 30 * time.Second}
+	// 发送请求（使用支持代理的客户端）
+	client := CreateHTTPClientWithToken(token)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	// 检查响应状态
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API请求失败: %s", resp.Status)
-	}
-
-	// 读取响应体
+	// 先读取响应体（无论状态码如何都需要读取）
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		// 处理速率限制和 Retry-After
+		if CheckAndHandleRateLimitResponse(token, resp) {
+			return nil, FormatRetryError(resp)
+		}
+
+		// 打印详细的错误信息
+		printDetailedHTTPError(resp, respBody)
+		return nil, fmt.Errorf("API请求失败: %s", resp.Status)
+	}
+
+	// 即使成功，也检查是否有 Retry-After（预防性处理）
+	HandleRetryAfter(token, resp)
 
 	// 解析响应
 	var result map[string]interface{}
@@ -151,28 +581,117 @@ func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, err
 	// 处理节点数据
 	nodes := parseFigmaNodes(result, nodeID)
 
-	// 缓存节点数据
+	// 缓存节点数据到本地文件
 	if err := cacheNodes(fileKey, nodeID, respBody); err != nil {
-		fmt.Printf("缓存节点树数据失败: %v\n", err)
+		fmt.Printf("⚠️ 缓存节点树到本地文件失败: %v\n", err)
+	} else {
+		fmt.Printf("✅ 节点树已缓存到本地文件\n")
 	}
+
+	// 异步保存到数据库
+	go func() {
+		// 提取所有可见节点ID（排除 visible=false 的节点）
+		nodeIDList, err := models.ExtractVisibleNodeIDs(string(respBody))
+		if err != nil {
+			fmt.Printf("⚠️ 提取节点ID失败: %v\n", err)
+			nodeIDList = []string{}
+		}
+		nodeIDsStr := strings.Join(nodeIDList, ",")
+
+		now := uint32(time.Now().Unix())
+
+		// 检查数据库中是否已有记录
+		existingCache, err := models.GetFileCache(fileKey, nodeID)
+		if err != nil || existingCache == nil {
+			// 创建新记录
+			cache := &models.FigmaFileCache{
+				FigmaToken:   token,
+				FileKey:      fileKey,
+				RootNodeID:   nodeID,
+				FileData:     string(respBody),
+				NodeIDs:      nodeIDsStr,
+				Status:       "loaded",
+				FileVersion:  "",
+				HitCount:     0,
+				ErrorMessage: "",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}
+
+			if err := models.CreateFileCache(cache); err != nil {
+				fmt.Printf("❌ 保存节点树到数据库失败: %v\n", err)
+			} else {
+				fmt.Printf("✅ 节点树已保存到数据库: token=%s..., 节点数=%d\n", token[:10], len(nodeIDList))
+			}
+		} else {
+			// 更新已有记录
+			existingCache.FileData = string(respBody)
+			existingCache.NodeIDs = nodeIDsStr
+			existingCache.Status = "loaded"
+			existingCache.ErrorMessage = ""
+			existingCache.UpdatedAt = now
+
+			if err := models.UpdateFileCache(existingCache); err != nil {
+				fmt.Printf("❌ 更新数据库节点树失败: %v\n", err)
+			} else {
+				fmt.Printf("✅ 数据库节点树已更新: 节点数=%d\n", len(nodeIDList))
+			}
+		}
+	}()
 
 	return nodes, nil
 }
 
-// loadCachedNodes 加载缓存的节点树数据
-func loadCachedNodes(fileKey, nodeID string) ([]map[string]interface{}, error) {
-	// 创建安全的文件名
-	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
-	cacheDir := filepath.Join("temp", fileKey, "documents")
-	cacheFile := filepath.Join(cacheDir, safeNodeID+".json")
+// GetFigmaNodes 获取Figma节点，支持缓存
+func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, error) {
+	// 1. 检查本地文件缓存
+	cachedNodes, err := loadCachedNodes(fileKey, nodeID)
+	if err == nil && cachedNodes != nil {
+		fmt.Printf("✅ 使用本地缓存的节点树数据: fileKey=%s, nodeID=%s\n", fileKey, nodeID)
+		return cachedNodes, nil
+	}
+	fmt.Printf("⚠️ 本地缓存未找到: %v\n", err)
 
-	// 检查文件是否存在
-	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("缓存文件不存在: %s", cacheFile)
+	// 2. 从数据库查询节点树缓存
+	fmt.Printf("🔍 查询数据库缓存: fileKey=%s, nodeID=%s\n", fileKey, nodeID)
+	dbCache, err := models.GetFileCache(fileKey, nodeID)
+	if err == nil && dbCache != nil && dbCache.Status == "loaded" && dbCache.FileData != "" {
+		fmt.Printf("✅ 从数据库缓存获取节点树: fileKey=%s, nodeID=%s, 数据大小=%d bytes\n",
+			fileKey, nodeID, len(dbCache.FileData))
+
+		// 解析数据库中的 JSON 数据
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(dbCache.FileData), &result); err == nil {
+			nodes := parseFigmaNodes(result, nodeID)
+
+			// 同时保存到本地文件缓存，加速下次访问
+			go func() {
+				if err := cacheNodes(fileKey, nodeID, []byte(dbCache.FileData)); err != nil {
+					fmt.Printf("⚠️ 保存到本地文件缓存失败: %v\n", err)
+				}
+			}()
+
+			return nodes, nil
+		} else {
+			fmt.Printf("⚠️ 解析数据库缓存数据失败: %v\n", err)
+		}
+	} else {
+		fmt.Printf("⚠️ 数据库缓存未找到或状态异常\n")
 	}
 
-	// 读取缓存文件
-	data, err := os.ReadFile(cacheFile)
+	// 3. 本地缓存和数据库都没有，调用 Figma API
+	return GetFigmaNodesNoCache(token, fileKey, nodeID)
+}
+
+// LoadCachedNodesFromFile 加载文件缓存的节点树数据（导出给 controller 使用）
+func LoadCachedNodesFromFile(fileKey, nodeID string) ([]map[string]interface{}, error) {
+	return loadCachedNodes(fileKey, nodeID)
+}
+
+// loadCachedNodes 加载缓存的节点树数据
+func loadCachedNodes(fileKey, nodeID string) ([]map[string]interface{}, error) {
+	// 使用共享的文件读取函数
+	data, _, err := LoadCachedFileData(fileKey, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -399,20 +918,20 @@ func DownloadFigmaImage(token, fileKey, nodeID string) (string, error) {
 	return DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, "png", 1.0, true)
 }
 
-// DownloadPreviewFigmaImageWithOptions 下载Figma图片（带选项）
+// DownloadPreviewFigmaImageWithOptions 获取Figma图片（从缓存、数据库、OBS或Figma CDN）
+// 注意：此函数不会直接调用 Figma API 下载图片，请使用统一渲染接口
 func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat string, imageScale float64, useCache bool) (string, error) {
 	// 打印调试信息
-	fmt.Printf("开始下载Figma图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, useCache=%v\n",
+	fmt.Printf("📖 获取Figma图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, useCache=%v\n",
 		fileKey, nodeID, imageFormat, imageScale, useCache)
 
-	// 首先检查是否已经有该节点的图片文件
-	// 创建临时文件夹
+	// 1. 检查本地缓存文件
 	tempDir := filepath.Join("temp", fileKey, "previews")
 	fmt.Printf("缓存目录路径: %s\n", tempDir)
 	err := os.MkdirAll(tempDir, os.ModePerm)
 	if err != nil {
 		fmt.Printf("创建临时文件夹失败: %v\n", err)
-		return "", fmt.Errorf("创建临时文件夹失败: %v", err)
+		return getFallbackImage()
 	}
 
 	// 生成文件名 - 替换特殊字符为下划线
@@ -423,108 +942,199 @@ func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat st
 	if useCache {
 		existingFile := findLatestNodeImage(tempDir, safeNodeID, imageScale)
 		if existingFile != "" {
-			// 不再检查过期时间，直接使用缓存的图片文件
-			fmt.Printf("找到节点 %s 的缓存图片文件，直接使用: %s\n", nodeID, existingFile)
+			fmt.Printf("✅ 找到本地缓存图片: %s\n", existingFile)
 			return existingFile, nil
 		}
+		fmt.Printf("⚠️ 本地缓存未找到\n")
 	} else {
-		fmt.Printf("跳过缓存检查，强制重新下载\n")
+		fmt.Printf("跳过本地缓存检查\n")
 	}
 
-	// 第一步：通过Figma API获取图片URL
-	// 确保节点ID使用冒号格式（Figma API标准格式）
-	figmaNodeID := strings.ReplaceAll(nodeID, "-", ":")
+	// 2. 查询数据库中的图片记录
+	fmt.Printf("🔍 查询数据库: fileKey=%s, nodeID=%s, format=%s, scale=%.1f\n", fileKey, nodeID, imageFormat, imageScale)
+	image, err := models.GetNodeImage(fileKey, nodeID, imageFormat, imageScale)
+	if err != nil {
+		fmt.Printf("⚠️ 数据库查询失败: %v\n", err)
+		return getFallbackImage()
+	}
 
-	// 构建API URL
-	apiUrl := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=%s&scale=%.1f&contentOnly=true",
-		fileKey, figmaNodeID, imageFormat, imageScale)
-	fmt.Printf("Figma API URL: %s\n", apiUrl)
+	if image == nil {
+		fmt.Printf("⚠️ 数据库中未找到图片记录\n")
+		return getFallbackImage()
+	}
+
+	// 3. 优先使用 OBS Key（如果存在）
+	if image.OBSKey != "" {
+		fmt.Printf("📦 找到 OBS Key: %s\n", image.OBSKey)
+
+		// 尝试从 OBS 下载到本地缓存
+		localPath, err := downloadImageFromOBS(image.OBSKey, tempDir, safeNodeID, imageFormat, imageScale)
+		if err == nil && localPath != "" {
+			fmt.Printf("✅ 成功从 OBS 下载图片到本地: %s\n", localPath)
+			return localPath, nil
+		}
+		fmt.Printf("⚠️ 从 OBS 下载失败: %v，尝试 Figma CDN\n", err)
+	}
+
+	// 4. 使用 Figma CDN URL（如果存在）
+	if image.FigmaCDNURL != "" {
+		fmt.Printf("🌐 找到 Figma CDN URL: %s\n", image.FigmaCDNURL)
+
+		// 尝试从 Figma CDN 下载到本地缓存
+		localPath, err := downloadImageFromURL(image.FigmaCDNURL, tempDir, safeNodeID, imageFormat, imageScale)
+		if err == nil && localPath != "" {
+			fmt.Printf("✅ 成功从 Figma CDN 下载图片到本地: %s\n", localPath)
+			return localPath, nil
+		}
+		fmt.Printf("⚠️ 从 Figma CDN 下载失败: %v\n", err)
+	}
+
+	// 5. 都失败了，返回裂图
+	fmt.Printf("❌ 所有获取途径都失败，返回裂图\n")
+	return getFallbackImage()
+}
+
+// getFallbackImage 获取裂图路径
+func getFallbackImage() (string, error) {
+	fallbackPath := filepath.Join("web", "static", "img", "break.jpg")
+	if _, err := os.Stat(fallbackPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("裂图文件不存在: %s", fallbackPath)
+	}
+	fmt.Printf("🖼️ 返回裂图: %s\n", fallbackPath)
+	return fallbackPath, nil
+}
+
+// downloadImageFromOBS 从 OBS 下载图片到本地缓存
+func downloadImageFromOBS(obsKey, tempDir, safeNodeID, imageFormat string, imageScale float64) (string, error) {
+	// 检查 OBS 服务是否可用
+	if globalOBSService == nil || !globalOBSService.IsEnabled() {
+		return "", fmt.Errorf("OBS 服务未启用")
+	}
+
+	fmt.Printf("📥 [OBS] 开始下载图片: %s\n", obsKey)
+
+	// 从 OBS 下载图片数据
+	imageData, contentType, err := globalOBSService.DownloadImage(obsKey)
+	if err != nil {
+		return "", fmt.Errorf("从 OBS 下载失败: %w", err)
+	}
+
+	fmt.Printf("✅ [OBS] 图片下载成功，大小: %d bytes, Content-Type: %s\n", len(imageData), contentType)
+
+	// 确定文件扩展名
+	fileExt := "." + imageFormat
+	if imageFormat == "" {
+		fileExt = ".png"
+	}
+
+	// 生成本地文件路径
+	scaleStr := formatScaleForFilename(imageScale)
+	fileName := fmt.Sprintf("%s-%s%s", safeNodeID, scaleStr, fileExt)
+	localPath := filepath.Join(tempDir, fileName)
+
+	// 写入本地文件
+	err = os.WriteFile(localPath, imageData, 0644)
+	if err != nil {
+		return "", fmt.Errorf("写入本地文件失败: %w", err)
+	}
+
+	fmt.Printf("✅ [OBS] 图片已保存到本地: %s\n", localPath)
+	return localPath, nil
+}
+
+// downloadImageFromURL 从指定 URL 下载图片到本地缓存
+func downloadImageFromURL(imageURL, tempDir, safeNodeID, imageFormat string, imageScale float64) (string, error) {
+	fmt.Printf("开始从 URL 下载图片: %s\n", imageURL)
+
+	// 创建带超时的HTTP客户端
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
 
 	// 创建请求
-	req, err := http.NewRequest("GET", apiUrl, nil)
+	req, err := http.NewRequest("GET", imageURL, nil)
 	if err != nil {
-		fmt.Printf("创建请求失败: %v\n", err)
-		return "", fmt.Errorf("创建API请求失败: %v", err)
+		return "", fmt.Errorf("创建下载请求失败: %v", err)
 	}
 
-	// 设置请求头
-	req.Header.Set("X-Figma-Token", token)
-	fmt.Printf("请求头已设置: X-Figma-Token=%s...\n", token[:5]+"***")
+	// 添加请求头
+	req.Header.Set("User-Agent", "Mozilla/5.0 FigmaDeliver/1.0")
 
 	// 发送请求
-	client := &http.Client{Timeout: 30 * time.Second}
-	fmt.Printf("发送请求获取图片URL...\n")
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("请求失败: %v\n", err)
-		return "", fmt.Errorf("发送API请求失败: %v", err)
+		return "", fmt.Errorf("下载请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// 检查响应状态
-	fmt.Printf("响应状态码: %d\n", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
-		errMsg := fmt.Sprintf("API请求失败: %s", resp.Status)
-		fmt.Println(errMsg)
-		return "", fmt.Errorf(errMsg)
+		return "", fmt.Errorf("下载失败，状态码: %d", resp.StatusCode)
 	}
 
-	// 解析响应
-	responseBody, err := io.ReadAll(resp.Body)
+	// 确定文件扩展名
+	fileExt := "." + imageFormat
+	if imageFormat == "" {
+		fileExt = ".png"
+	}
+
+	// 生成临时文件路径
+	scaleStr := formatScaleForFilename(imageScale)
+	tempFileName := fmt.Sprintf("%s-%s-temp%s", safeNodeID, scaleStr, fileExt)
+	tempFilePath := filepath.Join(tempDir, tempFileName)
+
+	// 创建临时文件
+	downloadTempPath := tempFilePath + ".tmp"
+	file, err := os.Create(downloadTempPath)
 	if err != nil {
-		fmt.Printf("读取响应内容失败: %v\n", err)
-		return "", fmt.Errorf("读取API响应失败: %v", err)
+		return "", fmt.Errorf("创建临时文件失败: %v", err)
 	}
 
-	fmt.Printf("响应数据: %s\n", string(responseBody))
+	// 创建 TeeReader，同时写入文件和计算哈希值
+	hasher := md5.New()
+	reader := io.TeeReader(resp.Body, hasher)
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(responseBody, &result); err != nil {
-		fmt.Printf("解析响应JSON失败: %v\n", err)
-		return "", fmt.Errorf("解析API响应JSON失败: %v", err)
+	bytes, err := io.Copy(file, reader)
+	if err != nil {
+		file.Close()
+		os.Remove(downloadTempPath)
+		return "", fmt.Errorf("写入临时文件失败: %v", err)
 	}
 
-	// 获取图片URL
-	images, ok := result["images"].(map[string]interface{})
-	if !ok {
-		fmt.Printf("解析图片信息失败，images字段不是map类型: %T\n", result["images"])
-		return "", errors.New("解析图片信息失败，未找到images字段或格式不正确")
-	}
-	fmt.Printf("图片信息: %+v\n", images)
-	fmt.Printf("查找图片URL - 原始nodeID: %s, 转换后figmaNodeID: %s\n", nodeID, figmaNodeID)
-
-	// 尝试所有可能的节点ID格式
-	var imageURL string
-	var found bool
-
-	// 候选节点ID列表
-	candidateIDs := []string{
-		figmaNodeID, // 转换后的冒号格式
-		nodeID,      // 原始格式
-		strings.ReplaceAll(figmaNodeID, ":", "-"), // 连字符格式
-		strings.ReplaceAll(nodeID, "-", ":"),      // 冒号格式（如果原始是连字符）
+	// 关闭文件
+	if err := file.Close(); err != nil {
+		os.Remove(downloadTempPath)
+		return "", fmt.Errorf("关闭临时文件失败: %v", err)
 	}
 
-	fmt.Printf("尝试查找图片URL，候选ID: %v\n", candidateIDs)
-
-	for _, candidateID := range candidateIDs {
-		if url, exists := images[candidateID].(string); exists && url != "" {
-			imageURL = url
-			found = true
-			fmt.Printf("成功找到图片URL，使用节点ID: %s, URL: %s\n", candidateID, url)
-			break
-		}
-		fmt.Printf("节点ID %s 未找到或URL为空\n", candidateID)
+	// 检查文件大小
+	if bytes == 0 {
+		os.Remove(downloadTempPath)
+		return "", errors.New("下载的图片大小为0字节")
 	}
 
-	if !found || imageURL == "" {
-		fmt.Printf("获取图片URL失败，尝试了所有候选ID: %v\n", candidateIDs)
-		return "", fmt.Errorf("获取图片URL失败，节点ID=%s 不存在或URL为空", nodeID)
-	}
-	fmt.Printf("获取到图片URL: %s\n", imageURL)
+	// 获取文件哈希值
+	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
 
-	// 下载图片
-	return downloadPreviewImageFile(imageURL, fileKey, nodeID, imageScale)
+	// 构建最终文件名
+	finalFileName := fmt.Sprintf("%s-%s-%s%s", safeNodeID, scaleStr, hash, fileExt)
+	finalFilePath := filepath.Join(tempDir, finalFileName)
+
+	// 检查同名文件是否已存在
+	if _, err := os.Stat(finalFilePath); err == nil {
+		os.Remove(downloadTempPath)
+		fmt.Printf("文件已存在（相同内容），直接使用: %s\n", finalFilePath)
+		return finalFilePath, nil
+	}
+
+	// 重命名为最终文件
+	if err := os.Rename(downloadTempPath, finalFilePath); err != nil {
+		os.Remove(downloadTempPath)
+		return "", fmt.Errorf("重命名临时文件失败: %v", err)
+	}
+
+	fmt.Printf("图片下载完成: %s (%d 字节)\n", finalFilePath, bytes)
+	return finalFilePath, nil
 }
 
 // 查找节点的最新图片文件（根据缩放等级）
@@ -875,151 +1485,6 @@ func ClearProjectImageCacheByNodeIDs(fileKey string, nodeIDs []string) error {
 	return nil
 }
 
-// DownloadFilteredPreviewFigmaImage 下载过滤后的Figma预览图片（使用过滤后的节点ID列表）
-func DownloadFilteredPreviewFigmaImage(token, fileKey, nodeID, imageFormat string, imageScale float64, projectID uint, useCache bool) (string, error) {
-	// 打印调试信息
-	fmt.Printf("开始下载过滤后的Figma预览图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, projectID=%d, useCache=%v\n",
-		fileKey, nodeID, imageFormat, imageScale, projectID, useCache)
-
-	// 获取节点树，用于过滤
-	nodes, err := GetFigmaNodes(token, fileKey, nodeID)
-	if err != nil {
-		fmt.Printf("获取节点树失败: %v\n", err)
-		return "", fmt.Errorf("获取节点树失败: %v", err)
-	}
-
-	// 获取所有节点的修改信息
-	var figmaNodes []models.FigmaNode
-	dbResult := models.DB.Where("project_id = ?", projectID).Find(&figmaNodes)
-	if dbResult.Error != nil {
-		fmt.Printf("获取节点修改信息失败: %v\n", dbResult.Error)
-		return "", fmt.Errorf("获取节点修改信息失败: %v", dbResult.Error)
-	}
-
-	// 构建节点ID到修改信息的映射
-	nodeModifys := make(map[string]map[string]interface{})
-	for _, node := range figmaNodes {
-		if node.Modifys != "" {
-			var modifyData map[string]interface{}
-			if err := json.Unmarshal([]byte(node.Modifys), &modifyData); err == nil {
-				nodeModifys[node.NodeID] = modifyData
-			}
-		}
-	}
-
-	// 使用树型遍历收集所有需要包含的节点ID（排除被过滤的节点及其子树）
-	includedNodeIDs := collectIncludedNodeIDs(nodes, nodeID, nodeModifys)
-
-	// 如果没有需要包含的节点，返回错误
-	if len(includedNodeIDs) == 0 {
-		fmt.Printf("没有需要包含的节点\n")
-		return "", fmt.Errorf("没有需要包含的节点")
-	}
-
-	// 格式化节点ID列表为 l11:22,123:33 格式
-	nodeIDsParam := "I" + strings.Join(includedNodeIDs, ",")
-	fmt.Printf("格式化后的节点ID参数: %s\n", nodeIDsParam)
-
-	// 检查是否已经有缓存的图片文件
-	tempDir := filepath.Join("temp", fileKey, "fpreviews")
-	err = os.MkdirAll(tempDir, os.ModePerm)
-	if err != nil {
-		fmt.Printf("创建临时文件夹失败: %v\n", err)
-		return "", fmt.Errorf("创建临时文件夹失败: %v", err)
-	}
-
-	// 基于过滤后的节点ID列表生成文件名
-	// 命名和preview规则一样，用nodeid去掉特殊符号加签
-	safeFileName := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
-	nodeIDsHash := generateNodeIDsHash(includedNodeIDs)
-	safeFileName = fmt.Sprintf("%s-%s", safeFileName, nodeIDsHash)
-
-	// 如果使用缓存，检查是否有现有文件
-	if useCache {
-		existingFile := findLatestNodeImage(tempDir, safeFileName, imageScale)
-		if existingFile != "" {
-			fmt.Printf("找到过滤预览图片缓存文件，直接使用: %s\n", existingFile)
-			return existingFile, nil
-		}
-	} else {
-		fmt.Printf("跳过缓存检查，强制重新下载过滤预览图片\n")
-	}
-
-	// 调用Figma API获取图片URL
-	apiUrl := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=%s&scale=%.1f",
-		fileKey, nodeIDsParam, imageFormat, imageScale)
-	fmt.Printf("Figma API URL: %s\n", apiUrl)
-
-	// 创建请求
-	req, err := http.NewRequest("GET", apiUrl, nil)
-	if err != nil {
-		fmt.Printf("创建请求失败: %v\n", err)
-		return "", fmt.Errorf("创建API请求失败: %v", err)
-	}
-
-	// 设置请求头
-	req.Header.Set("X-Figma-Token", token)
-	fmt.Printf("请求头已设置: X-Figma-Token=%s...\n", token[:5]+"***")
-
-	// 发送请求
-	client := &http.Client{Timeout: 30 * time.Second}
-	fmt.Printf("发送请求获取图片URL...\n")
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("请求失败: %v\n", err)
-		return "", fmt.Errorf("发送API请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// 检查响应状态
-	fmt.Printf("响应状态码: %d\n", resp.StatusCode)
-	if resp.StatusCode != http.StatusOK {
-		errMsg := fmt.Sprintf("API请求失败: %s", resp.Status)
-		fmt.Println(errMsg)
-		return "", fmt.Errorf(errMsg)
-	}
-
-	// 解析响应
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("读取响应内容失败: %v\n", err)
-		return "", fmt.Errorf("读取API响应失败: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(responseBody, &result); err != nil {
-		fmt.Printf("解析响应JSON失败: %v\n", err)
-		return "", fmt.Errorf("解析API响应JSON失败: %v", err)
-	}
-
-	// 获取图片URL - Figma API返回的是节点ID到URL的映射
-	images, ok := result["images"].(map[string]interface{})
-	if !ok {
-		fmt.Printf("解析图片信息失败，images字段不是map类型: %T\n", result["images"])
-		return "", errors.New("解析图片信息失败，未找到images字段或格式不正确")
-	}
-	fmt.Printf("图片信息: %+v\n", images)
-
-	// 获取第一个可用的图片URL（通常Figma会返回合成后的图片）
-	var imageURL string
-	for _, url := range images {
-		if urlStr, ok := url.(string); ok && urlStr != "" {
-			imageURL = urlStr
-			break
-		}
-	}
-
-	if imageURL == "" {
-		fmt.Printf("获取图片URL失败，没有找到有效的图片URL\n")
-		return "", fmt.Errorf("获取图片URL失败，没有找到有效的图片URL")
-	}
-	fmt.Printf("获取到图片URL: %s\n", imageURL)
-
-	// 下载图片
-	fmt.Printf("发现 %d 个包含的节点，下载过滤后的预览图片\n", len(includedNodeIDs))
-	return downloadFilteredPreviewImageFileByNodeIDs(imageURL, fileKey, safeFileName, includedNodeIDs, imageScale)
-}
-
 // downloadPreviewImageFile 下载图片文件
 func downloadPreviewImageFile(url, fileKey, nodeID string, imageScale float64) (string, error) {
 	fmt.Printf("第二步：开始下载图片文件: url=%s\n", url)
@@ -1321,149 +1786,6 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 
 	fmt.Printf("过滤后的预览图片下载完成: %s (%d 字节)\n", filePath, bytes)
 	return filePath, nil
-}
-
-// DownloadFilteredPreviewFigmaImages 批量下载过滤后的Figma预览图片（返回节点ID到图片路径的映射）
-func DownloadFilteredPreviewFigmaImages(token, fileKey, nodeID, imageFormat string, imageScale float64, projectID uint) (map[string]string, error) {
-	// 打印调试信息
-	fmt.Printf("开始批量下载过滤后的Figma预览图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, projectID=%d\n",
-		fileKey, nodeID, imageFormat, imageScale, projectID)
-
-	// 获取节点树，用于过滤
-	nodes, err := GetFigmaNodes(token, fileKey, nodeID)
-	if err != nil {
-		fmt.Printf("获取节点树失败: %v\n", err)
-		return nil, fmt.Errorf("获取节点树失败: %v", err)
-	}
-
-	// 获取所有节点的修改信息
-	var figmaNodes []models.FigmaNode
-	dbResult := models.DB.Where("project_id = ?", projectID).Find(&figmaNodes)
-	if dbResult.Error != nil {
-		fmt.Printf("获取节点修改信息失败: %v\n", dbResult.Error)
-		return nil, fmt.Errorf("获取节点修改信息失败: %v", dbResult.Error)
-	}
-
-	// 构建节点ID到修改信息的映射
-	nodeModifys := make(map[string]map[string]interface{})
-	for _, node := range figmaNodes {
-		if node.Modifys != "" {
-			var modifyData map[string]interface{}
-			if err := json.Unmarshal([]byte(node.Modifys), &modifyData); err == nil {
-				nodeModifys[node.NodeID] = modifyData
-			}
-		}
-	}
-
-	// 构建节点ID到节点信息的映射
-	nodeMap := make(map[string]map[string]interface{})
-	for _, node := range nodes {
-		nodeID := node["id"].(string)
-		nodeMap[nodeID] = node
-	}
-
-	// 使用树型遍历收集所有需要包含的节点ID（排除被过滤的节点及其子树）
-	includedNodeIDs := collectIncludedNodeIDs(nodes, nodeID, nodeModifys)
-
-	// 如果没有需要包含的节点，返回错误
-	if len(includedNodeIDs) == 0 {
-		fmt.Printf("没有需要包含的节点\n")
-		return nil, fmt.Errorf("没有需要包含的节点")
-	}
-
-	// 格式化节点ID列表为 I11:22,123:33 格式
-	nodeIDsParam := strings.Join(includedNodeIDs, ",")
-	fmt.Printf("格式化后的节点ID参数: %s\n", nodeIDsParam)
-
-	// 检查是否已经有缓存的图片文件
-	tempDir := filepath.Join("temp", fileKey, "fpreviews")
-	err = os.MkdirAll(tempDir, os.ModePerm)
-	if err != nil {
-		fmt.Printf("创建临时文件夹失败: %v\n", err)
-		return nil, fmt.Errorf("创建临时文件夹失败: %v", err)
-	}
-
-	// 调用Figma API获取图片URL
-	apiUrl := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=%s&scale=%.1f",
-		fileKey, nodeIDsParam, imageFormat, imageScale)
-	fmt.Printf("Figma API URL: %s\n", apiUrl)
-
-	// 创建请求
-	req, err := http.NewRequest("GET", apiUrl, nil)
-	if err != nil {
-		fmt.Printf("创建请求失败: %v\n", err)
-		return nil, fmt.Errorf("创建API请求失败: %v", err)
-	}
-
-	// 设置请求头
-	req.Header.Set("X-Figma-Token", token)
-	fmt.Printf("请求头已设置: X-Figma-Token=%s...\n", token[:5]+"***")
-
-	// 发送请求
-	client := &http.Client{Timeout: 30 * time.Second}
-	fmt.Printf("发送请求获取图片URL...\n")
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("请求失败: %v\n", err)
-		return nil, fmt.Errorf("发送API请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// 检查响应状态
-	fmt.Printf("响应状态码: %d\n", resp.StatusCode)
-	if resp.StatusCode != http.StatusOK {
-		errMsg := fmt.Sprintf("API请求失败: %s", resp.Status)
-		fmt.Println(errMsg)
-		return nil, fmt.Errorf(errMsg)
-	}
-
-	// 解析响应
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("读取响应内容失败: %v\n", err)
-		return nil, fmt.Errorf("读取API响应失败: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(responseBody, &result); err != nil {
-		fmt.Printf("解析响应JSON失败: %v\n", err)
-		return nil, fmt.Errorf("解析API响应JSON失败: %v", err)
-	}
-
-	// 获取图片URL - Figma API返回的是节点ID到URL的映射
-	images, ok := result["images"].(map[string]interface{})
-	if !ok {
-		fmt.Printf("解析图片信息失败，images字段不是map类型: %T\n", result["images"])
-		return nil, errors.New("解析图片信息失败，未找到images字段或格式不正确")
-	}
-	fmt.Printf("图片信息: %+v\n", images)
-
-	// 批量下载所有图片并建立映射
-	imagePathMap := make(map[string]string)
-
-	for _, nodeID := range includedNodeIDs {
-		imageURL, ok := images[nodeID].(string)
-		if !ok || imageURL == "" {
-			fmt.Printf("节点 %s 没有对应的图片URL，跳过\n", nodeID)
-			continue
-		}
-
-		// 为每个节点生成文件名
-		fileName := generateNodeFileName(nodeID, nodeMap[nodeID], nodeModifys[nodeID])
-
-		// 下载单个图片
-		filePath, err := downloadSingleFilteredPreviewImage(imageURL, fileKey, nodeID, fileName, tempDir, imageScale)
-		if err != nil {
-			fmt.Printf("下载节点 %s 的图片失败: %v\n", nodeID, err)
-			continue
-		}
-
-		imagePathMap[nodeID] = filePath
-		fmt.Printf("成功下载节点 %s 的图片: %s\n", nodeID, filePath)
-	}
-
-	fmt.Printf("批量下载完成，成功下载 %d 个图片\n", len(imagePathMap))
-	return imagePathMap, nil
 }
 
 // generateNodeFileName 为节点生成文件名

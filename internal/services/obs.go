@@ -1,0 +1,451 @@
+package services
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/figma-deliver/huaweicloud/obs"
+)
+
+// OBSService 华为云OBS服务
+type OBSService struct {
+	client            *obs.ObsClient
+	bucketName        string
+	region            string
+	endpoint          string
+	pathPrefix        string
+	uploadConcurrency int
+	uploadTimeout     time.Duration
+	enabled           bool
+}
+
+// OBSConfig OBS配置
+type OBSConfig struct {
+	Enabled              bool
+	Endpoint             string
+	AccessKeyID          string
+	SecretAccessKey      string
+	BucketName           string
+	Region               string
+	PathPrefix           string
+	UploadConcurrency    int
+	UploadTimeoutSeconds int
+}
+
+// NewOBSService 创建OBS服务
+func NewOBSService(config OBSConfig) (*OBSService, error) {
+	if !config.Enabled {
+		log.Printf("📦 [OBS] OBS服务未启用")
+		return &OBSService{enabled: false}, nil
+	}
+
+	// 初始化OBS客户端
+	client, err := obs.New(config.AccessKeyID, config.SecretAccessKey, config.Endpoint)
+	if err != nil {
+		log.Printf("❌ [OBS] 初始化失败: %v", err)
+		return nil, fmt.Errorf("初始化OBS客户端失败: %w", err)
+	}
+
+	service := &OBSService{
+		client:            client,
+		bucketName:        config.BucketName,
+		region:            config.Region,
+		endpoint:          config.Endpoint,
+		pathPrefix:        config.PathPrefix,
+		uploadConcurrency: config.UploadConcurrency,
+		uploadTimeout:     time.Duration(config.UploadTimeoutSeconds) * time.Second,
+		enabled:           true,
+	}
+
+	log.Printf("✅ [OBS] 初始化成功")
+	log.Printf("   - Endpoint: %s", config.Endpoint)
+	log.Printf("   - Bucket: %s", config.BucketName)
+	log.Printf("   - Region: %s", config.Region)
+	log.Printf("   - PathPrefix: %s", config.PathPrefix)
+
+	return service, nil
+}
+
+// IsEnabled 检查OBS服务是否启用
+func (s *OBSService) IsEnabled() bool {
+	return s.enabled
+}
+
+// Close 关闭OBS客户端
+func (s *OBSService) Close() {
+	if s.client != nil {
+		s.client.Close()
+		log.Printf("🔒 [OBS] 客户端已关闭")
+	}
+}
+
+// ===================== 上传功能 =====================
+
+// UploadImageFromURL 从URL下载图片并上传到OBS
+// 返回: (OBS URL, OBS Key, 文件大小, 错误)
+func (s *OBSService) UploadImageFromURL(imageURL, fileKey, nodeID, format string, scale float64) (string, string, int64, error) {
+	if !s.enabled {
+		return "", "", 0, fmt.Errorf("OBS服务未启用")
+	}
+
+	// 下载图片
+	log.Printf("📥 [OBS] 开始下载图片: %s", imageURL)
+	imageData, contentType, err := s.downloadImage(imageURL)
+	if err != nil {
+		log.Printf("❌ [OBS] 下载图片失败: %v", err)
+		return "", "", 0, fmt.Errorf("下载图片失败: %w", err)
+	}
+
+	fileSize := int64(len(imageData))
+	log.Printf("✅ [OBS] 图片下载成功，大小: %d bytes", fileSize)
+
+	// 生成OBS存储路径
+	obsKey := s.generateOBSKey(fileKey, nodeID, format, scale)
+
+	// 上传到OBS
+	err = s.uploadToOBS(obsKey, imageData, contentType)
+	if err != nil {
+		log.Printf("❌ [OBS] 上传失败: %v", err)
+		return "", "", 0, fmt.Errorf("上传到OBS失败: %w", err)
+	}
+
+	// 生成访问URL
+	obsURL := s.generateOBSURL(obsKey)
+
+	log.Printf("✅ [OBS] 上传成功")
+	log.Printf("   - OBS Key: %s", obsKey)
+	log.Printf("   - OBS URL: %s", obsURL)
+	log.Printf("   - 文件大小: %d bytes", fileSize)
+
+	return obsURL, obsKey, fileSize, nil
+}
+
+// UploadImageFromBytes 从字节数组上传图片到OBS
+func (s *OBSService) UploadImageFromBytes(imageData []byte, fileKey, nodeID, format string, scale float64, contentType string) (string, string, int64, error) {
+	if !s.enabled {
+		return "", "", 0, fmt.Errorf("OBS服务未启用")
+	}
+
+	fileSize := int64(len(imageData))
+
+	// 生成OBS存储路径
+	obsKey := s.generateOBSKey(fileKey, nodeID, format, scale)
+
+	// 上传到OBS
+	err := s.uploadToOBS(obsKey, imageData, contentType)
+	if err != nil {
+		log.Printf("❌ [OBS] 上传失败: %v", err)
+		return "", "", 0, fmt.Errorf("上传到OBS失败: %w", err)
+	}
+
+	// 生成访问URL
+	obsURL := s.generateOBSURL(obsKey)
+
+	log.Printf("✅ [OBS] 上传成功: %s (%d bytes)", obsKey, fileSize)
+
+	return obsURL, obsKey, fileSize, nil
+}
+
+// downloadImage 从URL下载图片
+func (s *OBSService) downloadImage(imageURL string) ([]byte, string, error) {
+	client := &http.Client{
+		Timeout: s.uploadTimeout,
+	}
+
+	resp, err := client.Get(imageURL)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("HTTP状态码: %d", resp.StatusCode)
+	}
+
+	// 读取图片数据
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/png" // 默认值
+	}
+
+	return imageData, contentType, nil
+}
+
+// uploadToOBS 上传数据到OBS
+func (s *OBSService) uploadToOBS(obsKey string, data []byte, contentType string) error {
+	input := &obs.PutObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = obsKey
+	input.Body = bytes.NewReader(data)
+	input.ContentType = contentType
+
+	// 设置ACL为公开读（根据需求调整）
+	// input.ACL = obs.AclPublicRead
+
+	output, err := s.client.PutObject(input)
+	if err != nil {
+		return err
+	}
+
+	if output.StatusCode != 200 {
+		return fmt.Errorf("上传失败，状态码: %d", output.StatusCode)
+	}
+
+	return nil
+}
+
+// ===================== 下载功能 =====================
+
+// DownloadImage 从OBS下载图片
+func (s *OBSService) DownloadImage(obsKey string) ([]byte, string, error) {
+	if !s.enabled {
+		return nil, "", fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.GetObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = obsKey
+
+	output, err := s.client.GetObject(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 下载失败: %v", err)
+		return nil, "", fmt.Errorf("从OBS下载失败: %w", err)
+	}
+	defer output.Body.Close()
+
+	if output.StatusCode != 200 {
+		return nil, "", fmt.Errorf("下载失败，状态码: %d", output.StatusCode)
+	}
+
+	// 读取数据
+	data, err := io.ReadAll(output.Body)
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := output.ContentType
+	if contentType == "" {
+		contentType = "image/png"
+	}
+
+	log.Printf("✅ [OBS] 下载成功: %s (%d bytes)", obsKey, len(data))
+
+	return data, contentType, nil
+}
+
+// ===================== URL生成 =====================
+
+// GenerateSignedURL 生成带签名的临时访问URL（有效期1小时）
+func (s *OBSService) GenerateSignedURL(obsKey string, expiresInSeconds int) (string, error) {
+	if !s.enabled {
+		return "", fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.CreateSignedUrlInput{}
+	input.Method = obs.HttpMethodGet
+	input.Bucket = s.bucketName
+	input.Key = obsKey
+	input.Expires = expiresInSeconds // 秒
+
+	output, err := s.client.CreateSignedUrl(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 生成签名URL失败: %v", err)
+		return "", fmt.Errorf("生成签名URL失败: %w", err)
+	}
+
+	log.Printf("🔗 [OBS] 生成签名URL: %s (有效期: %d 秒)", output.SignedUrl, expiresInSeconds)
+
+	return output.SignedUrl, nil
+}
+
+// generateOBSURL 生成OBS公开访问URL
+func (s *OBSService) generateOBSURL(obsKey string) string {
+	// 格式: https://{bucket}.{endpoint}/{key}
+	// 或者: https://{endpoint}/{bucket}/{key}
+
+	// 使用endpoint直接访问（推荐）
+	return fmt.Sprintf("https://%s/%s/%s", s.endpoint, s.bucketName, obsKey)
+}
+
+// GenerateOBSURL 根据 OBS Key 生成访问 URL（公开方法）
+func (s *OBSService) GenerateOBSURL(obsKey string) string {
+	if !s.enabled || obsKey == "" {
+		return ""
+	}
+	return s.generateOBSURL(obsKey)
+}
+
+// ===================== 辅助方法 =====================
+
+// generateOBSKey 生成OBS存储Key
+// 格式: {prefix}/{file_key}/{format}_{scale}x/{node_id}.{ext}
+// 例如: figma_images/abc123/png_2.0x/1-123.png
+func (s *OBSService) generateOBSKey(fileKey, nodeID, format string, scale float64) string {
+	// 处理节点ID中的特殊字符（冒号替换为连字符）
+	safeNodeID := strings.ReplaceAll(nodeID, ":", "-")
+
+	// 确定文件扩展名
+	ext := format
+	if format == "jpg" {
+		ext = "jpeg"
+	}
+
+	// 构建路径
+	// {prefix}/{file_key}/{format}_{scale}x/{node_id}.{ext}
+	key := filepath.Join(
+		s.pathPrefix,
+		fileKey,
+		fmt.Sprintf("%s_%.1fx", format, scale),
+		fmt.Sprintf("%s.%s", safeNodeID, ext),
+	)
+
+	// Windows路径分隔符转换为Unix风格
+	key = filepath.ToSlash(key)
+
+	return key
+}
+
+// DeleteObject 删除OBS对象
+func (s *OBSService) DeleteObject(obsKey string) error {
+	if !s.enabled {
+		return fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.DeleteObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = obsKey
+
+	output, err := s.client.DeleteObject(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 删除失败: %v", err)
+		return fmt.Errorf("删除OBS对象失败: %w", err)
+	}
+
+	if output.StatusCode != 204 && output.StatusCode != 200 {
+		return fmt.Errorf("删除失败，状态码: %d", output.StatusCode)
+	}
+
+	log.Printf("🗑️ [OBS] 删除成功: %s", obsKey)
+
+	return nil
+}
+
+// CheckObjectExists 检查OBS对象是否存在
+func (s *OBSService) CheckObjectExists(obsKey string) (bool, error) {
+	if !s.enabled {
+		return false, fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.GetObjectMetadataInput{}
+	input.Bucket = s.bucketName
+	input.Key = obsKey
+
+	output, err := s.client.GetObjectMetadata(input)
+	if err != nil {
+		// 如果是404错误，表示对象不存在
+		if obsError, ok := err.(obs.ObsError); ok {
+			if obsError.StatusCode == 404 {
+				return false, nil
+			}
+		}
+		return false, err
+	}
+
+	return output.StatusCode == 200, nil
+}
+
+// GetObjectSize 获取OBS对象大小
+func (s *OBSService) GetObjectSize(obsKey string) (int64, error) {
+	if !s.enabled {
+		return 0, fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.GetObjectMetadataInput{}
+	input.Bucket = s.bucketName
+	input.Key = obsKey
+
+	output, err := s.client.GetObjectMetadata(input)
+	if err != nil {
+		return 0, err
+	}
+
+	return output.ContentLength, nil
+}
+
+// ===================== 批量操作 =====================
+
+// BatchUploadImages 批量上传图片
+type BatchUploadResult struct {
+	NodeID   string
+	OBSURL   string
+	OBSKey   string
+	FileSize int64
+	Error    error
+}
+
+// BatchUploadImagesFromURLs 批量从URL上传图片到OBS
+func (s *OBSService) BatchUploadImagesFromURLs(imageMap map[string]string, fileKey, format string, scale float64) []BatchUploadResult {
+	if !s.enabled {
+		results := make([]BatchUploadResult, 0, len(imageMap))
+		for nodeID := range imageMap {
+			results = append(results, BatchUploadResult{
+				NodeID: nodeID,
+				Error:  fmt.Errorf("OBS服务未启用"),
+			})
+		}
+		return results
+	}
+
+	results := make([]BatchUploadResult, 0, len(imageMap))
+
+	log.Printf("📦 [OBS] 开始批量上传，共 %d 个图片", len(imageMap))
+
+	// 使用并发控制
+	semaphore := make(chan struct{}, s.uploadConcurrency)
+	resultChan := make(chan BatchUploadResult, len(imageMap))
+
+	for nodeID, imageURL := range imageMap {
+		go func(nid, url string) {
+			semaphore <- struct{}{}        // 获取信号量
+			defer func() { <-semaphore }() // 释放信号量
+
+			obsURL, obsKey, fileSize, err := s.UploadImageFromURL(url, fileKey, nid, format, scale)
+			resultChan <- BatchUploadResult{
+				NodeID:   nid,
+				OBSURL:   obsURL,
+				OBSKey:   obsKey,
+				FileSize: fileSize,
+				Error:    err,
+			}
+		}(nodeID, imageURL)
+	}
+
+	// 收集结果
+	for i := 0; i < len(imageMap); i++ {
+		result := <-resultChan
+		results = append(results, result)
+	}
+
+	// 统计
+	successCount := 0
+	for _, result := range results {
+		if result.Error == nil {
+			successCount++
+		}
+	}
+
+	log.Printf("✅ [OBS] 批量上传完成: 成功 %d/%d", successCount, len(imageMap))
+
+	return results
+}

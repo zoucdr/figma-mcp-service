@@ -1,21 +1,53 @@
 # Figma Deliver 配置文件
-
-# 应用配置
 app:
-  port: 8080
-  gin_mode: debug
-  session_secret: figma-deliver-secret-key-change-this
+  port: "8080"
+  gin_mode: "debug"
+  session_secret: "figma-deliver-secret-dev"
 
-# 数据库配置
 database:
-  host: node1.mysql.figma.deliver.hwhosts.com
-  port: 3306
-  user: mysqlsiud
-  password: mysql!@#456
-  name: figma_deliver
+  host: "10.84.97.48"
+  port: "3306"
+  user: "mysqlsiud"
+  password: "mysql!@#456"
+  name: "figma_deliver"
 
-# 文件存储配置
 storage:
-  export_dir: ./exports
-  temp_dir: ./temp
+  export_dir: "./exports"
+  temp_dir: "./temp"
 
+# Figma API 配置
+figma_api:
+  # Get File API 冷却时间（秒）
+  file_api_cooldown: 30
+  
+  # Get Images API 冷却时间（秒）
+  images_api_cooldown: 30
+  
+  # 批量请求最大节点数
+  max_nodes_per_request: 1000
+
+# 缓存配置
+cache:
+  # OBS 文件过期时间（天）
+  obs_expires_days: 30
+
+# 华为云 OBS 配置
+huawei_cloud:
+  obs:
+    enabled: true
+    endpoint: "obs.cn-north-4.myhuaweicloud.com"
+    access_key_id: "MV1O7AVIYTLLJDS1JIV0"
+    secret_access_key: "60hK4ItEeKr2DEO9lmWrGLtRErn39TXesvfhrmjI"
+    bucket_name: "figma-deliver-cache"
+    region: "cn-north-4"
+    path_prefix: "figma_images/"
+    upload_concurrency: 5
+    upload_timeout_seconds: 300
+
+# 任务调度配置
+scheduler:
+  # 渲染队列处理间隔（秒）
+  render_queue_interval: 5
+  
+  # 队列状态清理间隔（小时）
+  queue_cleanup_interval: 1

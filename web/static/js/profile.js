@@ -5,6 +5,8 @@ new Vue({
         return {
             loading: false,
             mcpTokenLoading: false,
+            passwordLoading: false,
+            showPasswordForm: false,
             unityDialogVisible: false,
             androidDialogVisible: false,
             iosDialogVisible: false,
@@ -13,12 +15,24 @@ new Vue({
             sharing: false,
             sharingCode: false,
             mcpToken: window.profileData?.mcpToken || '',
+            cooldownResetLoading: false,
+            cooldownInfo: {
+                lastFileRequestTime: 0,
+                lastImageRequestTime: 0,
+                fileCooldownRemaining: 0,
+                imageCooldownRemaining: 0
+            },
             profileForm: {
                 username: window.profileData?.username || '',
                 figmaToken: window.profileData?.figmaToken || '',
                 compTypes: window.profileData?.compTypes || '',
                 prompts: window.profileData?.prompts || '',
                 codePrompts: window.profileData?.codePrompts || ''
+            },
+            passwordForm: {
+                oldPassword: '',
+                newPassword: '',
+                confirmPassword: ''
             },
             shareForm: {
                 title: '',
@@ -57,13 +71,68 @@ new Vue({
                     // { required: true, message: '请输入Figma Private Token', trigger: 'blur' }
                 ]
             },
+            passwordRules: {
+                oldPassword: [
+                    { required: true, message: '请输入旧密码', trigger: 'blur' }
+                ],
+                newPassword: [
+                    { required: true, message: '请输入新密码', trigger: 'blur' },
+                    { min: 6, message: '密码长度至少为6位', trigger: 'blur' }
+                ],
+                confirmPassword: [
+                    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+                    { 
+                        validator: (rule, value, callback) => {
+                            if (value === '') {
+                                callback(new Error('请再次输入新密码'));
+                            } else if (value !== this.passwordForm.newPassword) {
+                                callback(new Error('两次输入的密码不一致'));
+                            } else {
+                                callback();
+                            }
+                        }, 
+                        trigger: 'blur' 
+                    }
+                ]
+            },
             unityComponents: "Button, Toggle, Slider, Dropdown, InputField, ScrollView, Scrollbar, ToggleGroup, Mask, GridLayoutGroup, VerticalLayoutGroup, HorizontalLayoutGroup, ContentSizeFitter",
             androidComponents: "Button, CheckBox, RadioButton, Switch, ToggleButton, SeekBar, ProgressBar, Spinner, ListView, GridView, RecyclerView, ScrollView, LinearLayout, RelativeLayout, FrameLayout, ConstraintLayout, ViewPager, Toolbar, CardView, RatingBar, SearchView",
             iosComponents: "UIButton, UISwitch, UISlider, UIProgressView, UISegmentedControl, UITableView, UICollectionView, UIScrollView, UIStackView, UINavigationBar, UITabBar, UIPageControl, UIPickerView, UIDatePicker, UISearchBar, UIStepper",
+            // 代理配置
+            proxyForm: {
+                proxyEnabled: window.profileData?.proxyEnabled || false,
+                proxyUrl: window.profileData?.proxyUrl || ''
+            },
+            proxyTestLoading: false,
+            proxyRules: {
+                proxyUrl: [
+                    { 
+                        validator: (rule, value, callback) => {
+                            if (!this.proxyForm.proxyEnabled) {
+                                callback();
+                                return;
+                            }
+                            if (!value) {
+                                callback(new Error('请输入代理地址'));
+                                return;
+                            }
+                            // 验证代理URL格式
+                            const proxyPattern = /^(http|https|socks5):\/\/.+/i;
+                            if (!proxyPattern.test(value)) {
+                                callback(new Error('代理地址格式不正确，例如: http://127.0.0.1:7890'));
+                                return;
+                            }
+                            callback();
+                        },
+                        trigger: 'blur'
+                    }
+                ]
+            },
             // 模块收起/展开状态
             sectionStates: {
                 basicInfo: true,
                 mcpConnection: true,
+                proxyConfig: true,
                 controlConfig: true,
                 aiPrompt: true,
                 codePrompt: true
@@ -197,6 +266,9 @@ new Vue({
                     formData.append('comp_types', this.profileForm.compTypes);
                     formData.append('prompts', this.profileForm.prompts);
                     formData.append('code_prompts', this.profileForm.codePrompts);
+                    // 添加代理配置
+                    formData.append('proxy_enabled', this.proxyForm.proxyEnabled);
+                    formData.append('proxy_url', this.proxyForm.proxyUrl);
                     // CSRF令牌已由main.js中的axios拦截器自动添加
                     // 无需在此手动添加
                     
@@ -212,6 +284,38 @@ new Vue({
                             this.loading = false;
                         });
                 }
+            });
+        },
+        
+        // 代理开关切换
+        onProxyEnableChange(enabled) {
+            if (!enabled) {
+                // 关闭代理时，清空代理URL
+                // this.proxyForm.proxyUrl = '';
+            }
+        },
+        
+        // 测试代理连接
+        testProxy() {
+            // 验证代理表单
+            this.$refs.proxyForm.validate(valid => {
+                if (!valid) {
+                    return;
+                }
+                
+                this.proxyTestLoading = true;
+                axios.post('/api/test-proxy', {
+                    proxy_url: this.proxyForm.proxyUrl
+                })
+                    .then(response => {
+                        this.$message.success('代理连接测试成功！');
+                    })
+                    .catch(error => {
+                        this.$message.error(error.response?.data?.error || '代理连接测试失败');
+                    })
+                    .finally(() => {
+                        this.proxyTestLoading = false;
+                    });
             });
         },
         
@@ -422,6 +526,158 @@ new Vue({
                     this.sharingCode = false;
                 }
             });
+        },
+        
+        // 切换密码表单显示/隐藏
+        togglePasswordForm() {
+            this.showPasswordForm = !this.showPasswordForm;
+            if (!this.showPasswordForm) {
+                // 隐藏时重置表单
+                this.resetPasswordForm();
+            }
+        },
+        
+        // 修改密码
+        changePassword() {
+            this.$refs.passwordForm.validate(async (valid) => {
+                if (!valid) {
+                    return false;
+                }
+                
+                this.passwordLoading = true;
+                try {
+                    const formData = new FormData();
+                    formData.append('old_password', this.passwordForm.oldPassword);
+                    formData.append('new_password', this.passwordForm.newPassword);
+                    
+                    const response = await axios.post('/profile/change-password', formData);
+                    
+                    if (response.data.success) {
+                        this.$message.success('密码修改成功');
+                        this.showPasswordForm = false;
+                        this.resetPasswordForm();
+                    }
+                } catch (error) {
+                    console.error('修改密码失败:', error);
+                    this.$message.error(error.response?.data?.error || '修改密码失败');
+                } finally {
+                    this.passwordLoading = false;
+                }
+            });
+        },
+        
+        // 重置密码表单
+        resetPasswordForm() {
+            this.passwordForm = {
+                oldPassword: '',
+                newPassword: '',
+                confirmPassword: ''
+            };
+            if (this.$refs.passwordForm) {
+                this.$refs.passwordForm.resetFields();
+            }
+        },
+        
+        // 加载冷却信息
+        async loadCooldownInfo() {
+            try {
+                const response = await axios.get('/profile/api/cooldown-info');
+                if (response.data.success) {
+                    this.cooldownInfo = {
+                        lastFileRequestTime: response.data.last_file_request_time || 0,
+                        lastImageRequestTime: response.data.last_image_request_time || 0,
+                        fileCooldownRemaining: response.data.file_cooldown_remaining || 0,
+                        imageCooldownRemaining: response.data.image_cooldown_remaining || 0
+                    };
+                }
+            } catch (error) {
+                console.error('加载冷却信息失败:', error);
+            }
+        },
+        
+        // 重置冷却时间
+        async resetCooldown() {
+            try {
+                await this.$confirm('确定要重置API冷却时间吗？', '确认重置', {
+                    confirmButtonText: '确定',
+                    cancelButtonText: '取消',
+                    type: 'warning'
+                });
+                
+                this.cooldownResetLoading = true;
+                const response = await axios.post('/profile/api/reset-cooldown');
+                
+                if (response.data.success) {
+                    this.$message.success('冷却时间已重置');
+                    // 重新加载冷却信息
+                    await this.loadCooldownInfo();
+                }
+            } catch (error) {
+                if (error !== 'cancel') {
+                    console.error('重置冷却失败:', error);
+                    this.$message.error(error.response?.data?.error || '重置冷却失败');
+                }
+            } finally {
+                this.cooldownResetLoading = false;
+            }
+        },
+        
+        // 格式化冷却时间
+        formatCooldownTime(timestamp) {
+            if (!timestamp || timestamp === 0) {
+                return '从未请求';
+            }
+            const date = new Date(timestamp * 1000);
+            const now = new Date();
+            const diff = now - date;
+            
+            // 如果是未来时间
+            if (diff < 0) {
+                return `将于 ${this.formatDateTime(date)} 解除`;
+            }
+            
+            // 如果是1小时内
+            if (diff < 3600000) {
+                const minutes = Math.floor(diff / 60000);
+                return `${minutes}分钟前`;
+            }
+            
+            // 如果是今天
+            if (date.toDateString() === now.toDateString()) {
+                return `今天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+            }
+            
+            // 其他情况显示完整时间
+            return this.formatDateTime(date);
+        },
+        
+        // 格式化日期时间
+        formatDateTime(date) {
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        },
+        
+        // 格式化持续时间
+        formatDuration(seconds) {
+            if (seconds <= 0) return '0秒';
+            
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            const parts = [];
+            if (days > 0) parts.push(`${days}天`);
+            if (hours > 0) parts.push(`${hours}小时`);
+            if (minutes > 0) parts.push(`${minutes}分钟`);
+            if (secs > 0 || parts.length === 0) parts.push(`${secs}秒`);
+            
+            return parts.join(' ');
         }
     },
     mounted() {
@@ -441,5 +697,13 @@ new Vue({
             this.updateCardStates();
             this.updateContainerGaps();
         });
+        
+        // 加载冷却信息
+        this.loadCooldownInfo();
+        
+        // 每30秒自动刷新冷却信息
+        setInterval(() => {
+            this.loadCooldownInfo();
+        }, 30000);
     }
 });

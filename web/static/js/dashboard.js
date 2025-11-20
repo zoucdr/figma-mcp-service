@@ -35,6 +35,7 @@ const ProjectEditorApp = {
             currentFilteredImageIndex: 0, // 当前显示的过滤图片索引
             isFilteredPreviewExpanded: false, // 过滤预览是否展开
             isCurrentPreviewExpanded: true, // 当前预览是否展开（默认展开）
+            isRenderProgressExpanded: true, // 渲染进度卡片是否展开（默认展开）
             isLoadingFilteredImages: false, // 是否正在加载批量过滤图片
             rootNodeBounds: null, // 根节点边界
             refNodeRootBounds: null, // 依赖节点根节点边界
@@ -68,7 +69,43 @@ const ProjectEditorApp = {
             exportJobId: null,
             defaultImageFormat: 'png', // 默认图片格式
             defaultImageScale: 1.0, // 默认图片缩放比例
+            isRendering: false, // 是否正在渲染
             exportingNodeId: null, // 正在导出的节点ID
+            // 渲染预览对话框
+            renderPreviewDialogVisible: false,
+            renderPreviewForm: {
+                format: 'png',
+                scale: 2.0,
+                includeRefNodes: true
+            },
+            renderPreviewInfo: {
+                hasActiveRender: false,
+                status: '',
+                statusTitle: '',
+                statusType: 'info',
+                statusMessage: '',
+                progress: 0,
+                processedNodes: 0,
+                totalNodes: 0,
+                cooldownRemaining: 0,
+                nodeCount: 0,
+                mainNodeCount: 0,
+                refNodeCount: 0
+            },
+            // 缩略图加载缓存（防止重复加载相同的图片）
+            loadedMinimapImages: new Set(), // 已加载的缩略图URL集合
+            // 项目渲染进度
+            projectRenderProgress: {
+                hasRender: false,
+                renderId: null,
+                status: 'idle',
+                progress: 0,
+                processedNodes: 0,
+                failedNodes: 0,
+                totalNodes: 0,
+                cooldownRemaining: 0, // 冷却剩余时间（秒）
+                message: ''
+            },
             jsonPreviewDialogVisible: false, // JSON预览弹窗是否可见
             renameDialogVisible: false, // 重命名对话框是否可见
             renameProcessing: false, // 重命名处理中标志，防止重复调用
@@ -254,6 +291,59 @@ const ProjectEditorApp = {
             const level = this.downloadLevel || 1;
             
             return `${baseUrl}/api/${mcpToken}/optimized_nodes?file_key=${fileKey}&root_node_id=${rootNodeId}&level=${level}`;
+        },
+        
+        // 获取当前节点的缩略图URL（计算属性，自动缓存）
+        currentMinimapImageUrl() {
+            const scale = 1.0;
+            
+            // 如果没有当前节点，返回空
+            if (!this.currentNode) {
+                return '';
+            }
+            
+            // 如果是依赖节点，从 refPreviewImages 中查找
+            if (this.currentNode.isRefNodeSelected) {
+                const currentRefImage = this.refPreviewImages.find(img => img.nodeId === this.currentNode.id);
+                if (currentRefImage && currentRefImage.src) {
+                    return currentRefImage.src;
+                }
+                // 如果没有找到当前依赖节点的预览图，构建图片URL
+                return `/figma/image/${this.project.id}/${this.currentNode.id}?scale=${scale}&format=${this.defaultImageFormat}`;
+            }
+            
+            // 主节点处理逻辑
+            // 如果没有预览图，返回空
+            if (this.previewImages.length === 0) {
+                return '';
+            }
+            
+            // 查找当前节点对应的图片
+            const currentImage = this.previewImages.find(img => img.nodeId === this.currentNode.id);
+            if (currentImage && currentImage.src) {
+                return currentImage.src;
+            }
+            
+            // 如果没有找到，构建图片URL
+            return `/figma/image/${this.project.id}/${this.currentNode.id}?scale=${scale}&format=${this.defaultImageFormat}`;
+        },
+        
+        // 获取过滤后的节点图片URL（计算属性，自动缓存）
+        filteredMinimapImageUrl() {
+            const scale = 1.0;
+            
+            // 只有在过滤预览展开时才获取
+            if (!this.isFilteredPreviewExpanded) {
+                return '';
+            }
+            
+            if (!this.currentNode || this.previewImages.length === 0) {
+                return '';
+            }
+            
+            // 构建过滤后的图片URL
+            const timestamp = new Date().getTime();
+            return `/figma/image/${this.project.id}/${this.currentNode.id}?scale=${scale}&excludeModified=true&format=${this.defaultImageFormat}&t=${timestamp}`;
         }
     },
     created() {
@@ -294,6 +384,12 @@ const ProjectEditorApp = {
         
         // 检查是否有活跃的导出任务
         this.checkActiveExportJob();
+        
+        // 开始监控项目渲染进度
+        if (this.project && this.project.id) {
+            console.log('🚀 [mounted] 页面加载完成，准备检查渲染任务 (projectId=%s)', this.project.id);
+            this.startWatchingProjectRender();
+        }
     },
     
     beforeDestroy() {
@@ -311,8 +407,82 @@ const ProjectEditorApp = {
         // 移除键盘事件监听器
         document.removeEventListener('keydown', this.handleKeyDown);
         document.removeEventListener('keyup', this.handleKeyUp);
+        
+        // 停止监控项目渲染进度
+        if (this.project && this.project.id) {
+            this.stopWatchingProjectRender();
+        }
     },
     watch: {
+        // 监听当前缩略图URL变化，处理图片加载
+        currentMinimapImageUrl(newUrl, oldUrl) {
+            if (!newUrl || newUrl === oldUrl) return;
+            
+            // 检查是否已经加载过这张图片
+            if (this.loadedMinimapImages.has(newUrl)) {
+                return;
+            }
+            
+            // 标记为已加载
+            this.loadedMinimapImages.add(newUrl);
+            console.log('缩略图加载完成:', newUrl);
+            
+            // 处理DOM操作和图片预加载
+            this.$nextTick(() => {
+                const minimapContainer = document.querySelector('.minimap-container:not(.filtered-minimap)');
+                if (!minimapContainer) return;
+                
+                const minimapImage = minimapContainer.querySelector('.minimap-image');
+                if (!minimapImage) return;
+                
+                // 显示容器
+                minimapContainer.style.display = 'block';
+                minimapImage.style.display = 'none';
+                
+                // 预加载图片
+                const preloadImg = new Image();
+                preloadImg.onload = () => {
+                    if (minimapImage) {
+                        minimapImage.src = newUrl;
+                        minimapImage.style.display = 'block';
+                        minimapImage.style.imageRendering = 'crisp-edges';
+                    }
+                };
+                preloadImg.src = newUrl;
+            });
+        },
+        
+        // 监听过滤缩略图URL变化
+        filteredMinimapImageUrl(newUrl, oldUrl) {
+            if (!newUrl || newUrl === oldUrl) return;
+            
+            console.log('过滤缩略图URL:', newUrl);
+            
+            // 处理DOM操作和图片预加载
+            this.$nextTick(() => {
+                const filteredMinimapContainer = document.querySelector('.minimap-container.filtered-minimap');
+                if (!filteredMinimapContainer) return;
+                
+                const filteredMinimapImage = filteredMinimapContainer.querySelector('.minimap-image');
+                if (!filteredMinimapImage) return;
+                
+                // 显示容器
+                filteredMinimapContainer.style.display = 'block';
+                filteredMinimapImage.style.display = 'none';
+                
+                // 预加载图片
+                const preloadImg = new Image();
+                preloadImg.onload = () => {
+                    if (filteredMinimapImage) {
+                        filteredMinimapImage.src = newUrl;
+                        filteredMinimapImage.style.display = 'block';
+                        filteredMinimapImage.style.imageRendering = 'crisp-edges';
+                    }
+                };
+                preloadImg.src = newUrl;
+            });
+        },
+        
         // 监听图片格式变化，自动保存到数据库
         defaultImageFormat(newVal) {
             if (!this.isInitializingSettings && this.project && this.project.id) {
@@ -1199,40 +1369,286 @@ const ProjectEditorApp = {
             document.body.removeChild(textArea);
         },
         
-        // 清除项目图片缓存
-        clearProjectImageCache() {
-            if (!this.project || !this.project.id) return;
+        // 渲染当前项目的节点
+        async renderCurrentProject() {
+            if (!this.project || !this.project.id) {
+                this.$message.warning('请先选择项目');
+                return;
+            }
             
-            this.$confirm('确定要清除所有图片缓存吗？', '提示', {
-                confirmButtonText: '确定',
-                cancelButtonText: '取消',
-                type: 'warning'
-            }).then(() => {
-                this.loading = true;
-                axios.post(`/figma/project/${this.project.id}/clear-cache`)
-                    .then(() => {
-                        this.$message.success('缓存清除成功');
-                        // 清空预览图片列表
-                        this.previewImages = [];
-                        // 如果有当前节点，重新加载它
-                        if (this.currentNode) {
-                            // 强制刷新图片，添加时间戳
-                            const timestamp = new Date().getTime();
-                            this.addPreviewImage({
-                                ...this.currentNode,
-                                _timestamp: timestamp // 添加时间戳确保不使用缓存
-                            });
+            // 显示渲染预览对话框
+            await this.showRenderPreview();
+        },
+        
+        // 显示渲染预览对话框
+        async showRenderPreview() {
+            try {
+                // 1. 初始化表单数据
+                this.renderPreviewForm = {
+                    format: this.defaultImageFormat,
+                    scale: this.defaultImageScale,
+                    includeRefNodes: true
+                };
+                
+                // 2. 从 render_nodes 接口获取过滤后的节点数量信息
+                const originalMainNodeCount = this.nodes.length; // 原始主节点数
+                const originalRefNodeCount = this.refNodes.length; // 原始依赖节点数
+                const originalTotalCount = originalMainNodeCount + originalRefNodeCount;
+                
+                let actualNodeCount = 0; // 实际可渲染的节点数（过滤后）
+                let filteredNodeIDs = []; // 过滤后的节点ID列表
+                
+                try {
+                    const renderNodesResponse = await axios.get(`/figma/project/${this.project.id}/render_nodes`);
+                    if (renderNodesResponse.data.code === 0) {
+                        const data = renderNodesResponse.data.data;
+                        // 获取过滤后的节点数量和ID列表
+                        actualNodeCount = data.count || 0;
+                        filteredNodeIDs = data.node_ids || [];
+                        
+                        console.log(`✅ [渲染预览] 获取到过滤后的节点数量: ${actualNodeCount} (原始: ${originalTotalCount})`);
+                        
+                        // 计算过滤后的主节点和依赖节点数量
+                        // 通过对比过滤后的节点列表和原始节点列表
+                        const originalMainNodeIDs = this.nodes.map(n => n.id);
+                        const originalRefNodeIDs = this.refNodes.map(n => n);
+                        
+                        const filteredMainCount = filteredNodeIDs.filter(id => originalMainNodeIDs.includes(id)).length;
+                        const filteredRefCount = filteredNodeIDs.filter(id => originalRefNodeIDs.includes(id)).length;
+                        
+                        console.log(`📊 [渲染预览] 主节点: ${filteredMainCount}/${originalMainNodeCount}, 依赖节点: ${filteredRefCount}/${originalRefNodeCount}`);
+                        
+                        // 如果计数不匹配，使用总数
+                        if (filteredMainCount + filteredRefCount !== actualNodeCount) {
+                            console.warn(`⚠️ [渲染预览] 节点计数不匹配: ${filteredMainCount} + ${filteredRefCount} ≠ ${actualNodeCount}`);
                         }
-                        this.loading = false;
-                    })
-                    .catch(error => {
-                        console.error('清除缓存失败:', error);
-                        this.$message.error('清除缓存失败');
-                        this.loading = false;
+                    }
+                } catch (error) {
+                    console.warn('⚠️ [渲染预览] 获取 render_nodes 失败，使用默认节点数量:', error);
+                    // 失败时使用前端已加载的节点数量
+                    actualNodeCount = originalTotalCount;
+                }
+                
+                // 3. 查询当前渲染状态
+                let hasActiveRender = false;
+                let renderStatus = {};
+                
+                if (this.project.render_id) {
+                    try {
+                        const progressResponse = await axios.get(`/figma/project/${this.project.id}/render/progress`);
+                        if (progressResponse.data.code === 0) {
+                            const data = progressResponse.data.data;
+                            if (data.has_render && (data.status === 'waiting' || data.status === 'processing')) {
+                                hasActiveRender = true;
+                                renderStatus = {
+                                    status: data.status,
+                                    progress: data.progress || 0,
+                                    processedNodes: data.processed_nodes || 0,
+                                    totalNodes: data.total_nodes || 0,
+                                    cooldownRemaining: data.cooldown_remaining || 0,
+                                    message: data.error_message || ''
+                                };
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ [渲染预览] 查询渲染状态失败:', error);
+                    }
+                }
+                
+                // 4. 设置预览信息
+                this.renderPreviewInfo = {
+                    hasActiveRender: hasActiveRender,
+                    status: renderStatus.status || '',
+                    statusTitle: hasActiveRender ? this.getRenderStatusTitle(renderStatus.status) : '',
+                    statusType: hasActiveRender ? this.getRenderStatusType(renderStatus.status) : 'info',
+                    statusMessage: hasActiveRender ? this.getRenderStatusMessage(renderStatus) : '',
+                    progress: renderStatus.progress || 0,
+                    processedNodes: renderStatus.processedNodes || 0,
+                    totalNodes: renderStatus.totalNodes || 0,
+                    cooldownRemaining: renderStatus.cooldownRemaining || 0,
+                    nodeCount: originalTotalCount, // 原始总节点数
+                    mainNodeCount: originalMainNodeCount, // 原始主节点数
+                    refNodeCount: originalRefNodeCount, // 原始依赖节点数
+                    actualNodeCount: actualNodeCount, // 实际可渲染的节点数（过滤后）
+                    filteredNodeIDs: filteredNodeIDs // 过滤后的节点ID列表（用于调试）
+                };
+                
+                // 5. 显示对话框
+                this.renderPreviewDialogVisible = true;
+                
+            } catch (error) {
+                console.error('❌ [渲染预览] 显示渲染预览失败:', error);
+                this.$message.error('获取渲染信息失败');
+            }
+        },
+        
+        // 获取渲染状态标题
+        getRenderStatusTitle(status) {
+            switch (status) {
+                case 'waiting':
+                    return '⏰ 当前有正在等待的渲染任务';
+                case 'processing':
+                    return '🔄 当前有正在处理的渲染任务';
+                case 'failed':
+                    return '❌ 上次渲染失败';
+                default:
+                    return '渲染任务状态';
+            }
+        },
+        
+        // 获取渲染状态类型
+        getRenderStatusType(status) {
+            switch (status) {
+                case 'waiting':
+                    return 'warning';
+                case 'processing':
+                    return 'info';
+                case 'failed':
+                    return 'error';
+                default:
+                    return 'info';
+            }
+        },
+        
+        // 获取渲染状态消息
+        getRenderStatusMessage(renderStatus) {
+            const { status, cooldownRemaining, processedNodes, totalNodes } = renderStatus;
+            
+            switch (status) {
+                case 'waiting':
+                    if (cooldownRemaining > 0) {
+                        return `任务正在队列中等待，预计还需等待 ${this.formatWaitTime(cooldownRemaining)}`;
+                    }
+                    return '任务正在队列中等待处理';
+                case 'processing':
+                    return `正在渲染节点，已完成 ${processedNodes}/${totalNodes} 个节点`;
+                case 'failed':
+                    return renderStatus.message || '上次渲染失败，可以尝试重新渲染';
+                default:
+                    return '';
+            }
+        },
+        
+        // 确认渲染
+        async confirmRender() {
+            if (!this.project || !this.project.id) {
+                this.$message.warning('请先选择项目');
+                return;
+            }
+            
+            // 移除 isRendering 的阻止逻辑，允许重新渲染
+            // 后端会检查是否正在 processing，如果是则返回 409
+            
+            try {
+                this.isRendering = true;
+                
+                // 使用项目渲染接口（自动提取节点树和依赖节点）
+                console.log('📋 [Dashboard] 准备渲染项目:', {
+                    project_id: this.project.id,
+                    format: this.renderPreviewForm.format,
+                    scale: this.renderPreviewForm.scale,
+                    include_ref_nodes: this.renderPreviewForm.includeRefNodes
+                });
+                
+                const url = `/figma/project/${this.project.id}/render`;
+                const renderResponse = await axios.post(url, {
+                    format: this.renderPreviewForm.format,
+                    scale: this.renderPreviewForm.scale,
+                    include_ref_nodes: this.renderPreviewForm.includeRefNodes
+                });
+                
+                if (renderResponse.data.code === 0) {
+                    const data = renderResponse.data.data;
+                    const totalNodes = data.total_nodes;
+                    const queueIds = data.queue_ids || [];
+                    const estimatedSeconds = data.estimated_duration_seconds || 0;
+                    
+                    // 计算预计时间
+                    const minutes = Math.floor(estimatedSeconds / 60);
+                    const seconds = estimatedSeconds % 60;
+                    const timeText = minutes > 0 
+                        ? `约 ${minutes} 分 ${seconds} 秒` 
+                        : `约 ${seconds} 秒`;
+                    
+                    this.$message.success({
+                        message: `渲染队列已创建，共 ${totalNodes} 个节点\n格式: ${this.renderPreviewForm.format.toUpperCase()}, 缩放: ${this.renderPreviewForm.scale}x\n预计时间: ${timeText}`,
+                        duration: 5000
                     });
-            }).catch(() => {
-                // 用户取消操作
-            });
+                    
+                    console.log('✅ [Dashboard] 渲染队列已创建:', {
+                        queue_ids: queueIds,
+                        total_nodes: totalNodes,
+                        estimated_seconds: estimatedSeconds,
+                        format: this.renderPreviewForm.format,
+                        scale: this.renderPreviewForm.scale
+                    });
+                    
+                    // 关闭预览对话框
+                    this.renderPreviewDialogVisible = false;
+                    
+                    // ============ 延迟 1 秒后开始查询渲染进度 ============
+                    setTimeout(() => {
+                        console.log('📊 [Dashboard] 开始监控渲染进度...');
+                        this.startWatchingProjectRender(true); // 强制启动轮询
+                    }, 1000);
+                } else {
+                    throw new Error(renderResponse.data.message || '创建渲染队列失败');
+                }
+            } catch (error) {
+                console.error('渲染失败:', error);
+                
+                if (error.response) {
+                    const status = error.response.status;
+                    const errorData = error.response.data || {};
+                    const message = errorData.error || errorData.message || error.message;
+                    
+                    if (status === 404) {
+                        this.$alert(
+                            '未找到节点树数据，请先刷新节点树',
+                            '节点树未找到',
+                            {
+                                confirmButtonText: '确定',
+                                type: 'warning'
+                            }
+                        );
+                    } else if (status === 400) {
+                        this.$alert(
+                            message,
+                            'Figma API 错误',
+                            {
+                                confirmButtonText: '确定',
+                                type: 'error'
+                            }
+                        );
+                    } else if (status === 409) {
+                        // 409 Conflict - 旧渲染任务正在处理中
+                        this.$alert(
+                            message || '当前渲染任务正在处理中，请等待完成后再重新渲染',
+                            '无法重新渲染',
+                            {
+                                confirmButtonText: '确定',
+                                type: 'warning'
+                            }
+                        );
+                        console.log('⚠️ [Dashboard] 旧渲染任务正在处理中:', errorData.data);
+                    } else if (status === 429) {
+                        this.$alert(
+                            'Figma API 请求过于频繁，请稍后重试',
+                            '速率限制',
+                            {
+                                confirmButtonText: '确定',
+                                type: 'warning'
+                            }
+                        );
+                    } else {
+                        this.$message.error(message || '渲染失败');
+                    }
+                } else {
+                    this.$message.error(error.message || '渲染失败');
+                }
+            } finally {
+                this.isRendering = false;
+            }
         },
         
         // 下载优化后的JSON数据
@@ -1546,7 +1962,51 @@ const ProjectEditorApp = {
                 if (!response) {
                     throw new Error('获取节点树失败：响应为空');
                 }
-                this.nodes = response.data.nodes || [];
+                
+                // 根据响应状态显示不同的提示信息
+                const status = response.data.status;
+                const message = response.data.message;
+                
+                if (forceRefresh) {
+                    // 只在强制刷新时显示状态提示
+                    switch (status) {
+                        case 'success':
+                            // 刷新成功
+                            this.$message.success('✅ 节点树刷新成功');
+                            break;
+                        case 'queued':
+                            // 已加入队列，没有节点数据，直接返回
+                            const cooldownRemaining = response.data.cooldown_remaining || 0;
+                            this.$message.info({
+                                message: `⏰ 请求已加入队列，预计 ${cooldownRemaining} 秒后处理`,
+                                duration: 5000,
+                                showClose: true
+                            });
+                            // 队列状态不更新节点树，保持当前数据
+                            this.loading = false;
+                            return Promise.resolve(); // 提前返回，不继续后续流程
+                        case 'cached':
+                            // 使用缓存数据
+                            this.$message.warning({
+                                message: '⚠️ 无法连接 Figma API，已显示缓存数据（可能不是最新）',
+                                duration: 5000,
+                                showClose: true
+                            });
+                            break;
+                        case 'error':
+                            // 刷新失败
+                            const errorMsg = response.data.error || '未知错误';
+                            this.$message.error(`❌ 刷新失败: ${errorMsg}`);
+                            break;
+                        default:
+                            // 其他情况，显示原始消息或成功提示
+                            if (message) {
+                                this.$message.success(message);
+                            }
+                    }
+                }
+                
+                this.nodes = response?.data?.nodes || [];
                 
                 // 2. 获取项目的节点修改信息（如果失败，使用空对象）
                 return axios.get(`/figma/project/${this.project.id}/node-modifys`)
@@ -1561,7 +2021,7 @@ const ProjectEditorApp = {
                     });
             })
             .then(response => {
-                this.nodeModifys = response.data.modifys || {};
+                this.nodeModifys = response?.data?.modifys || {};
                 
                 // 3. 获取依赖节点列表（如果失败，使用空数组）
                 return axios.get(`/figma/project/${this.project.id}/ref-nodes`)
@@ -1576,7 +2036,7 @@ const ProjectEditorApp = {
                     });
             })
             .then(response => {
-                this.refNodes = response.data.data.ref_nodes || [];
+                this.refNodes = response?.data?.data?.ref_nodes || [];
                 
                 // 4. 获取依赖节点的详细信息
                 return this.loadRefNodeDetails();
@@ -2286,10 +2746,8 @@ const ProjectEditorApp = {
             
             // 更新过滤缩略图，仅在已展开状态下更新
             if (this.isFilteredPreviewExpanded) {
-                console.log('切换节点，过滤预览已展开，更新过滤缩略图');
+                // 过滤预览已展开，更新过滤缩略图
                 this.updateFilteredMinimap(1.0);
-            } else {
-                console.log('切换节点，过滤预览未展开，不更新过滤缩略图');
             }
         } else {
             // 如果是不同节点，按原逻辑处理
@@ -2326,10 +2784,8 @@ const ProjectEditorApp = {
                     // 更新过滤缩略图
                     // 仅在过滤预览展开时更新过滤缩略图
                     if (this.isFilteredPreviewExpanded) {
-                        console.log('加载完成，过滤预览已展开，更新过滤缩略图');
+                        // 过滤预览已展开，更新过滤缩略图
                         this.updateFilteredMinimap(1.0);
-                    } else {
-                        console.log('加载完成，过滤预览未展开，不更新过滤缩略图');
                     }
                 };
                 preloadImg.src = imageUrl;
@@ -2343,11 +2799,8 @@ const ProjectEditorApp = {
     
     // 更新过滤缩略图
     updateFilteredMinimap(scale = 1.0) {
-        console.log('开始更新过滤缩略图');
-        
         // 如果过滤预览未展开，不进行更新
         if (!this.isFilteredPreviewExpanded) {
-            console.log('过滤预览未展开，跳过更新过滤缩略图');
             return;
         }
         
@@ -2381,8 +2834,6 @@ const ProjectEditorApp = {
         // 创建一个新的Image对象来预加载过滤后的图片
         const preloadFilteredImg = new Image();
         preloadFilteredImg.onload = () => {
-            console.log('过滤缩略图加载完成:', filteredImageUrl);
-            
             // 确保图片已加载完成后再显示
             this.$nextTick(() => {
                 filteredMinimapImage.src = filteredImageUrl;
@@ -2390,8 +2841,6 @@ const ProjectEditorApp = {
                 
                 // 确保图片清晰显示
                 filteredMinimapImage.style.imageRendering = 'crisp-edges';
-                
-                console.log('过滤缩略图已显示');
             });
         };
         
@@ -2430,6 +2879,10 @@ const ProjectEditorApp = {
     },
     
     // 切换过滤预览展开/收起状态
+    toggleRenderProgress() {
+        this.isRenderProgressExpanded = !this.isRenderProgressExpanded;
+    },
+    
     toggleFilteredPreview() {
         console.log('手动切换过滤预览状态');
         this.isFilteredPreviewExpanded = !this.isFilteredPreviewExpanded;
@@ -2459,7 +2912,6 @@ const ProjectEditorApp = {
         
         // 仅在手动展开过滤预览或切换节点时（且已展开状态）才加载所有图片
         if (!this.isFilteredPreviewExpanded) {
-            console.log('过滤预览未展开，不加载批量图片');
             return;
         }
         
@@ -2723,8 +3175,10 @@ const ProjectEditorApp = {
         // 只处理左键释放
         if (event.button !== 0) return;
 
-         // 调用原来的点击处理函数
-        this.handlePreviewClick(event);
+        // 只有在没有进行拖拽操作时才调用点击处理函数
+        if (!this.isDragging) {
+            this.handlePreviewClick(event);
+        }
         
         // 结束拖拽状态
         this.isDragging = false;
@@ -4922,6 +5376,11 @@ const ProjectEditorApp = {
         console.log('节点被点击:', nodeId);
         // 查找节点路径并展开树，确保在树中定位到节点
         this.findNodePathAndExpand(nodeId);
+        
+        // 更新选中节点列表（单选模式）
+        this.selectedNodes = [nodeId];
+        this.lastSelectedNode = nodeId;
+        
         // 直接调用handleNodeSelect方法处理节点选择
         this.handleNodeSelect(nodeId);
     },
@@ -4981,10 +5440,20 @@ const ProjectEditorApp = {
             
             // 找出所有包含点击位置的节点
             const matchingNodes = [];
-            for (const image of this.previewImages) {
-                const node = this.nodes.find(n => n.id === image.nodeId);
+            
+            // 合并 previewImages 和未加载的 preloadedNodes
+            const allNodeIds = new Set();
+            this.previewImages.forEach(img => allNodeIds.add(img.nodeId));
+            this.preloadedNodes.forEach(node => {
+                if (!node.loaded) {
+                    allNodeIds.add(node.nodeId);
+                }
+            });
+            
+            for (const nodeId of allNodeIds) {
+                const node = this.nodes.find(n => n.id === nodeId);
                 if (!node || !node.absoluteRenderBounds) {
-                    console.log('跳过节点，无边界框:', image.nodeId);
+                    console.log('跳过节点，无边界框:', nodeId);
                     continue;
                 }
                 
@@ -5013,11 +5482,28 @@ const ProjectEditorApp = {
             
             // 如果找到匹配的节点
             if (matchingNodes.length > 0) {
-                // 按照Z轴顺序排序（在previewImages数组中的索引越大，Z轴越高）
+                // 按照Z轴顺序排序（索引越大，Z轴越高）
                 // 倒序排列，使得最高层的节点（索引越大）在数组前面
                 matchingNodes.sort((a, b) => {
-                    const indexA = this.previewImages.findIndex(img => img.nodeId === a.id);
-                    const indexB = this.previewImages.findIndex(img => img.nodeId === b.id);
+                    // 先在 previewImages 中查找
+                    let indexA = this.previewImages.findIndex(img => img.nodeId === a.id);
+                    let indexB = this.previewImages.findIndex(img => img.nodeId === b.id);
+                    
+                    // 如果在 previewImages 中没找到，在 preloadedNodes 中查找
+                    if (indexA === -1) {
+                        indexA = this.preloadedNodes.findIndex(node => node.nodeId === a.id);
+                        // preloadedNodes 的索引要调整到 previewImages 之前
+                        if (indexA !== -1) {
+                            indexA = indexA - 1000; // 给 preloadedNodes 一个较小的索引
+                        }
+                    }
+                    if (indexB === -1) {
+                        indexB = this.preloadedNodes.findIndex(node => node.nodeId === b.id);
+                        if (indexB !== -1) {
+                            indexB = indexB - 1000;
+                        }
+                    }
+                    
                     return indexB - indexA; // 倒序，使得Z轴最高的节点在数组前面
                 });
                 
@@ -5045,6 +5531,10 @@ const ProjectEditorApp = {
                     // 查找节点路径并展开树
                     this.findNodePathAndExpand(nextNodeId);
                     
+                    // 更新选中节点列表（单选模式）
+                    this.selectedNodes = [nextNodeId];
+                    this.lastSelectedNode = nextNodeId;
+                    
                     // 选择节点
                     this.handleNodeSelect(nextNodeId);
                 } else {
@@ -5065,6 +5555,10 @@ const ProjectEditorApp = {
                     
                     // 查找节点路径并展开树
                     this.findNodePathAndExpand(selectedNodeId);
+                    
+                    // 更新选中节点列表（单选模式）
+                    this.selectedNodes = [selectedNodeId];
+                    this.lastSelectedNode = selectedNodeId;
                     
                     // 选择节点
                     this.handleNodeSelect(selectedNodeId);
@@ -5821,36 +6315,43 @@ const ProjectEditorApp = {
             // 查找当前依赖节点对应的图片
             const currentRefImage = this.refPreviewImages.find(img => img.nodeId === this.currentNode.id);
             if (currentRefImage && currentRefImage.src) {
-                // 在下一个渲染周期，添加图片加载事件监听器
-                this.$nextTick(() => {
-                    const minimapContainer = document.querySelector('.minimap-container:not(.filtered-minimap)');
-                    const minimapImage = minimapContainer ? minimapContainer.querySelector('.minimap-image') : null;
-                    if (minimapImage) {
-                        // 先隐藏图片
-                        minimapImage.style.display = 'none';
-                        
-                        // 当图片加载完成后显示
-                        minimapImage.onload = function() {
-                            minimapImage.style.display = 'block';
+                // 检查是否已经加载过这张图片
+                if (!this.loadedMinimapImages.has(currentRefImage.src)) {
+                    // 标记为已加载，防止重复
+                    this.loadedMinimapImages.add(currentRefImage.src);
+                    
+                    console.log('[依赖节点] 缩略图加载完成:', currentRefImage.src);
+                    
+                    // 在下一个渲染周期，添加图片加载事件监听器
+                    this.$nextTick(() => {
+                        const minimapContainer = document.querySelector('.minimap-container:not(.filtered-minimap)');
+                        const minimapImage = minimapContainer ? minimapContainer.querySelector('.minimap-image') : null;
+                        if (minimapImage) {
+                            // 先隐藏图片
+                            minimapImage.style.display = 'none';
                             
-                            // 确保图片清晰显示，移除可能导致模糊的CSS效果
-                            minimapImage.style.imageRendering = 'crisp-edges'; // 为支持的浏览器添加清晰渲染
-                        };
-                        
-                        // 创建一个新的Image对象来预加载图片
-                        const preloadImg = new Image();
-                        preloadImg.onload = () => {
-                            console.log('[依赖节点] 缩略图加载完成:', currentRefImage.src);
-                            // 确保图片已加载完成后再显示
-                            if (minimapImage) {
-                                minimapImage.src = currentRefImage.src;
+                            // 当图片加载完成后显示
+                            minimapImage.onload = function() {
                                 minimapImage.style.display = 'block';
-                            }
-                        };
-                        // 开始加载图片
-                        preloadImg.src = currentRefImage.src;
-                    }
-                });
+                                
+                                // 确保图片清晰显示，移除可能导致模糊的CSS效果
+                                minimapImage.style.imageRendering = 'crisp-edges'; // 为支持的浏览器添加清晰渲染
+                            };
+                            
+                            // 创建一个新的Image对象来预加载图片
+                            const preloadImg = new Image();
+                            preloadImg.onload = () => {
+                                // 确保图片已加载完成后再显示
+                                if (minimapImage) {
+                                    minimapImage.src = currentRefImage.src;
+                                    minimapImage.style.display = 'block';
+                                }
+                            };
+                            // 开始加载图片
+                            preloadImg.src = currentRefImage.src;
+                        }
+                    });
+                }
                 
                 // 直接返回图片URL，不添加时间戳
                 return currentRefImage.src;
@@ -5888,36 +6389,43 @@ const ProjectEditorApp = {
         // 查找当前节点对应的图片
         const currentImage = this.previewImages.find(img => img.nodeId === this.currentNode.id);
         if (currentImage && currentImage.src) {
-            // 在下一个渲染周期，添加图片加载事件监听器
-            this.$nextTick(() => {
-                const minimapContainer = document.querySelector('.minimap-container:not(.filtered-minimap)');
-                const minimapImage = minimapContainer ? minimapContainer.querySelector('.minimap-image') : null;
-                if (minimapImage) {
-                    // 先隐藏图片
-                    minimapImage.style.display = 'none';
-                    
-                    // 当图片加载完成后显示
-                    minimapImage.onload = function() {
-                        minimapImage.style.display = 'block';
+            // 检查是否已经加载过这张图片
+            if (!this.loadedMinimapImages.has(currentImage.src)) {
+                // 标记为已加载，防止重复
+                this.loadedMinimapImages.add(currentImage.src);
+                
+                console.log('缩略图加载完成:', currentImage.src);
+                
+                // 在下一个渲染周期，添加图片加载事件监听器
+                this.$nextTick(() => {
+                    const minimapContainer = document.querySelector('.minimap-container:not(.filtered-minimap)');
+                    const minimapImage = minimapContainer ? minimapContainer.querySelector('.minimap-image') : null;
+                    if (minimapImage) {
+                        // 先隐藏图片
+                        minimapImage.style.display = 'none';
                         
-                        // 确保图片清晰显示，移除可能导致模糊的CSS效果
-                        minimapImage.style.imageRendering = 'crisp-edges'; // 为支持的浏览器添加清晰渲染
-                    };
-                    
-                    // 创建一个新的Image对象来预加载图片
-                    const preloadImg = new Image();
-                    preloadImg.onload = () => {
-                        console.log('缩略图加载完成:', currentImage.src);
-                        // 确保图片已加载完成后再显示
-                        if (minimapImage) {
-                            minimapImage.src = currentImage.src;
+                        // 当图片加载完成后显示
+                        minimapImage.onload = function() {
                             minimapImage.style.display = 'block';
-                        }
-                    };
-                    // 开始加载图片
-                    preloadImg.src = currentImage.src;
-                }
-            });
+                            
+                            // 确保图片清晰显示，移除可能导致模糊的CSS效果
+                            minimapImage.style.imageRendering = 'crisp-edges'; // 为支持的浏览器添加清晰渲染
+                        };
+                        
+                        // 创建一个新的Image对象来预加载图片
+                        const preloadImg = new Image();
+                        preloadImg.onload = () => {
+                            // 确保图片已加载完成后再显示
+                            if (minimapImage) {
+                                minimapImage.src = currentImage.src;
+                                minimapImage.style.display = 'block';
+                            }
+                        };
+                        // 开始加载图片
+                        preloadImg.src = currentImage.src;
+                    }
+                });
+            }
             
             // 直接返回图片URL，不添加时间戳
             return currentImage.src;
@@ -5940,7 +6448,6 @@ const ProjectEditorApp = {
         // 检查是否应该获取过滤图片
         // 只有在过滤预览展开时才获取，避免不必要的网络请求
         if (!this.isFilteredPreviewExpanded) {
-            console.log('过滤预览未展开，不获取过滤图片');
             return '';
         }
         
@@ -5962,7 +6469,6 @@ const ProjectEditorApp = {
         // 检查是否应该获取过滤图片
         // 只有在过滤预览展开时才获取，避免不必要的网络请求
         if (!this.isFilteredPreviewExpanded) {
-            console.log('过滤预览未展开，不获取批量过滤图片');
             return {};
         }
         
@@ -6994,6 +7500,191 @@ Generated on: ${new Date().toLocaleString()}
 
             // 开始检查
             setTimeout(checkStatus, 2000); // 2秒后开始检查
+        },
+        
+        // ========== 渲染进度监控 ==========
+        
+        /**
+         * 开始监控项目渲染进度
+         */
+        startWatchingProjectRender(forceStart = false) {
+            if (!this.project || !this.project.id) {
+                return;
+            }
+            
+            if (typeof FigmaRenderManager === 'undefined') {
+                console.warn('FigmaRenderManager 未定义');
+                return;
+            }
+            
+            // 如果不是强制启动，先检查是否有活跃的渲染任务
+            if (!forceStart) {
+                console.log('🔍 [Dashboard] 检查是否有活跃的渲染任务...');
+                FigmaRenderManager.getProjectRenderProgress(this.project.id).then(progress => {
+                    if (!progress || !progress.has_render) {
+                        console.log('📭 [Dashboard] 没有活跃的渲染任务，不启动轮询');
+                        // 清空渲染进度状态
+                        this.projectRenderProgress = {
+                            hasRender: false,
+                            renderId: null,
+                            status: 'idle',
+                            progress: 0,
+                            processedNodes: 0,
+                            failedNodes: 0,
+                            totalNodes: 0,
+                            cooldownRemaining: 0,
+                            message: ''
+                        };
+                        return;
+                    }
+                    
+                    console.log('📦 [Dashboard] 发现活跃的渲染任务，开始监控');
+                    this._startPolling();
+                }).catch(error => {
+                    console.error('❌ [Dashboard] 检查渲染任务失败:', error);
+                });
+            } else {
+                console.log('🔍 [Dashboard] 强制启动渲染进度监控');
+                this._startPolling();
+            }
+        },
+        
+        /**
+         * 内部方法：启动轮询
+         */
+        _startPolling() {
+            FigmaRenderManager.startProjectProgressPolling(
+                this.project.id,
+                // 进度回调
+                (progress) => {
+                    this.projectRenderProgress = {
+                        hasRender: progress.has_render,
+                        renderId: progress.render_id,
+                        status: progress.status,
+                        progress: progress.progress || 0,
+                        processedNodes: progress.processed_nodes || 0,
+                        failedNodes: progress.failed_nodes || 0,
+                        totalNodes: progress.total_nodes || 0,
+                        cooldownRemaining: progress.cooldown_remaining || 0,
+                        message: this.formatRenderMessage(progress)
+                    };
+                },
+                // 完成回调
+                (progress) => {
+                    this.$message.success('渲染完成！');
+                    this.projectRenderProgress.status = 'completed';
+                    this.projectRenderProgress.message = '渲染完成！';
+                    
+                    // 刷新页面数据
+                    this.loadProjectData(true);
+                },
+                // 错误回调
+                (error) => {
+                    this.$message.error(error.message || '渲染失败');
+                    this.projectRenderProgress.status = 'error';
+                    this.projectRenderProgress.message = error.message || '渲染失败';
+                }
+            );
+        },
+        
+        /**
+         * 停止监控项目渲染进度
+         */
+        stopWatchingProjectRender() {
+            if (!this.project || !this.project.id) {
+                return;
+            }
+            if (typeof FigmaRenderManager !== 'undefined') {
+                FigmaRenderManager.stopProjectProgressPolling(this.project.id);
+            }
+        },
+        
+        /**
+         * 显示错误详情
+         */
+        showErrorDetails() {
+            const message = this.projectRenderProgress.message || '无错误信息';
+            this.$alert(message, '渲染错误详情', {
+                confirmButtonText: '确定',
+                type: 'error',
+                dangerouslyUseHTMLString: false
+            });
+        },
+        
+        /**
+         * 格式化渲染消息
+         */
+        formatRenderMessage(progress) {
+            if (!progress.has_render) {
+                return '';
+            }
+            
+            switch (progress.status) {
+                case 'waiting':
+                    const waitSeconds = progress.cooldown_remaining || 0;
+                    if (waitSeconds > 0) {
+                        return `等待中... 预计等待 ${this.formatWaitTime(waitSeconds)}`;
+                    }
+                    return '等待处理...';
+                case 'processing':
+                    const processedPercent = progress.total_nodes > 0 
+                        ? Math.round((progress.processed_nodes / progress.total_nodes) * 100) 
+                        : 0;
+                    return `渲染中... ${progress.processed_nodes}/${progress.total_nodes} (${processedPercent}%)`;
+                case 'completed':
+                    return '渲染完成！';
+                case 'error':
+                case 'failed':
+                    return progress.error_message || '渲染失败';
+                default:
+                    return '';
+            }
+        },
+        
+        /**
+         * 计算等待时间（秒）
+         * @param {number} nextAvailableTime - Unix时间戳（秒）
+         */
+        calculateWaitSeconds(nextAvailableTime) {
+            if (!nextAvailableTime) return 0;
+            const now = Math.floor(Date.now() / 1000); // 当前Unix时间戳（秒）
+            const wait = nextAvailableTime - now;
+            return Math.max(0, wait);
+        },
+        
+        /**
+         * 格式化等待时间显示
+         * @param {number} seconds - 等待秒数
+         */
+        formatWaitTime(seconds) {
+            //console.log('🕐 [formatWaitTime] 输入:', seconds, '类型:', typeof seconds);
+            
+            if (!seconds || seconds <= 0) {
+                console.log('🕐 [formatWaitTime] 返回 0秒（值为空或<=0）');
+                return '0秒';
+            }
+            
+            if (seconds < 60) {
+                return `${seconds}秒`;
+            } else if (seconds < 3600) {
+                const minutes = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                return secs > 0 ? `${minutes}分${secs}秒` : `${minutes}分钟`;
+            } else if (seconds < 86400) {
+                // 小于1天
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                return minutes > 0 ? `${hours}小时${minutes}分钟` : `${hours}小时`;
+            } else {
+                // 1天或以上
+                const days = Math.floor(seconds / 86400);
+                const hours = Math.floor((seconds % 86400) / 3600);
+                if (hours > 0) {
+                    return `${days}天${hours}小时`;
+                } else {
+                    return `${days}天`;
+                }
+            }
         }
     }
 };
