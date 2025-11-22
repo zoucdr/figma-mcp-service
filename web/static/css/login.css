@@ -501,3 +501,45 @@ html .login-container .el-input__inner:focus {
     color: var(--dark-text-secondary) !important;
     transition: color 0.3s ease !important;
 }
+
+/* 确保 Element UI 图标字体正确加载和显示 */
+.login-container [class*="el-icon-"],
+.login-container .el-icon-s-custom,
+.login-container .el-icon-view,
+.login-container .el-icon-tickets {
+    font-family: element-icons !important;
+    speak: none !important;
+    font-style: normal !important;
+    font-weight: 400 !important;
+    font-variant: normal !important;
+    text-transform: none !important;
+    line-height: 1 !important;
+    -webkit-font-smoothing: antialiased !important;
+    -moz-osx-font-smoothing: grayscale !important;
+}
+
+/* 修复输入框前缀图标位置和显示 */
+.login-container .el-input--prefix .el-input__prefix {
+    left: 15px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    color: var(--dark-text-secondary) !important;
+    font-size: 16px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 20px !important;
+    height: 20px !important;
+    z-index: 1 !important;
+}
+
+/* 确保输入框有足够的左边距来显示图标 */
+.login-container .el-input--prefix .el-input__inner {
+    padding-left: 45px !important;
+}
+
+/* 输入框聚焦时图标颜色变化 */
+.login-container .el-input.is-focus .el-input__prefix .el-input__icon,
+.login-container .el-input:hover .el-input__prefix .el-input__icon {
+    color: var(--dark-accent) !important;
+}

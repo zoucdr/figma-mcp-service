@@ -9,10 +9,18 @@
             <el-tab-pane label="登录" name="login">
                 <el-form ref="loginForm" :model="loginForm" :rules="loginRules" label-width="0px">
                     <el-form-item prop="username">
-                        <el-input v-model="loginForm.username" prefix-icon="el-icon-user" placeholder="用户名"></el-input>
+                        <el-input v-model="loginForm.username" placeholder="用户名">
+                            <template slot="prefix">
+                                <i class="el-icon-s-custom"></i>
+                            </template>
+                        </el-input>
                     </el-form-item>
                     <el-form-item prop="password">
-                        <el-input v-model="loginForm.password" prefix-icon="el-icon-lock" placeholder="密码" show-password></el-input>
+                        <el-input v-model="loginForm.password" placeholder="密码" show-password>
+                            <template slot="prefix">
+                                <i class="el-icon-view"></i>
+                            </template>
+                        </el-input>
                     </el-form-item>
                     <el-form-item>
                         <el-button type="primary" @click="handleLogin" :loading="loading" class="login-button">登录</el-button>
@@ -22,16 +30,32 @@
             <el-tab-pane label="注册" name="register">
                 <el-form ref="registerForm" :model="registerForm" :rules="registerRules" label-width="0px">
                     <el-form-item prop="username">
-                        <el-input v-model="registerForm.username" prefix-icon="el-icon-user" placeholder="用户名"></el-input>
+                        <el-input v-model="registerForm.username" placeholder="用户名">
+                            <template slot="prefix">
+                                <i class="el-icon-s-custom"></i>
+                            </template>
+                        </el-input>
                     </el-form-item>
                     <el-form-item prop="password">
-                        <el-input v-model="registerForm.password" prefix-icon="el-icon-lock" placeholder="密码" show-password></el-input>
+                        <el-input v-model="registerForm.password" placeholder="密码" show-password>
+                            <template slot="prefix">
+                                <i class="el-icon-view"></i>
+                            </template>
+                        </el-input>
                     </el-form-item>
                     <el-form-item prop="confirmPassword">
-                        <el-input v-model="registerForm.confirmPassword" prefix-icon="el-icon-lock" placeholder="确认密码" show-password></el-input>
+                        <el-input v-model="registerForm.confirmPassword" placeholder="确认密码" show-password>
+                            <template slot="prefix">
+                                <i class="el-icon-view"></i>
+                            </template>
+                        </el-input>
                     </el-form-item>
                     <el-form-item prop="figmaToken">
-                        <el-input v-model="registerForm.figmaToken" prefix-icon="el-icon-key" placeholder="Figma Private Token"></el-input>
+                        <el-input v-model="registerForm.figmaToken" placeholder="Figma Private Token">
+                            <template slot="prefix">
+                                <i class="el-icon-tickets"></i>
+                            </template>
+                        </el-input>
                     </el-form-item>
                     <el-form-item>
                         <el-button type="primary" @click="handleRegister" :loading="loading" class="login-button">注册</el-button>

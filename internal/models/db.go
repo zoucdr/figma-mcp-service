@@ -134,6 +134,9 @@ func InitDB() {
 		&FigmaFileCache{},
 		&FigmaRenderQueue{},
 		&FigmaNodeImage{},
+		// 渲染批次相关表
+		&FigmaRenderBatch{},
+		&QueueBatchRelation{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)

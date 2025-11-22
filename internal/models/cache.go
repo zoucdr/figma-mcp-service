@@ -26,7 +26,7 @@ func (FigmaTokenCooldown) TableName() string {
 }
 
 // BeforeCreate GORM钩子：创建前设置时间戳
-func (t *FigmaTokenCooldown) BeforeCreate(db interface{}) error {
+func (t *FigmaTokenCooldown) BeforeCreate(tx *gorm.DB) error {
 	now := uint32(time.Now().Unix())
 	t.CreatedAt = now
 	t.UpdatedAt = now
@@ -34,7 +34,7 @@ func (t *FigmaTokenCooldown) BeforeCreate(db interface{}) error {
 }
 
 // BeforeUpdate GORM钩子：更新前设置时间戳
-func (t *FigmaTokenCooldown) BeforeUpdate(db interface{}) error {
+func (t *FigmaTokenCooldown) BeforeUpdate(tx *gorm.DB) error {
 	t.UpdatedAt = uint32(time.Now().Unix())
 	return nil
 }
@@ -61,7 +61,7 @@ func (FigmaFileCache) TableName() string {
 }
 
 // BeforeCreate GORM钩子：创建前设置时间戳
-func (f *FigmaFileCache) BeforeCreate(db interface{}) error {
+func (f *FigmaFileCache) BeforeCreate(tx *gorm.DB) error {
 	now := uint32(time.Now().Unix())
 	f.CreatedAt = now
 	f.UpdatedAt = now
@@ -69,7 +69,7 @@ func (f *FigmaFileCache) BeforeCreate(db interface{}) error {
 }
 
 // BeforeUpdate GORM钩子：更新前设置时间戳
-func (f *FigmaFileCache) BeforeUpdate(db interface{}) error {
+func (f *FigmaFileCache) BeforeUpdate(tx *gorm.DB) error {
 	f.UpdatedAt = uint32(time.Now().Unix())
 	return nil
 }
@@ -101,7 +101,7 @@ func (FigmaRenderQueue) TableName() string {
 }
 
 // BeforeCreate GORM钩子：创建前设置时间戳
-func (r *FigmaRenderQueue) BeforeCreate(db interface{}) error {
+func (r *FigmaRenderQueue) BeforeCreate(tx *gorm.DB) error {
 	now := uint32(time.Now().Unix())
 	r.CreatedAt = now
 	r.UpdatedAt = now
@@ -109,9 +109,27 @@ func (r *FigmaRenderQueue) BeforeCreate(db interface{}) error {
 }
 
 // BeforeUpdate GORM钩子：更新前设置时间戳
-func (r *FigmaRenderQueue) BeforeUpdate(db interface{}) error {
+func (r *FigmaRenderQueue) BeforeUpdate(tx *gorm.DB) error {
 	r.UpdatedAt = uint32(time.Now().Unix())
 	return nil
+}
+
+// GetNodeIDs 获取节点ID列表（从逗号分隔的字符串解析）
+func (r *FigmaRenderQueue) GetNodeIDs() ([]string, error) {
+	if r.NodeIDs == "" {
+		return []string{}, nil
+	}
+
+	// 使用strings.Split解析逗号分隔的ID列表
+	nodeIDs := []string{}
+	for _, id := range strings.Split(r.NodeIDs, ",") {
+		trimmedID := strings.TrimSpace(id)
+		if trimmedID != "" {
+			nodeIDs = append(nodeIDs, trimmedID)
+		}
+	}
+
+	return nodeIDs, nil
 }
 
 // FigmaNodeImage 节点图片缓存表
@@ -141,7 +159,7 @@ func (FigmaNodeImage) TableName() string {
 }
 
 // BeforeCreate GORM钩子：创建前设置时间戳
-func (n *FigmaNodeImage) BeforeCreate(db interface{}) error {
+func (n *FigmaNodeImage) BeforeCreate(tx *gorm.DB) error {
 	now := uint32(time.Now().Unix())
 	n.CreatedAt = now
 	n.UpdatedAt = now
@@ -149,7 +167,7 @@ func (n *FigmaNodeImage) BeforeCreate(db interface{}) error {
 }
 
 // BeforeUpdate GORM钩子：更新前设置时间戳
-func (n *FigmaNodeImage) BeforeUpdate(db interface{}) error {
+func (n *FigmaNodeImage) BeforeUpdate(tx *gorm.DB) error {
 	n.UpdatedAt = uint32(time.Now().Unix())
 	return nil
 }
@@ -619,6 +637,41 @@ func ExtractValidNodeIDs(fileData string, projectID uint) ([]string, error) {
 	return nodeIDs, nil
 }
 
+// NodeInfo 节点信息结构（用于返回节点ID、类型和名称）
+type NodeInfo struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+// ExtractValidNodesWithType 提取有效节点信息（包含节点ID、类型和名称）
+// 排除 visible=false 的节点及其子树，以及 modify 中标记为 ignore=true 的节点及其子树
+func ExtractValidNodesWithType(fileData string, projectID uint) ([]NodeInfo, error) {
+	var data map[string]interface{}
+	err := json.Unmarshal([]byte(fileData), &data)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取节点的modify信息（用于检查ignore标记）
+	nodeModifys := make(map[string]map[string]interface{})
+	var figmaNodes []FigmaNode
+	if err := DB.Where("project_id = ?", projectID).Find(&figmaNodes).Error; err == nil {
+		for _, node := range figmaNodes {
+			if node.Modifys != "" {
+				var modifyData map[string]interface{}
+				if err := json.Unmarshal([]byte(node.Modifys), &modifyData); err == nil {
+					nodeModifys[node.NodeID] = modifyData
+				}
+			}
+		}
+	}
+
+	nodes := make([]NodeInfo, 0)
+	extractValidNodesWithTypeRecursive(data, &nodes, nodeModifys)
+	return nodes, nil
+}
+
 // extractNodeIDsRecursive 递归提取节点ID
 func extractNodeIDsRecursive(node interface{}, nodeIDs *[]string) {
 	nodeMap, ok := node.(map[string]interface{})
@@ -745,13 +798,108 @@ func extractValidNodeIDsRecursive(node interface{}, nodeIDs *[]string, nodeModif
 				// 如果 value 是对象且包含节点特征（如包含 id 字段），则递归处理
 				if valueMap, ok := value.(map[string]interface{}); ok {
 					if _, hasID := valueMap["id"]; hasID {
-						extractVisibleNodeIDsRecursive(valueMap, nodeIDs)
+						extractValidNodeIDsRecursive(valueMap, nodeIDs, nodeModifys)
 					}
 				}
 			}
 		} else {
 			// 如果 data 本身是对象而不是 map，递归处理
-			extractVisibleNodeIDsRecursive(data, nodeIDs)
+			extractValidNodeIDsRecursive(data, nodeIDs, nodeModifys)
+		}
+	}
+}
+
+// extractValidNodesWithTypeRecursive 递归提取有效节点信息（包含类型，排除 visible=false 和 ignore=true 的节点及其子树）
+func extractValidNodesWithTypeRecursive(node interface{}, nodes *[]NodeInfo, nodeModifys map[string]map[string]interface{}) {
+	nodeMap, ok := node.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// 检查 visible 属性，如果为 false 则跳过该节点及其子树
+	if visible, exists := nodeMap["visible"]; exists {
+		if visibleBool, ok := visible.(bool); ok && !visibleBool {
+			// 节点不可见，跳过该节点及其子树
+			return
+		}
+	}
+
+	// 提取当前节点信息并检查 ignore 标记
+	var currentNodeID string
+	if id, exists := nodeMap["id"]; exists {
+		if idStr, ok := id.(string); ok {
+			currentNodeID = idStr
+
+			// 检查是否被标记为ignore（如果有modify信息）
+			if modifys, hasModify := nodeModifys[currentNodeID]; hasModify {
+				if ignore, ok := modifys["ignore"].(bool); ok && ignore {
+					// 跳过被标记为忽略的节点及其子树
+					return
+				}
+			}
+
+			// 提取节点类型
+			nodeType := ""
+			if t, exists := nodeMap["type"]; exists {
+				if typeStr, ok := t.(string); ok {
+					nodeType = typeStr
+				}
+			}
+
+			// 提取节点名称
+			nodeName := ""
+			if n, exists := nodeMap["name"]; exists {
+				if nameStr, ok := n.(string); ok {
+					nodeName = nameStr
+				}
+			}
+
+			*nodes = append(*nodes, NodeInfo{
+				ID:   currentNodeID,
+				Type: nodeType,
+				Name: nodeName,
+			})
+		}
+	}
+
+	// 递归处理子节点（标准树形结构）
+	if children, exists := nodeMap["children"]; exists {
+		if childrenArray, ok := children.([]interface{}); ok {
+			for _, child := range childrenArray {
+				extractValidNodesWithTypeRecursive(child, nodes, nodeModifys)
+			}
+		}
+	}
+
+	// 处理 Figma 文档结构的特殊字段
+	if document, exists := nodeMap["document"]; exists {
+		extractValidNodesWithTypeRecursive(document, nodes, nodeModifys)
+	}
+
+	// 处理以 Map 形式存储的节点数据（如 .nodes 或 .data 字段）
+	if nodesData, exists := nodeMap["nodes"]; exists {
+		if nodesMap, ok := nodesData.(map[string]interface{}); ok {
+			for _, nodeData := range nodesMap {
+				extractValidNodesWithTypeRecursive(nodeData, nodes, nodeModifys)
+			}
+		}
+	}
+
+	// 兼容 .data 字段（某些情况下节点也可能存储在这里）
+	if data, exists := nodeMap["data"]; exists {
+		if dataMap, ok := data.(map[string]interface{}); ok {
+			// 检查是否是节点Map结构
+			for _, value := range dataMap {
+				// 如果 value 是对象且包含节点特征（如包含 id 字段），则递归处理
+				if valueMap, ok := value.(map[string]interface{}); ok {
+					if _, hasID := valueMap["id"]; hasID {
+						extractValidNodesWithTypeRecursive(valueMap, nodes, nodeModifys)
+					}
+				}
+			}
+		} else {
+			// 如果 data 本身是对象而不是 map，递归处理
+			extractValidNodesWithTypeRecursive(data, nodes, nodeModifys)
 		}
 	}
 }

@@ -1819,6 +1819,40 @@ body.resizing {
     pointer-events: auto !important;
 }
 
+/* 渲染进度标题栏按钮容器 */
+.render-progress-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* 取消渲染按钮样式 */
+.cancel-render-btn {
+    background: none;
+    border: none;
+    color: #f56c6c;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    font-size: 14px;
+    pointer-events: auto !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cancel-render-btn:hover {
+    background: rgba(245, 108, 108, 0.1);
+    color: #f56c6c;
+    transform: scale(1.1);
+}
+
+.cancel-render-btn i {
+    font-size: 14px;
+    pointer-events: none;
+}
+
 .render-progress-card.collapsed .render-progress-header {
     border-bottom: none;
     border-radius: 50%; /* 收起后圆形 */

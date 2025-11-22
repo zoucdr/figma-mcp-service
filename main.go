@@ -176,6 +176,12 @@ func main() {
 		uint(appConfig.FigmaAPI.MaxNodesPerRequest),
 		cacheService,
 	)
+	// 初始化渲染批次服务
+	batchService := services.NewRenderBatchService(queueService)
+	
+	// 设置队列服务的批次服务引用（用于队列状态变化时更新批次）
+	queueService.SetBatchService(batchService)
+	
 	log.Printf("✅ 缓存和队列服务初始化完成")
 
 	// 初始化调度服务
@@ -447,16 +453,17 @@ func main() {
 	figmaGroup.POST("/project/:project_id/clear-cache", controllers.ClearProjectImageCache)
 
 	// 缓存和队列管理（新增）
-	cacheController := controllers.NewCacheController(cacheService, queueService, obsService)
+	cacheController := controllers.NewCacheController(cacheService, queueService, batchService, obsService)
 	figmaGroup.GET("/project/:project_id/node-tree/refresh", cacheController.RefreshProjectNodeTree) // 节点树刷新（带冷却检查）
 	figmaGroup.POST("/file/refresh", cacheController.RefreshFile)                                    // 节点树刷新
 	figmaGroup.POST("/batch-refresh-node-tree", cacheController.BatchRefreshNodeTree)                // 批量刷新节点树（支持多个root节点）
 	figmaGroup.GET("/file/cache/status/:cache_id", cacheController.GetFileCacheStatus)               // 获取节点树状态
-	figmaGroup.POST("/project/:project_id/render", cacheController.RenderProject)                    // 项目渲染
-	figmaGroup.POST("/manual/render", cacheController.ManualRender)                                  // 手动渲染
+	// figmaGroup.POST("/project/:project_id/render", cacheController.RenderProject)                    // 项目渲染 [已弃用，使用 ManualRender 替代]
+	figmaGroup.POST("/manual/render", cacheController.ManualRender)                                  // 手动渲染（统一接口）
 	figmaGroup.GET("/render/queue", cacheController.GetRenderQueue)                                  // 获取队列信息
 	figmaGroup.GET("/render/queue/stats", cacheController.GetQueueStatistics)                        // 获取队列统计
-	figmaGroup.GET("/project/:project_id/render/progress", cacheController.GetProjectRenderProgress) // 获取项目渲染进度
+	figmaGroup.GET("/project/:project_id/render/progress", cacheController.GetProjectRenderProgress) // 获取项目渲染进度（批次）
+	figmaGroup.POST("/project/:project_id/render/cancel", cacheController.CancelProjectRender)       // 取消项目渲染
 	figmaGroup.GET("/node/image", cacheController.GetNodeImage)                                      // 获取节点图片
 
 	// 导出功能

@@ -18,7 +18,7 @@ type FigmaProject struct {
 	RefNodes             string      `gorm:"type:text" json:"ref_nodes"`                     // 依赖节点ID列表，JSON格式存储
 	Settings             string      `gorm:"type:text" json:"settings"`                      // 项目配置信息，JSON格式存储
 	InterfaceDescription string      `gorm:"type:text" json:"interface_description"`         // 界面描述信息，用于MCP提示词
-	RenderID             uint        `gorm:"default:0;index:idx_render_id" json:"render_id"` // 关联的渲染队列ID
+	RenderID             uint        `gorm:"default:0;index:idx_render_id" json:"render_id"` // 当前渲染批次ID
 	CreatedAt            time.Time   `json:"created_at"`
 	UpdatedAt            time.Time   `json:"updated_at"`
 	Nodes                []FigmaNode `gorm:"foreignKey:ProjectID" json:"nodes,omitempty"`

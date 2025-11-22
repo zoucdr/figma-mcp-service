@@ -90,26 +90,20 @@
                         <div class="group-header-right">
                             <el-button 
                                 size="mini" 
-                                type="primary" 
-                                icon="el-icon-refresh" 
-                                @click.stop="batchRefreshNodeTree(group)"
-                                title="批量更新该分组所有节点树"
-                                style="margin-right: 10px;">
-                                批量更新
-                            </el-button>
-                            <el-button 
-                                size="mini" 
                                 type="warning" 
                                 icon="el-icon-picture" 
                                 @click.stop="renderGroupNodes(group)"
                                 title="渲染该分组所有节点"
                                 style="margin-right: 10px;">
-                                批量渲染
+                                渲染
                             </el-button>
-                            <span v-if="group.groupName" class="group-name-badge" :title="'分组名称: ' + group.groupName">
-                                <i class="el-icon-collection-tag"></i>
-                                {{`{{ group.groupName }}`}}
-                            </span>
+                            <!-- 显示分组名称或 File Key -->
+                            <el-tag v-if="group.groupName" size="mini" type="success">
+                                <i class="el-icon-collection-tag"></i> {{`{{ group.groupName }}`}}
+                            </el-tag>
+                            <el-tag v-else size="mini" type="">
+                                <i class="el-icon-document"></i> {{`{{ group.fileKey }}`}}
+                            </el-tag>
                         </div>
                     </div>
                     
@@ -248,8 +242,38 @@
                 <el-form-item label="文件Key">
                     <el-input v-model="renderForm.fileKey" disabled></el-input>
                 </el-form-item>
-                <el-form-item label="节点数量">
-                    <el-tag type="info">{{`{{ renderForm.nodeIds.length }}`}} 个节点</el-tag>
+                <el-form-item label="节点总数">
+                    <el-tag type="info">{{`{{ allNodes.length }}`}} 个节点</el-tag>
+                </el-form-item>
+                <el-form-item label="节点类型">
+                    <el-select 
+                        v-model="renderForm.nodeTypes" 
+                        multiple 
+                        placeholder="请选择要渲染的节点类型"
+                        @change="updateFilteredNodes"
+                        style="width: 100%"
+                        clearable>
+                        <el-option label="GROUP" value="GROUP"></el-option>
+                        <el-option label="FRAME" value="FRAME"></el-option>
+                        <el-option label="TEXT" value="TEXT"></el-option>
+                        <el-option label="INSTANCE" value="INSTANCE"></el-option>
+                        <el-option label="COMPONENT" value="COMPONENT"></el-option>
+                        <el-option label="COMPONENT_SET" value="COMPONENT_SET"></el-option>
+                        <el-option label="VECTOR" value="VECTOR"></el-option>
+                        <el-option label="BOOLEAN_OPERATION" value="BOOLEAN_OPERATION"></el-option>
+                        <el-option label="STAR" value="STAR"></el-option>
+                        <el-option label="LINE" value="LINE"></el-option>
+                        <el-option label="ELLIPSE" value="ELLIPSE"></el-option>
+                        <el-option label="RECTANGLE" value="RECTANGLE"></el-option>
+                        <el-option label="POLYGON" value="POLYGON"></el-option>
+                    </el-select>
+                    <div class="form-tip">
+                        <i class="el-icon-info"></i>
+                        <span>请选择要渲染的节点类型，不选择则不渲染任何节点</span>
+                    </div>
+                </el-form-item>
+                <el-form-item label="筛选结果">
+                    <el-tag type="success">{{`{{ filteredNodes.length }}`}} 个节点将被渲染</el-tag>
                 </el-form-item>
                 <el-form-item label="图片格式">
                     <el-select v-model="renderForm.format" style="width: 100%">

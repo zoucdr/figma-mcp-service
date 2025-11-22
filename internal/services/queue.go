@@ -15,11 +15,17 @@ type QueueService struct {
 	MaxNodesPerRequest uint // 每次请求最大节点数
 	cacheService       *CacheService
 	scheduler          SchedulerNotifier // 调度器接口（用于通知新队列创建）
+	batchService       BatchUpdater      // 批次服务接口（用于更新批次进度）
 }
 
 // SchedulerNotifier 调度器通知接口
 type SchedulerNotifier interface {
 	NotifyNewQueue()
+}
+
+// BatchUpdater 批次更新接口
+type BatchUpdater interface {
+	OnQueueStatusChange(queueID uint) error
 }
 
 // NewQueueService 创建队列服务
@@ -28,12 +34,18 @@ func NewQueueService(maxNodesPerRequest uint, cacheService *CacheService) *Queue
 		MaxNodesPerRequest: maxNodesPerRequest,
 		cacheService:       cacheService,
 		scheduler:          nil, // 会在 scheduler 创建时通过 SetScheduler 设置
+		batchService:       nil, // 会在 batchService 创建后通过 SetBatchService 设置
 	}
 }
 
 // SetScheduler 设置调度器（用于通知新队列创建）
 func (qs *QueueService) SetScheduler(scheduler SchedulerNotifier) {
 	qs.scheduler = scheduler
+}
+
+// SetBatchService 设置批次服务（用于更新批次进度）
+func (qs *QueueService) SetBatchService(batchService BatchUpdater) {
+	qs.batchService = batchService
 }
 
 // ===================== 渲染队列管理 =====================
@@ -295,6 +307,14 @@ func (qs *QueueService) UpdateQueueStatus(queueID uint, status string, progress 
 	log.Printf("📝 [Queue] 状态更新 id=%d, status=%s, progress=%d%%",
 		queueID, status, progress)
 
+	// 通知批次服务更新批次进度
+	if qs.batchService != nil {
+		if err := qs.batchService.OnQueueStatusChange(queueID); err != nil {
+			log.Printf("⚠️ [Queue] 通知批次更新失败 id=%d: %v", queueID, err)
+			// 不中断流程，只记录日志
+		}
+	}
+
 	return nil
 }
 
@@ -324,6 +344,14 @@ func (qs *QueueService) UpdateQueueStatusWithError(queueID uint, status string, 
 
 	log.Printf("📝 [Queue] 状态更新 id=%d, status=%s, error=%s",
 		queueID, status, errorMessage)
+
+	// 通知批次服务更新批次进度
+	if qs.batchService != nil {
+		if err := qs.batchService.OnQueueStatusChange(queueID); err != nil {
+			log.Printf("⚠️ [Queue] 通知批次更新失败 id=%d: %v", queueID, err)
+			// 不中断流程，只记录日志
+		}
+	}
 
 	return nil
 }

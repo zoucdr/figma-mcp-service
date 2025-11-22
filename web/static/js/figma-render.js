@@ -264,12 +264,36 @@ const FigmaRenderManager = {
                 // completed/failed/error: 已结束，停止轮询
                 
                 if (progress.status === 'waiting') {
-                    console.log(`⏸️ [poll] 项目 ${projectId} 处于 waiting 状态，停止轮询`);
-                    if (progress.cooldown_remaining > 0) {
-                        console.log(`⏱️ [poll] 启动本地倒计时: ${progress.cooldown_remaining} 秒`);
-                        this.startLocalCooldownCountdown(projectId, progress, onProgress);
-                    }
+                    console.log(`⏸️ [poll] 项目 ${projectId} 处于 waiting 状态，启动本地倒计时`);
+                    // waiting状态启动本地倒计时，倒计时结束后会自动查询后端
                     this.stopProjectProgressPolling(projectId);
+                    
+                    // 启动本地倒计时
+                    if (progress.cooldown_remaining > 0) {
+                        this.startLocalCooldownCountdown(projectId, progress, onProgress);
+                    } else {
+                        // 如果没有冷却时间，直接更新一次进度
+                        if (onProgress) {
+                            onProgress({
+                                has_render: progress.has_render,
+                                batch_id: progress.batch_id,
+                                render_id: progress.render_id,
+                                status: progress.status,
+                                progress: progress.progress || 0,
+                                processed_nodes: progress.processed_nodes || 0,
+                                failed_nodes: progress.failed_nodes || 0,
+                                total_nodes: progress.total_nodes || 0,
+                                completed_queues: progress.completed_queues || 0,
+                                total_queues: progress.total_queues || 0,
+                                cooldown_remaining: 0,
+                                error_message: progress.error_message || '',
+                                started_at: progress.started_at,
+                                completed_at: progress.completed_at,
+                                created_at: progress.created_at,
+                                updated_at: progress.updated_at
+                            });
+                        }
+                    }
                     return;
                 }
                 
@@ -311,12 +335,15 @@ const FigmaRenderManager = {
                 if (onProgress) {
                     onProgress({
                         has_render: progress.has_render,
+                        batch_id: progress.batch_id,
                         render_id: progress.render_id,
                         status: progress.status,
                         progress: progress.progress || 0,
                         processed_nodes: progress.processed_nodes || 0,
                         failed_nodes: progress.failed_nodes || 0,
                         total_nodes: progress.total_nodes || 0,
+                        completed_queues: progress.completed_queues || 0,
+                        total_queues: progress.total_queues || 0,
                         cooldown_remaining: 0,
                         error_message: progress.error_message || '',
                         started_at: progress.started_at,
@@ -375,11 +402,35 @@ const FigmaRenderManager = {
                                     
                                     // ============ 只有 processing 状态才继续轮询 ============
                                     if (progress.status === 'waiting') {
-                                        console.log(`⏸️ [定时器轮询] 项目 ${projId} 处于 waiting 状态，停止轮询`);
+                                        console.log(`⏸️ [定时器轮询] 项目 ${projId} 处于 waiting 状态，启动本地倒计时`);
+                                        this.stopProjectProgressPolling(projId);
+                                        
+                                        // 启动本地倒计时
                                         if (progress.cooldown_remaining > 0) {
                                             this.startLocalCooldownCountdown(projId, progress, callbacks.onProgress);
+                                        } else {
+                                            // 如果没有冷却时间，直接更新一次进度
+                                            if (callbacks.onProgress) {
+                                                callbacks.onProgress({
+                                                    has_render: progress.has_render,
+                                                    batch_id: progress.batch_id,
+                                                    render_id: progress.render_id,
+                                                    status: progress.status,
+                                                    progress: progress.progress || 0,
+                                                    processed_nodes: progress.processed_nodes || 0,
+                                                    failed_nodes: progress.failed_nodes || 0,
+                                                    total_nodes: progress.total_nodes || 0,
+                                                    completed_queues: progress.completed_queues || 0,
+                                                    total_queues: progress.total_queues || 0,
+                                                    cooldown_remaining: 0,
+                                                    error_message: progress.error_message || '',
+                                                    started_at: progress.started_at,
+                                                    completed_at: progress.completed_at,
+                                                    created_at: progress.created_at,
+                                                    updated_at: progress.updated_at
+                                                });
+                                            }
                                         }
-                                        this.stopProjectProgressPolling(projId);
                                         return;
                                     }
                                     
@@ -417,14 +468,18 @@ const FigmaRenderManager = {
                                     if (callbacks.onProgress) {
                                         callbacks.onProgress({
                                             has_render: progress.has_render,
+                                            batch_id: progress.batch_id,
                                             render_id: progress.render_id,
                                             status: progress.status,
                                             progress: progress.progress || 0,
                                             processed_nodes: progress.processed_nodes || 0,
                                             failed_nodes: progress.failed_nodes || 0,
                                             total_nodes: progress.total_nodes || 0,
+                                            completed_queues: progress.completed_queues || 0,
+                                            total_queues: progress.total_queues || 0,
                                             cooldown_remaining: 0,
-                                            error_message: progress.error_message || ''
+                                            error_message: progress.error_message || '',
+                                            started_at: progress.started_at
                                         });
                                     }
                                 } catch (error) {
@@ -504,28 +559,64 @@ const FigmaRenderManager = {
                 });
             }
             
-            // 倒计时结束，重新查询后端
+            // 倒计时结束，等待5秒后再查询后端（给后端时间执行调度）
             if (remaining <= 0) {
-                console.log(`✅ [本地倒计时] 项目 ${projectId} 倒计时结束，重新查询后端`);
+                console.log(`✅ [本地倒计时] 项目 ${projectId} 倒计时结束，5秒后查询后端进度`);
                 clearInterval(countdownTimer);
-                delete this.projectCooldowns[projectId];
                 
-                // 重新查询后端状态
-                this.getProjectRenderProgress(projectId).then(progress => {
-                    if (progress && onProgress) {
-                        onProgress({
-                            ...progress,
-                            cooldown_remaining: progress.cooldown_remaining || 0
-                        });
-                        
-                        // 如果还是 waiting 状态且有冷却时间，继续倒计时
-                        if (progress.status === 'waiting' && progress.cooldown_remaining > 0) {
-                            this.startLocalCooldownCountdown(projectId, progress, onProgress);
+                // 更新显示为"准备中"状态
+                if (onProgress) {
+                    onProgress({
+                        ...cooldownInfo.progress,
+                        cooldown_remaining: 0,
+                        status: 'waiting'  // 保持 waiting 状态
+                    });
+                }
+                
+                // 5秒后查询后端
+                setTimeout(() => {
+                    delete this.projectCooldowns[projectId];
+                    console.log(`🔍 [本地倒计时] 项目 ${projectId} 等待5秒后，开始查询后端`);
+                    
+                    // 重新查询后端状态
+                    this.getProjectRenderProgress(projectId).then(progress => {
+                        if (progress && onProgress) {
+                            onProgress({
+                                has_render: progress.has_render,
+                                batch_id: progress.batch_id,
+                                render_id: progress.render_id,
+                                status: progress.status,
+                                progress: progress.progress || 0,
+                                processed_nodes: progress.processed_nodes || 0,
+                                failed_nodes: progress.failed_nodes || 0,
+                                total_nodes: progress.total_nodes || 0,
+                                completed_queues: progress.completed_queues || 0,
+                                total_queues: progress.total_queues || 0,
+                                cooldown_remaining: progress.cooldown_remaining || 0,
+                                error_message: progress.error_message || '',
+                                started_at: progress.started_at,
+                                completed_at: progress.completed_at,
+                                created_at: progress.created_at,
+                                updated_at: progress.updated_at
+                            });
+                            
+                            // 如果还是 waiting 状态且有冷却时间，继续倒计时
+                            if (progress.status === 'waiting' && progress.cooldown_remaining > 0) {
+                                console.log(`⏱️ [本地倒计时] 项目 ${projectId} 仍在等待，继续倒计时: ${progress.cooldown_remaining} 秒`);
+                                this.startLocalCooldownCountdown(projectId, progress, onProgress);
+                            } else if (progress.status === 'processing') {
+                                // 如果状态变为 processing，重新启动轮询
+                                console.log(`🔄 [本地倒计时] 项目 ${projectId} 状态变为 processing，重新启动轮询`);
+                                const callbacks = this.projectCallbacks[projectId];
+                                if (callbacks) {
+                                    this.startProjectProgressPolling(projectId, callbacks.onProgress, callbacks.onComplete, callbacks.onError);
+                                }
+                            }
                         }
-                    }
-                }).catch(error => {
-                    console.error('重新查询进度失败:', error);
-                });
+                    }).catch(error => {
+                        console.error('重新查询进度失败:', error);
+                    });
+                }, 5000); // 等待5秒
             }
         }, 1000); // 每秒更新
         
@@ -553,10 +644,17 @@ const FigmaRenderMixin = {
             // 渲染对话框可见性
             renderDialogVisible: false,
             
+            // 所有节点（包含类型信息）
+            allNodes: [],
+            
+            // 筛选后的节点
+            filteredNodes: [],
+            
             // 渲染表单数据
             renderForm: {
                 fileKey: '',
                 nodeIds: [],
+                nodeTypes: [], // 选中的节点类型
                 projectIds: [], // 关联的项目ID列表
                 format: 'png',
                 scale: 2.0
@@ -608,13 +706,51 @@ const FigmaRenderMixin = {
         /**
          * 显示渲染对话框
          */
-        showRenderDialog(fileKey, nodeIds, projectIds) {
-            console.log('🎯 [showRenderDialog] 接收参数:', { fileKey, nodeIds: nodeIds?.length, projectIds });
+        showRenderDialog(fileKey, nodeIdsOrNodes, projectIds) {
+            console.log('🎯 [showRenderDialog] 接收参数:', { fileKey, data: nodeIdsOrNodes, projectIds });
+            
             this.renderForm.fileKey = fileKey;
-            this.renderForm.nodeIds = nodeIds || [];
-            this.renderForm.projectIds = projectIds || []; // 设置项目ID列表
-            console.log('📝 [showRenderDialog] renderForm 已更新:', this.renderForm);
+            this.renderForm.projectIds = projectIds || [];
+            
+            // 检查传入的是节点ID数组还是节点对象数组
+            if (nodeIdsOrNodes && nodeIdsOrNodes.length > 0) {
+                if (typeof nodeIdsOrNodes[0] === 'string') {
+                    // 旧格式：节点ID数组
+                    this.allNodes = nodeIdsOrNodes.map(id => ({ id, type: '', name: '' }));
+                } else {
+                    // 新格式：节点对象数组
+                    this.allNodes = nodeIdsOrNodes;
+                }
+            } else {
+                this.allNodes = [];
+            }
+            
+            // 初始化时不选择任何类型，显示所有节点
+            this.renderForm.nodeTypes = [];
+            this.updateFilteredNodes();
+            
+            console.log('📝 [showRenderDialog] 加载了 ' + this.allNodes.length + ' 个节点');
             this.renderDialogVisible = true;
+        },
+        
+        /**
+         * 更新筛选后的节点列表
+         */
+        updateFilteredNodes() {
+            if (this.renderForm.nodeTypes.length === 0) {
+                // 未选择任何类型，不渲染任何节点
+                this.filteredNodes = [];
+            } else {
+                // 根据选中的类型筛选
+                this.filteredNodes = this.allNodes.filter(node => {
+                    return this.renderForm.nodeTypes.includes(node.type);
+                });
+            }
+            
+            // 更新 nodeIds
+            this.renderForm.nodeIds = this.filteredNodes.map(node => node.id);
+            
+            console.log('🔍 [updateFilteredNodes] 筛选后节点数:', this.filteredNodes.length);
         },
         
         /**
@@ -720,9 +856,12 @@ const FigmaRenderMixin = {
          * 重置渲染表单
          */
         resetRenderForm() {
+            this.allNodes = [];
+            this.filteredNodes = [];
             this.renderForm = {
                 fileKey: '',
                 nodeIds: [],
+                nodeTypes: [],
                 projectIds: [], // 重置项目ID列表
                 format: 'png',
                 scale: 2.0
@@ -837,6 +976,8 @@ const FigmaRenderMixin = {
                     return `渲染中... ${progress.processed_nodes}/${progress.total_nodes}`;
                 case 'completed':
                     return '渲染完成！';
+                case 'partial':
+                    return `部分完成，${progress.failed_nodes}个节点失败`;
                 case 'error':
                 case 'failed':
                     return progress.error_message || '渲染失败';

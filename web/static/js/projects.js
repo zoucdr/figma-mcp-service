@@ -136,10 +136,11 @@ const ProjectListApp = {
                 
                 return {
                     groupKey: groupKey,
+                    fileKey: projects[0].file_key, // 添加 file_key 用于显示
                     projects: projects,
                     projectCount: projects.length,
                     displayName: displayName, // 分组显示名称
-                    groupName: hasGroupName ? groupKey : '', // 分组名称
+                    groupName: hasGroupName ? groupKey : '', // 分组名称（自定义组名）
                     expanded: this.expandedGroups[groupKey] === true // 默认收起，除非明确设置为true
                 };
             });
@@ -448,9 +449,9 @@ const ProjectListApp = {
                 const response = await axios.get(`/figma/project/${project.id}/render_nodes`);
                 
                 if (response.data.code === 0) {
-                    const nodeIds = response.data.data.node_ids || [];
+                    const nodes = response.data.data.nodes || [];
                     
-                    if (nodeIds.length === 0) {
+                    if (nodes.length === 0) {
                         this.$message.warning('该项目没有可渲染的节点');
                         loading.close();
                         return;
@@ -460,7 +461,7 @@ const ProjectListApp = {
                     
                     // 显示渲染对话框（传递项目ID）
                     console.log('🚀 [renderProjectNodes] 调用 showRenderDialog，项目ID:', project.id);
-                    this.showRenderDialog(response.data.data.file_key, nodeIds, [project.id]);
+                    this.showRenderDialog(response.data.data.file_key, nodes, [project.id]);
                 } else {
                     throw new Error(response.data.message || '获取节点信息失败');
                 }
@@ -520,7 +521,8 @@ const ProjectListApp = {
                     if (!projectsByFileKey[fileKey]) {
                         projectsByFileKey[fileKey] = {
                             fileKey: fileKey,
-                            nodeIds: new Set(),
+                            nodes: [], // 改为存储节点对象
+                            nodeIdSet: new Set(), // 用于去重
                             projectIds: new Set(), // 收集项目ID列表
                             projectCount: 0
                         };
@@ -531,10 +533,14 @@ const ProjectListApp = {
                         const response = await axios.get(`/figma/project/${project.id}/render_nodes`);
                         
                         if (response.data && response.data.code === 0 && response.data.data) {
-                            const nodeIds = response.data.data.node_ids || [];
-                            if (nodeIds.length > 0) {
-                                nodeIds.forEach(nodeId => {
-                                    projectsByFileKey[fileKey].nodeIds.add(nodeId);
+                            const nodes = response.data.data.nodes || [];
+                            if (nodes.length > 0) {
+                                nodes.forEach(node => {
+                                    // 使用Set去重
+                                    if (!projectsByFileKey[fileKey].nodeIdSet.has(node.id)) {
+                                        projectsByFileKey[fileKey].nodes.push(node);
+                                        projectsByFileKey[fileKey].nodeIdSet.add(node.id);
+                                    }
                                 });
                                 projectsByFileKey[fileKey].projectIds.add(project.id); // 添加项目ID
                                 projectsByFileKey[fileKey].projectCount++;
@@ -564,20 +570,20 @@ const ProjectListApp = {
                     const fileKey = fileKeys[0];
                     const data = projectsByFileKey[fileKey];
                     
-                    if (data.nodeIds.size === 0) {
+                    if (data.nodes.length === 0) {
                         this.$message.warning('该分组没有可渲染的节点');
                         return;
                     }
                     
-                    // 显示渲染对话框（传递项目ID列表）
+                    // 显示渲染对话框（传递项目ID列表和节点对象）
                     const projectIds = Array.from(data.projectIds);
-                    console.log('🚀 [renderGroupNodes] 调用 showRenderDialog，项目IDs:', projectIds);
-                    this.showRenderDialog(fileKey, Array.from(data.nodeIds), projectIds);
+                    console.log('🚀 [renderGroupNodes] 调用 showRenderDialog，项目IDs:', projectIds, '节点数:', data.nodes.length);
+                    this.showRenderDialog(fileKey, data.nodes, projectIds);
                 } else {
                     // 多个 file_key，询问用户如何处理
                     const fileKeysInfo = fileKeys.map(fk => {
                         const data = projectsByFileKey[fk];
-                        return `- ${fk.substring(0, 8)}...（${data.projectCount}个项目，${data.nodeIds.size}个节点）`;
+                        return `- ${fk.substring(0, 8)}...（${data.projectCount}个项目，${data.nodes.length}个节点）`;
                     }).join('\n');
                     
                     this.$confirm(
@@ -595,7 +601,7 @@ const ProjectListApp = {
                         
                         for (const fileKey of fileKeys) {
                             const data = projectsByFileKey[fileKey];
-                            const nodeIds = Array.from(data.nodeIds);
+                            const nodeIds = data.nodes.map(node => node.id); // 从节点对象中提取ID
                             const projectIds = Array.from(data.projectIds); // 转换为数组
                             
                             if (nodeIds.length === 0) {

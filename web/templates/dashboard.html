@@ -263,13 +263,30 @@
                                 <i class="el-icon-success" v-else></i>
                                 <span>渲染进度</span>
                             </div>
+                            <div class="render-progress-actions">
+                                <!-- 取消渲染按钮 - 所有状态都可以取消清理 -->
+                                <el-tooltip 
+                                    content="清理渲染记录" 
+                                    placement="bottom">
+                                    <button class="cancel-render-btn" @click.stop="cancelProjectRender" title="清理渲染记录">
+                                        <i class="el-icon-close"></i>
+                                    </button>
+                                </el-tooltip>
+                                <!-- 展开/收起按钮 -->
                             <button class="expand-toggle-btn" @click.stop="toggleRenderProgress" :title="isRenderProgressExpanded ? '收起' : '展开'">
                                 <i v-if="!isRenderProgressExpanded" class="el-icon-d-arrow-right"></i>
                                 <i v-else class="el-icon-arrow-up"></i>
                             </button>
+                            </div>
                         </div>
                         <div class="render-progress-body" v-if="isRenderProgressExpanded">
                             <div class="render-status-info">
+                                <div class="status-row">
+                                    <span class="status-label">渲染ID：</span>
+                                    <span class="status-value" style="font-family: monospace; color: #409EFF;">
+                                        #{{`{{ projectRenderProgress.batchId }}`}}
+                                    </span>
+                                </div>
                                 <div class="status-row">
                                     <span class="status-label">状态：</span>
                                     <span class="status-value">
@@ -293,6 +310,12 @@
                                         </template>
                                     </span>
                                 </div>
+                                <div class="status-row" v-if="projectRenderProgress.startedAt">
+                                    <span class="status-label">开始时间：</span>
+                                    <span class="status-value" style="font-size: 12px;">
+                                        {{`{{ formatDateTime(projectRenderProgress.startedAt) }}`}}
+                                    </span>
+                                </div>
                                 <div class="status-row" v-if="projectRenderProgress.status === 'waiting'">
                                     <span class="status-label">等待时间：</span>
                                     <span class="status-value wait-time">
@@ -300,24 +323,36 @@
                                     </span>
                                 </div>
                                 <div class="status-row">
-                                    <span class="status-label">进度：</span>
-                                    <span class="status-value">{{`{{ projectRenderProgress.processedNodes }}`}} / {{`{{ projectRenderProgress.totalNodes }}`}} 节点</span>
-                                </div>
-                                <div class="status-row" v-if="projectRenderProgress.failedNodes > 0">
-                                    <span class="status-label">失败：</span>
-                                    <span class="status-value" style="color: #F56C6C;">{{`{{ projectRenderProgress.failedNodes }}`}} 个节点</span>
+                                    <span class="status-label">节点进度：</span>
+                                    <span class="status-value">
+                                        成功 {{`{{ projectRenderProgress.processedNodes }}`}} 
+                                        <template v-if="projectRenderProgress.failedNodes > 0">
+                                            + 失败 <span style="color: #F56C6C;">{{`{{ projectRenderProgress.failedNodes }}`}}</span>
+                                        </template>
+                                        / {{`{{ projectRenderProgress.totalNodes }}`}} 节点
+                                    </span>
                                 </div>
                                 <div class="status-row">
-                                    <el-progress 
-                                        :percentage="projectRenderProgress.progress" 
-                                        :status="projectRenderProgress.status === 'processing' ? 'success' : projectRenderProgress.status === 'failed' ? 'exception' : undefined"
-                                        :stroke-width="8">
-                                    </el-progress>
+                                    <span class="status-label">队列进度：</span>
+                                    <span class="status-value">
+                                        {{`{{ projectRenderProgress.completedQueues }}`}} / {{`{{ projectRenderProgress.totalQueues }}`}} 个队列
+                                        <el-tag v-if="projectRenderProgress.status === 'processing'" size="mini" type="success" style="margin-left: 8px;">
+                                            处理中
+                                        </el-tag>
+                                    </span>
                                 </div>
-                                <div class="status-row" v-if="(projectRenderProgress.status === 'failed' || projectRenderProgress.status === 'partial') && projectRenderProgress.message">
-                                    <el-button size="mini" type="text" @click="showErrorDetails" style="padding: 0;">
-                                        <i class="el-icon-info"></i> 点击查看错误详情
-                                    </el-button>
+                                <div class="status-row" v-if="projectRenderProgress.failedNodes > 0">
+                                    <span class="status-label"></span>
+                                    <span class="status-value" style="color: #909399; font-size: 12px;">
+                                        <i class="el-icon-info"></i> 失败节点也计入进度
+                                    </span>
+                                </div>
+                                <!-- 错误消息显示 -->
+                                <div class="status-row" v-if="projectRenderProgress.errorMessage">
+                                    <span class="status-label">错误信息：</span>
+                                    <span class="status-value" style="color: #F56C6C; font-size: 12px;">
+                                        <i class="el-icon-warning"></i> {{`{{ projectRenderProgress.errorMessage }}`}}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -1105,18 +1140,47 @@
         
         <!-- 渲染参数表单 -->
         <el-form :model="renderPreviewForm" label-width="120px">
-            <el-form-item label="节点数量">
+            <el-form-item label="节点总数">
+                <el-tag type="info" size="medium">{{`{{ allRenderNodes.length }}`}} 个节点</el-tag>
+            </el-form-item>
+            
+            <el-form-item label="节点类型筛选">
+                <el-select 
+                    v-model="renderPreviewForm.nodeTypes" 
+                    multiple 
+                    placeholder="请选择要渲染的节点类型"
+                    @change="updateFilteredRenderNodes"
+                    style="width: 100%"
+                    clearable>
+                    <el-option label="GROUP" value="GROUP"></el-option>
+                    <el-option label="FRAME" value="FRAME"></el-option>
+                    <el-option label="TEXT" value="TEXT"></el-option>
+                    <el-option label="INSTANCE" value="INSTANCE"></el-option>
+                    <el-option label="COMPONENT" value="COMPONENT"></el-option>
+                    <el-option label="COMPONENT_SET" value="COMPONENT_SET"></el-option>
+                    <el-option label="VECTOR" value="VECTOR"></el-option>
+                    <el-option label="BOOLEAN_OPERATION" value="BOOLEAN_OPERATION"></el-option>
+                    <el-option label="STAR" value="STAR"></el-option>
+                    <el-option label="LINE" value="LINE"></el-option>
+                    <el-option label="ELLIPSE" value="ELLIPSE"></el-option>
+                    <el-option label="RECTANGLE" value="RECTANGLE"></el-option>
+                    <el-option label="POLYGON" value="POLYGON"></el-option>
+                </el-select>
+                <div style="margin-top: 8px; color: #909399; font-size: 13px;">
+                    <i class="el-icon-info"></i>
+                    请选择要渲染的节点类型，不选择则不渲染任何节点
+                </div>
+            </el-form-item>
+            
+            <el-form-item label="筛选结果">
                 <div>
-                    <el-tag type="success" size="medium">{{`{{ renderPreviewInfo.actualNodeCount }}`}} 个可渲染节点</el-tag>
-                    <span style="margin-left: 10px; color: #909399; font-size: 13px;">
-                        (已排除不可见和忽略的节点)
+                    <el-tag type="success" size="medium">{{`{{ filteredRenderNodes.length }}`}} 个节点将被渲染</el-tag>
+                    <span v-if="renderPreviewForm.nodeTypes.length > 0" style="margin-left: 10px; color: #909399; font-size: 13px;">
+                        (已筛选 {{`{{ renderPreviewForm.nodeTypes.join(', ') }}`}} 类型)
                     </span>
                 </div>
-                <div v-if="renderPreviewInfo.actualNodeCount !== renderPreviewInfo.nodeCount" style="margin-top: 8px;">
-                    <el-tag type="info" size="small">原始节点: {{`{{ renderPreviewInfo.nodeCount }}`}} 个</el-tag>
-                    <span style="margin-left: 8px; color: #67C23A; font-size: 12px;">
-                        <i class="el-icon-check"></i> 已过滤 {{`{{ renderPreviewInfo.nodeCount - renderPreviewInfo.actualNodeCount }}`}} 个无效节点
-                    </span>
+                <div v-if="allRenderNodes.length !== filteredRenderNodes.length" style="margin-top: 8px;">
+                    <el-tag type="info" size="small">已排除 {{`{{ allRenderNodes.length - filteredRenderNodes.length }}`}} 个节点</el-tag>
                 </div>
             </el-form-item>
             <el-form-item label="图片格式">
@@ -1625,26 +1689,23 @@
             </div>
             <div class="status-center">
                 <span class="status-numbers">
-                    {{`{{ projectRenderProgress.processedNodes }}`}} / {{`{{ projectRenderProgress.totalNodes }}`}} 节点
-                    <span v-if="projectRenderProgress.failedNodes > 0" style="color: #F56C6C; margin-left: 8px;">
-                        (失败: {{`{{ projectRenderProgress.failedNodes }}`}})
-                    </span>
+                    节点: 成功 {{`{{ projectRenderProgress.processedNodes }}`}}
+                    <template v-if="projectRenderProgress.failedNodes > 0">
+                        + 失败 <span style="color: #F56C6C;">{{`{{ projectRenderProgress.failedNodes }}`}}</span>
+                    </template>
+                    / {{`{{ projectRenderProgress.totalNodes }}`}}
                 </span>
-                <el-progress 
-                    :percentage="projectRenderProgress.progress" 
-                    :stroke-width="6"
-                    :show-text="false"
-                    :status="projectRenderProgress.status === 'failed' ? 'exception' : undefined"
-                    class="status-progress">
-                </el-progress>
-                <span class="status-percentage">{{`{{ projectRenderProgress.progress }}`}}%</span>
+                <span class="status-separator">|</span>
+                <span class="status-numbers">
+                    队列: {{`{{ projectRenderProgress.completedQueues }}`}} / {{`{{ projectRenderProgress.totalQueues }}`}}
+                </span>
             </div>
             <div class="status-right">
-                <el-tooltip :content="projectRenderProgress.message" placement="top" v-if="!(projectRenderProgress.status === 'failed' || projectRenderProgress.status === 'partial')">
+                <el-tooltip :content="projectRenderProgress.message" placement="top" v-if="!projectRenderProgress.errorMessage">
                     <i class="el-icon-info"></i>
                 </el-tooltip>
                 <el-button 
-                    v-if="projectRenderProgress.status === 'failed' || projectRenderProgress.status === 'partial'"
+                    v-if="projectRenderProgress.errorMessage"
                     size="mini" 
                     type="danger" 
                     @click="showErrorDetails"

@@ -5,12 +5,12 @@ app:
   session_secret: "figma-deliver-secret-dev"
 
 database:
-  host: "10.84.97.48"
+  host: "node1.mysql.figma.deliver.hwhosts.com"
   port: "3306"
   user: "mysqlsiud"
   password: "mysql!@#456"
   name: "figma_deliver"
-
+  
 storage:
   export_dir: "./exports"
   temp_dir: "./temp"
@@ -24,7 +24,7 @@ figma_api:
   images_api_cooldown: 30
   
   # 批量请求最大节点数
-  max_nodes_per_request: 1000
+  max_nodes_per_request: 80
 
 # 缓存配置
 cache:

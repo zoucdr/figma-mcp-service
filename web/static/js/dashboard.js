@@ -73,9 +73,12 @@ const ProjectEditorApp = {
             exportingNodeId: null, // 正在导出的节点ID
             // 渲染预览对话框
             renderPreviewDialogVisible: false,
+            allRenderNodes: [], // 所有可渲染节点（包含类型信息）
+            filteredRenderNodes: [], // 筛选后的节点
             renderPreviewForm: {
                 format: 'png',
                 scale: 2.0,
+                nodeTypes: [], // 选中的节点类型
                 includeRefNodes: true
             },
             renderPreviewInfo: {
@@ -1387,46 +1390,29 @@ const ProjectEditorApp = {
                 this.renderPreviewForm = {
                     format: this.defaultImageFormat,
                     scale: this.defaultImageScale,
+                    nodeTypes: [], // 初始化为空，显示所有节点
                     includeRefNodes: true
                 };
                 
-                // 2. 从 render_nodes 接口获取过滤后的节点数量信息
-                const originalMainNodeCount = this.nodes.length; // 原始主节点数
-                const originalRefNodeCount = this.refNodes.length; // 原始依赖节点数
-                const originalTotalCount = originalMainNodeCount + originalRefNodeCount;
-                
-                let actualNodeCount = 0; // 实际可渲染的节点数（过滤后）
-                let filteredNodeIDs = []; // 过滤后的节点ID列表
-                
+                // 2. 从 render_nodes 接口获取节点信息（包含类型）
                 try {
                     const renderNodesResponse = await axios.get(`/figma/project/${this.project.id}/render_nodes`);
                     if (renderNodesResponse.data.code === 0) {
                         const data = renderNodesResponse.data.data;
-                        // 获取过滤后的节点数量和ID列表
-                        actualNodeCount = data.count || 0;
-                        filteredNodeIDs = data.node_ids || [];
+                        // 获取节点列表（包含类型信息）
+                        this.allRenderNodes = data.nodes || [];
                         
-                        console.log(`✅ [渲染预览] 获取到过滤后的节点数量: ${actualNodeCount} (原始: ${originalTotalCount})`);
+                        console.log(`✅ [渲染预览] 获取到 ${this.allRenderNodes.length} 个节点（包含类型信息）`);
                         
-                        // 计算过滤后的主节点和依赖节点数量
-                        // 通过对比过滤后的节点列表和原始节点列表
-                        const originalMainNodeIDs = this.nodes.map(n => n.id);
-                        const originalRefNodeIDs = this.refNodes.map(n => n);
-                        
-                        const filteredMainCount = filteredNodeIDs.filter(id => originalMainNodeIDs.includes(id)).length;
-                        const filteredRefCount = filteredNodeIDs.filter(id => originalRefNodeIDs.includes(id)).length;
-                        
-                        console.log(`📊 [渲染预览] 主节点: ${filteredMainCount}/${originalMainNodeCount}, 依赖节点: ${filteredRefCount}/${originalRefNodeCount}`);
-                        
-                        // 如果计数不匹配，使用总数
-                        if (filteredMainCount + filteredRefCount !== actualNodeCount) {
-                            console.warn(`⚠️ [渲染预览] 节点计数不匹配: ${filteredMainCount} + ${filteredRefCount} ≠ ${actualNodeCount}`);
-                        }
+                        // 初始化筛选后的节点为空（用户必须选择节点类型）
+                        this.filteredRenderNodes = [];
+                    } else {
+                        throw new Error(data.message || '获取节点列表失败');
                     }
                 } catch (error) {
-                    console.warn('⚠️ [渲染预览] 获取 render_nodes 失败，使用默认节点数量:', error);
-                    // 失败时使用前端已加载的节点数量
-                    actualNodeCount = originalTotalCount;
+                    console.error('❌ [渲染预览] 获取节点列表失败:', error);
+                    this.$message.error('获取节点列表失败: ' + (error.response?.data?.message || error.message));
+                    return;
                 }
                 
                 // 3. 查询当前渲染状态
@@ -1465,12 +1451,7 @@ const ProjectEditorApp = {
                     progress: renderStatus.progress || 0,
                     processedNodes: renderStatus.processedNodes || 0,
                     totalNodes: renderStatus.totalNodes || 0,
-                    cooldownRemaining: renderStatus.cooldownRemaining || 0,
-                    nodeCount: originalTotalCount, // 原始总节点数
-                    mainNodeCount: originalMainNodeCount, // 原始主节点数
-                    refNodeCount: originalRefNodeCount, // 原始依赖节点数
-                    actualNodeCount: actualNodeCount, // 实际可渲染的节点数（过滤后）
-                    filteredNodeIDs: filteredNodeIDs // 过滤后的节点ID列表（用于调试）
+                    cooldownRemaining: renderStatus.cooldownRemaining || 0
                 };
                 
                 // 5. 显示对话框
@@ -1529,6 +1510,21 @@ const ProjectEditorApp = {
             }
         },
         
+        // 更新筛选后的渲染节点列表
+        updateFilteredRenderNodes() {
+            if (this.renderPreviewForm.nodeTypes.length === 0) {
+                // 未选择任何类型，不渲染任何节点
+                this.filteredRenderNodes = [];
+            } else {
+                // 根据选中的类型筛选
+                this.filteredRenderNodes = this.allRenderNodes.filter(node => {
+                    return this.renderPreviewForm.nodeTypes.includes(node.type);
+                });
+            }
+            
+            console.log(`🔍 [updateFilteredRenderNodes] 筛选后节点数: ${this.filteredRenderNodes.length}/${this.allRenderNodes.length}`);
+        },
+        
         // 确认渲染
         async confirmRender() {
             if (!this.project || !this.project.id) {
@@ -1536,49 +1532,47 @@ const ProjectEditorApp = {
                 return;
             }
             
-            // 移除 isRendering 的阻止逻辑，允许重新渲染
-            // 后端会检查是否正在 processing，如果是则返回 409
+            if (this.filteredRenderNodes.length === 0) {
+                this.$message.warning('没有可渲染的节点，请调整筛选条件');
+                return;
+            }
             
             try {
                 this.isRendering = true;
                 
-                // 使用项目渲染接口（自动提取节点树和依赖节点）
+                // 提取节点ID列表
+                const nodeIds = this.filteredRenderNodes.map(node => node.id);
+                
+                // 使用 ManualRender 接口（统一接口）
                 console.log('📋 [Dashboard] 准备渲染项目:', {
                     project_id: this.project.id,
+                    file_key: this.project.file_key,
+                    node_count: nodeIds.length,
                     format: this.renderPreviewForm.format,
                     scale: this.renderPreviewForm.scale,
-                    include_ref_nodes: this.renderPreviewForm.includeRefNodes
+                    selected_types: this.renderPreviewForm.nodeTypes
                 });
                 
-                const url = `/figma/project/${this.project.id}/render`;
-                const renderResponse = await axios.post(url, {
+                const renderResponse = await axios.post('/figma/manual/render', {
+                    file_key: this.project.file_key,
+                    node_ids: nodeIds,
+                    project_ids: [this.project.id], // 传递项目ID
                     format: this.renderPreviewForm.format,
-                    scale: this.renderPreviewForm.scale,
-                    include_ref_nodes: this.renderPreviewForm.includeRefNodes
+                    scale: this.renderPreviewForm.scale
                 });
                 
                 if (renderResponse.data.code === 0) {
                     const data = renderResponse.data.data;
-                    const totalNodes = data.total_nodes;
-                    const queueIds = data.queue_ids || [];
-                    const estimatedSeconds = data.estimated_duration_seconds || 0;
-                    
-                    // 计算预计时间
-                    const minutes = Math.floor(estimatedSeconds / 60);
-                    const seconds = estimatedSeconds % 60;
-                    const timeText = minutes > 0 
-                        ? `约 ${minutes} 分 ${seconds} 秒` 
-                        : `约 ${seconds} 秒`;
+                    const queueId = data.queue_id;
                     
                     this.$message.success({
-                        message: `渲染队列已创建，共 ${totalNodes} 个节点\n格式: ${this.renderPreviewForm.format.toUpperCase()}, 缩放: ${this.renderPreviewForm.scale}x\n预计时间: ${timeText}`,
+                        message: `渲染队列已创建，共 ${nodeIds.length} 个节点\n格式: ${this.renderPreviewForm.format.toUpperCase()}, 缩放: ${this.renderPreviewForm.scale}x`,
                         duration: 5000
                     });
                     
                     console.log('✅ [Dashboard] 渲染队列已创建:', {
-                        queue_ids: queueIds,
-                        total_nodes: totalNodes,
-                        estimated_seconds: estimatedSeconds,
+                        queue_id: queueId,
+                        total_nodes: nodeIds.length,
                         format: this.renderPreviewForm.format,
                         scale: this.renderPreviewForm.scale
                     });
@@ -2881,6 +2875,90 @@ const ProjectEditorApp = {
     // 切换过滤预览展开/收起状态
     toggleRenderProgress() {
         this.isRenderProgressExpanded = !this.isRenderProgressExpanded;
+    },
+    
+    // 取消项目渲染
+    async cancelProjectRender() {
+        if (!this.project || !this.project.id) {
+            this.$message.error('项目信息不存在');
+            return;
+        }
+        
+        try {
+            // 确认操作 - 根据状态显示不同提示
+            const isActive = this.projectRenderProgress && 
+                           (this.projectRenderProgress.status === 'waiting' || 
+                            this.projectRenderProgress.status === 'processing');
+            
+            const message = isActive 
+                ? '确定要取消当前项目的渲染任务吗？所有相关队列和数据将被删除。'
+                : '确定要清理渲染记录吗？所有相关批次和队列数据将被删除。';
+            
+            const title = isActive ? '取消渲染' : '清理渲染记录';
+            
+            await this.$confirm(message, title, {
+                confirmButtonText: '确定',
+                cancelButtonText: '取消',
+                type: 'warning'
+            });
+            
+            console.log('🛑 [Dashboard] 清理渲染批次: ProjectID=' + this.project.id);
+            
+            // 调用取消接口
+            const response = await axios.post(`/figma/project/${this.project.id}/render/cancel`);
+            
+            if (response.data.code === 0) {
+                this.$message.success('渲染记录已清理');
+                
+                // 立即隐藏渲染进度框 - 设置 hasRender 为 false
+                this.projectRenderProgress = {
+                    hasRender: false,
+                    batchId: null,
+                    renderId: null,
+                    status: 'idle',
+                    progress: 0,
+                    processedNodes: 0,
+                    failedNodes: 0,
+                    totalNodes: 0,
+                    completedQueues: 0,
+                    totalQueues: 0,
+                    cooldownRemaining: 0,
+                    startedAt: null,
+                    errorMessage: '',
+                    message: ''
+                };
+                
+                // 停止轮询
+                this.stopWatchingProjectRender();
+                
+                // 延迟300ms后再次确认状态（确保与后端同步）
+                setTimeout(async () => {
+                    console.log('🔄 [Dashboard] 确认渲染进度状态');
+                    
+                    try {
+                        const progressResponse = await axios.get(`/figma/project/${this.project.id}/render/progress`);
+                        if (progressResponse.data && progressResponse.data.code === 0) {
+                            const progress = progressResponse.data.data;
+                            console.log('📊 [Dashboard] 最新渲染进度:', progress);
+                            
+                            // 如果后端仍然返回有渲染任务（异常情况），显示警告
+                            if (progress && progress.has_render) {
+                                console.warn('⚠️ [Dashboard] 清理后仍检测到渲染任务，可能存在延迟');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('❌ [Dashboard] 确认渲染进度失败:', error);
+                    }
+                }, 300);
+            } else {
+                throw new Error(response.data.message || '取消渲染失败');
+            }
+        } catch (error) {
+            if (error !== 'cancel') { // 用户点击取消按钮时不显示错误
+                console.error('❌ [Dashboard] 取消渲染失败:', error);
+                this.$message.error(error.response?.data?.message || error.message || '取消渲染失败');
+            }
+        }
     },
     
     toggleFilteredPreview() {
@@ -7517,36 +7595,69 @@ Generated on: ${new Date().toLocaleString()}
                 return;
             }
             
-            // 如果不是强制启动，先检查是否有活跃的渲染任务
-            if (!forceStart) {
-                console.log('🔍 [Dashboard] 检查是否有活跃的渲染任务...');
-                FigmaRenderManager.getProjectRenderProgress(this.project.id).then(progress => {
-                    if (!progress || !progress.has_render) {
-                        console.log('📭 [Dashboard] 没有活跃的渲染任务，不启动轮询');
-                        // 清空渲染进度状态
-                        this.projectRenderProgress = {
-                            hasRender: false,
-                            renderId: null,
-                            status: 'idle',
-                            progress: 0,
-                            processedNodes: 0,
-                            failedNodes: 0,
-                            totalNodes: 0,
-                            cooldownRemaining: 0,
-                            message: ''
-                        };
-                        return;
-                    }
-                    
-                    console.log('📦 [Dashboard] 发现活跃的渲染任务，开始监控');
+            console.log('🔍 [Dashboard] 检查渲染任务...', { forceStart });
+            
+            // 先获取渲染进度数据
+            FigmaRenderManager.getProjectRenderProgress(this.project.id).then(progress => {
+                if (!progress || !progress.has_render) {
+                    console.log('📭 [Dashboard] 没有渲染任务');
+                    // 清空渲染进度状态
+                    this.projectRenderProgress = {
+                        hasRender: false,
+                        batchId: null,
+                        renderId: null,
+                        status: 'idle',
+                        progress: 0,
+                        processedNodes: 0,
+                        failedNodes: 0,
+                        totalNodes: 0,
+                        completedQueues: 0,
+                        totalQueues: 0,
+                        cooldownRemaining: 0,
+                        startedAt: null,
+                        errorMessage: '',
+                        message: ''
+                    };
+                    return;
+                }
+                
+                // 有渲染任务，先更新显示进度框
+                console.log('📊 [Dashboard] 渲染任务数据:', progress);
+                this.projectRenderProgress = {
+                    hasRender: progress.has_render,
+                    batchId: progress.batch_id,
+                    renderId: progress.render_id,
+                    status: progress.status,
+                    progress: progress.progress || 0,
+                    processedNodes: progress.processed_nodes || 0,
+                    failedNodes: progress.failed_nodes || 0,
+                    totalNodes: progress.total_nodes || 0,
+                    completedQueues: progress.completed_queues || 0,
+                    totalQueues: progress.total_queues || 0,
+                    cooldownRemaining: progress.cooldown_remaining || 0,
+                    startedAt: progress.started_at,
+                    errorMessage: progress.error_message || '',
+                    message: this.formatRenderMessage(progress)
+                };
+                
+                // 判断是否需要启动轮询
+                const shouldPoll = forceStart || progress.status === 'processing';
+                
+                if (shouldPoll) {
+                    console.log('📦 [Dashboard] 启动轮询监控', { 
+                        reason: forceStart ? '强制启动' : 'processing状态',
+                        status: progress.status 
+                    });
                     this._startPolling();
-                }).catch(error => {
-                    console.error('❌ [Dashboard] 检查渲染任务失败:', error);
-                });
-            } else {
-                console.log('🔍 [Dashboard] 强制启动渲染进度监控');
-                this._startPolling();
-            }
+                } else {
+                    console.log(`📊 [Dashboard] 不启动轮询`, { 
+                        status: progress.status,
+                        forceStart 
+                    });
+                }
+            }).catch(error => {
+                console.error('❌ [Dashboard] 检查渲染任务失败:', error);
+            });
         },
         
         /**
@@ -7559,13 +7670,18 @@ Generated on: ${new Date().toLocaleString()}
                 (progress) => {
                     this.projectRenderProgress = {
                         hasRender: progress.has_render,
+                        batchId: progress.batch_id,
                         renderId: progress.render_id,
                         status: progress.status,
                         progress: progress.progress || 0,
                         processedNodes: progress.processed_nodes || 0,
                         failedNodes: progress.failed_nodes || 0,
                         totalNodes: progress.total_nodes || 0,
+                        completedQueues: progress.completed_queues || 0,
+                        totalQueues: progress.total_queues || 0,
                         cooldownRemaining: progress.cooldown_remaining || 0,
+                        startedAt: progress.started_at,
+                        errorMessage: progress.error_message || '',
                         message: this.formatRenderMessage(progress)
                     };
                 },
@@ -7603,7 +7719,7 @@ Generated on: ${new Date().toLocaleString()}
          * 显示错误详情
          */
         showErrorDetails() {
-            const message = this.projectRenderProgress.message || '无错误信息';
+            const message = this.projectRenderProgress.errorMessage || this.projectRenderProgress.message || '无错误信息';
             this.$alert(message, '渲染错误详情', {
                 confirmButtonText: '确定',
                 type: 'error',
@@ -7633,6 +7749,8 @@ Generated on: ${new Date().toLocaleString()}
                     return `渲染中... ${progress.processed_nodes}/${progress.total_nodes} (${processedPercent}%)`;
                 case 'completed':
                     return '渲染完成！';
+                case 'partial':
+                    return `部分完成，${progress.failed_nodes}个节点失败`;
                 case 'error':
                 case 'failed':
                     return progress.error_message || '渲染失败';
@@ -7650,6 +7768,23 @@ Generated on: ${new Date().toLocaleString()}
             const now = Math.floor(Date.now() / 1000); // 当前Unix时间戳（秒）
             const wait = nextAvailableTime - now;
             return Math.max(0, wait);
+        },
+        
+        /**
+         * 格式化日期时间
+         * @param {string} dateString - ISO日期字符串
+         */
+        formatDateTime(dateString) {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            return date.toLocaleString('zh-CN', { 
+                year: 'numeric', 
+                month: '2-digit', 
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
         },
         
         /**

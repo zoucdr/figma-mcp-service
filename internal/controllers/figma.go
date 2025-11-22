@@ -1430,24 +1430,17 @@ func GetFigmaRenderNodeInfo(c *gin.Context) {
 	}
 
 	// 1. 尝试从本地缓存获取节点树
-	nodeIDs, err := getNodeIDsFromLocalCache(project.ID, project.FileKey, project.RootNodeID)
-	if err == nil && len(nodeIDs) > 0 {
-		fmt.Printf("✅ 从本地缓存获取到 %d 个节点\n", len(nodeIDs))
-
-		// 过滤无效节点
-		originalCount := len(nodeIDs)
-		nodeIDs, _ = filterValidRenderNodeIDs(project.ID, project.FileKey, project.RootNodeID, nodeIDs)
-		if len(nodeIDs) < originalCount {
-			fmt.Printf("🔍 [GetFigmaRenderNodeInfo] 过滤前: %d 个节点，过滤后: %d 个节点\n", originalCount, len(nodeIDs))
-		}
+	nodes, err := getNodesWithTypeFromLocalCache(project.ID, project.FileKey, project.RootNodeID)
+	if err == nil && len(nodes) > 0 {
+		fmt.Printf("✅ 从本地缓存获取到 %d 个节点\n", len(nodes))
 
 		c.JSON(http.StatusOK, gin.H{
 			"code":    0,
 			"message": "获取渲染节点列表成功（从本地缓存）",
 			"data": gin.H{
 				"file_key": project.FileKey,
-				"node_ids": nodeIDs,
-				"count":    len(nodeIDs),
+				"nodes":    nodes,
+				"count":    len(nodes),
 			},
 		})
 		return
@@ -1457,33 +1450,24 @@ func GetFigmaRenderNodeInfo(c *gin.Context) {
 	// 2. 尝试从数据库 figma_file_caches 获取
 	fileCache, err := models.GetFileCache(project.FileKey, project.RootNodeID)
 	if err == nil && fileCache != nil && fileCache.FileData != "" {
-		// 始终从 file_data 提取节点ID，而不是直接使用 node_ids
-		// 这样可以在提取过程中应用 ignore 标记，剔除整个子树
-		fmt.Printf("📦 从数据库缓存的 file_data 提取节点ID（应用 ignore 过滤）...\n")
-		extractedNodeIDs, err := extractNodeIDsFromFileData(project.ID, fileCache.FileData, project.RootNodeID)
-		if err == nil && len(extractedNodeIDs) > 0 {
-			// 注意：extractNodeIDsFromFileData 已经在提取过程中过滤了 ignore 和 visible=false 的节点
-			// filterValidRenderNodeIDs 只是额外的二次过滤（防御性编程）
-			originalCount := len(extractedNodeIDs)
-			extractedNodeIDs, _ = filterValidRenderNodeIDs(project.ID, project.FileKey, project.RootNodeID, extractedNodeIDs)
-			if len(extractedNodeIDs) < originalCount {
-				fmt.Printf("🔍 [GetFigmaRenderNodeInfo] 二次过滤: %d → %d 个节点\n", originalCount, len(extractedNodeIDs))
-			}
-
-			fmt.Printf("✅ 成功从 file_data 提取 %d 个节点ID（已应用 ignore 和 visible 过滤）\n", len(extractedNodeIDs))
+		// 从 file_data 提取节点信息（包含类型）
+		fmt.Printf("📦 从数据库缓存的 file_data 提取节点信息（包含类型，应用 ignore 过滤）...\n")
+		extractedNodes, err := extractNodesWithTypeFromFileData(project.ID, fileCache.FileData, project.RootNodeID)
+		if err == nil && len(extractedNodes) > 0 {
+			fmt.Printf("✅ 成功从 file_data 提取 %d 个节点信息（已应用 ignore 和 visible 过滤）\n", len(extractedNodes))
 
 			c.JSON(http.StatusOK, gin.H{
 				"code":    0,
 				"message": "获取渲染节点列表成功（从数据库缓存）",
 				"data": gin.H{
 					"file_key": project.FileKey,
-					"node_ids": extractedNodeIDs,
-					"count":    len(extractedNodeIDs),
+					"nodes":    extractedNodes,
+					"count":    len(extractedNodes),
 				},
 			})
 			return
 		}
-		fmt.Printf("⚠️ 从 file_data 提取节点ID失败: %v\n", err)
+		fmt.Printf("⚠️ 从 file_data 提取节点信息失败: %v\n", err)
 	} else {
 		if err != nil {
 			fmt.Printf("⚠️ 数据库中未找到文件缓存: %v\n", err)
@@ -1503,8 +1487,8 @@ func GetFigmaRenderNodeInfo(c *gin.Context) {
 		return
 	}
 
-	// 构建节点ID列表，排除标记为 ignore 的节点
-	nodeIDs = make([]string, 0)
+	// 构建节点信息列表，排除标记为 ignore 的节点
+	nodes = make([]models.NodeInfo, 0)
 	nodeIDSet := make(map[string]bool) // 用于去重
 
 	for _, node := range figmaNodes {
@@ -1520,22 +1504,30 @@ func GetFigmaRenderNodeInfo(c *gin.Context) {
 			}
 		}
 
-		nodeIDs = append(nodeIDs, node.NodeID)
+		nodes = append(nodes, models.NodeInfo{
+			ID:   node.NodeID,
+			Type: "", // figma_nodes 表中没有类型信息
+			Name: "", // figma_nodes 表中没有名称信息
+		})
 		nodeIDSet[node.NodeID] = true
 	}
 
-	// 获取依赖节点列表，添加到节点ID列表中（排除重复）
+	// 获取依赖节点列表，添加到节点列表中（排除重复）
 	refNodeIDs, err := models.GetRefNodes(uint(projectID))
 	if err == nil && len(refNodeIDs) > 0 {
 		for _, refNodeID := range refNodeIDs {
 			if !nodeIDSet[refNodeID] {
-				nodeIDs = append(nodeIDs, refNodeID)
+				nodes = append(nodes, models.NodeInfo{
+					ID:   refNodeID,
+					Type: "",
+					Name: "",
+				})
 				nodeIDSet[refNodeID] = true
 			}
 		}
 	}
 
-	if len(nodeIDs) == 0 {
+	if len(nodes) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    404,
 			"message": "未找到节点列表，请先刷新节点树",
@@ -1543,14 +1535,14 @@ func GetFigmaRenderNodeInfo(c *gin.Context) {
 		return
 	}
 
-	// 返回简化的格式（只返回节点ID列表）
+	// 返回简化的格式（返回节点信息列表）
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "获取渲染节点列表成功（从 figma_nodes 表）",
 		"data": gin.H{
 			"file_key": project.FileKey,
-			"node_ids": nodeIDs,
-			"count":    len(nodeIDs),
+			"nodes":    nodes,
+			"count":    len(nodes),
 		},
 	})
 }
@@ -1670,80 +1662,38 @@ func getNodeIDsFromLocalCache(projectID uint, fileKey, rootNodeID string) ([]str
 	return extractNodeIDsFromFileData(projectID, string(data), rootNodeID)
 }
 
+// getNodesWithTypeFromLocalCache 从本地缓存获取节点信息（包含类型）
+func getNodesWithTypeFromLocalCache(projectID uint, fileKey, rootNodeID string) ([]models.NodeInfo, error) {
+	// 创建安全的文件名
+	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(rootNodeID)
+	cacheDir := filepath.Join("temp", fileKey, "documents")
+	cacheFile := filepath.Join(cacheDir, safeNodeID+".json")
+
+	// 检查文件是否存在
+	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("本地缓存文件不存在: %s", cacheFile)
+	}
+
+	// 读取缓存文件
+	data, err := os.ReadFile(cacheFile)
+	if err != nil {
+		return nil, fmt.Errorf("读取本地缓存文件失败: %v", err)
+	}
+
+	// 提取节点信息（包含类型）
+	return extractNodesWithTypeFromFileData(projectID, string(data), rootNodeID)
+		}
+
 // extractNodeIDsFromFileData 从 Figma 文件数据（JSON）中提取所有节点ID
 func extractNodeIDsFromFileData(projectID uint, fileDataJSON string, rootNodeID string) ([]string, error) {
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(fileDataJSON), &data); err != nil {
-		return nil, fmt.Errorf("解析文件数据失败: %v", err)
-	}
-
-	nodeIDs := make([]string, 0)
-	nodeIDSet := make(map[string]bool)
-
-	// 获取节点的modify信息（用于检查ignore标记）
-	nodeModifys := make(map[string]map[string]interface{})
-	var figmaNodes []models.FigmaNode
-	if err := models.DB.Where("project_id = ?", projectID).Find(&figmaNodes).Error; err == nil {
-		for _, node := range figmaNodes {
-			if node.Modifys != "" {
-				var modifyData map[string]interface{}
-				if err := json.Unmarshal([]byte(node.Modifys), &modifyData); err == nil {
-					nodeModifys[node.NodeID] = modifyData
-				}
-			}
-		}
-		fmt.Printf("✅ 加载了 %d 个节点的modify信息用于过滤\n", len(nodeModifys))
-	}
-
-	// 处理 document 节点（完整文件）
-	if document, ok := data["document"].(map[string]interface{}); ok {
-		// 添加根节点
-		if rootNodeID != "" && rootNodeID != "0:0" {
-			nodeIDs = append(nodeIDs, rootNodeID)
-			nodeIDSet[rootNodeID] = true
-		}
-
-		// 递归提取所有子节点（排除不可见节点及其子树）
-		extractAllNodeIDsRecursive(document, &nodeIDs, nodeIDSet, nodeModifys)
-	} else if nodes, ok := data["nodes"].(map[string]interface{}); ok {
-		// 处理特定节点查询（nodes 格式）
-		for nodeID, nodeData := range nodes {
-			if nodeDataMap, ok := nodeData.(map[string]interface{}); ok {
-				if documentNode, ok := nodeDataMap["document"].(map[string]interface{}); ok {
-					// 检查根节点是否可见
-					if visible, hasVisible := documentNode["visible"]; hasVisible {
-						if visibleBool, ok := visible.(bool); ok && !visibleBool {
-							fmt.Printf("🚫 跳过不可见节点及其子树: %s\n", nodeID)
-							continue
-						}
+	// 直接使用 models 包中的函数
+	return models.ExtractValidNodeIDs(fileDataJSON, projectID)
 					}
 
-					// 检查根节点是否被标记为ignore
-					if modifys, hasModify := nodeModifys[nodeID]; hasModify {
-						if ignore, ok := modifys["ignore"].(bool); ok && ignore {
-							fmt.Printf("🚫 跳过被标记为忽略的节点及其子树: %s\n", nodeID)
-							continue
-						}
-					}
-
-					// 添加当前节点
-					if !nodeIDSet[nodeID] {
-						nodeIDs = append(nodeIDs, nodeID)
-						nodeIDSet[nodeID] = true
-					}
-					// 递归提取子节点
-					extractAllNodeIDsRecursive(documentNode, &nodeIDs, nodeIDSet, nodeModifys)
-				}
-			}
-		}
-	}
-
-	if len(nodeIDs) == 0 {
-		return nil, fmt.Errorf("未从文件数据中提取到任何节点ID")
-	}
-
-	fmt.Printf("从文件数据中提取到 %d 个节点ID\n", len(nodeIDs))
-	return nodeIDs, nil
+// extractNodesWithTypeFromFileData 从 Figma 文件数据（JSON）中提取节点信息（包含类型）
+func extractNodesWithTypeFromFileData(projectID uint, fileDataJSON string, rootNodeID string) ([]models.NodeInfo, error) {
+	// 使用 models 包中的新函数
+	return models.ExtractValidNodesWithType(fileDataJSON, projectID)
 }
 
 // extractAllNodeIDsRecursive 递归提取节点ID（用于从文件数据提取）
