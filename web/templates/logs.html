@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .title }}</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui@2.15.14/lib/theme-chalk/index.css">
+    <link rel="stylesheet" href="/static/css/logs.css">
+</head>
+<body>
+    <div id="logs-app">
+        <el-container>
+            <!-- 头部导航 -->
+            <el-header class="app-header">
+                <div class="header-left">
+                    <h1 class="logo" @click="goToHome">Figma Deliver</h1>
+                    <span class="page-title">日志查看工具</span>
+                </div>
+                <div class="header-right">
+                    <el-button type="primary" size="medium" @click="showUploadDialog" icon="el-icon-upload">
+                        上传日志
+                    </el-button>
+                    <el-button size="medium" @click="refreshList" icon="el-icon-refresh">
+                        刷新
+                    </el-button>
+                </div>
+            </el-header>
+
+            <!-- 主内容区 -->
+            <el-main class="app-main">
+                <!-- 面包屑导航 -->
+                <div class="breadcrumb-container">
+                    <el-breadcrumb separator="/">
+                        <el-breadcrumb-item>
+                            <a @click="navigateTo('')">logs</a>
+                        </el-breadcrumb-item>
+                        <el-breadcrumb-item v-for="(segment, index) in pathSegments" :key="index">
+                            <a @click="navigateTo(getPathUpToSegment(index))">{{`{{ segment }}`}}</a>
+                        </el-breadcrumb-item>
+                    </el-breadcrumb>
+                </div>
+
+                <!-- 加载状态 -->
+                <div v-if="loading" class="loading-container">
+                    <el-skeleton :rows="5" animated />
+                </div>
+
+                <!-- 文件列表 -->
+                <div v-else class="files-container">
+                    <el-empty v-if="objects.length === 0" description="该目录为空"></el-empty>
+                    
+                    <el-table 
+                        v-else
+                        :data="objects"
+                        class="files-table"
+                        style="width: 100%"
+                        :default-sort="{prop: 'name', order: 'ascending'}"
+                        @row-click="handleRowClick">
+                        
+                        <el-table-column label="名称" prop="name" sortable>
+                            <template slot-scope="scope">
+                                <div class="file-name">
+                                    <i :class="scope.row.is_dir ? 'el-icon-folder' : 'el-icon-document'"></i>
+                                    <span>{{`{{ scope.row.name }}`}}</span>
+                                </div>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="大小" prop="size" sortable width="150">
+                            <template slot-scope="scope">
+                                <span v-if="!scope.row.is_dir">{{`{{ formatSize(scope.row.size) }}`}}</span>
+                                <span v-else>-</span>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="修改时间" prop="last_modified" sortable width="200">
+                            <template slot-scope="scope">
+                                <span v-if="!scope.row.is_dir">{{`{{ formatDate(scope.row.last_modified) }}`}}</span>
+                                <span v-else>-</span>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="操作" width="200" align="right">
+                            <template slot-scope="scope">
+                                <div v-if="!scope.row.is_dir" class="action-buttons">
+                                    <el-button 
+                                        type="text" 
+                                        size="small" 
+                                        icon="el-icon-view"
+                                        @click.stop="viewFile(scope.row)">
+                                        查看
+                                    </el-button>
+                                    <el-button 
+                                        type="text" 
+                                        size="small" 
+                                        icon="el-icon-download"
+                                        @click.stop="downloadFile(scope.row)">
+                                        下载
+                                    </el-button>
+                                </div>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </div>
+            </el-main>
+        </el-container>
+
+        <!-- 上传对话框 -->
+        <el-dialog
+            title="上传日志文件"
+            :visible.sync="uploadDialogVisible"
+            width="700px"
+            :close-on-click-modal="false">
+            
+            <el-tabs v-model="uploadTabActive">
+                <!-- 网页上传标签页 -->
+                <el-tab-pane label="网页上传" name="web">
+                    <el-form :model="uploadForm" ref="uploadForm" label-width="100px">
+                        <el-form-item label="当前路径">
+                            <el-input v-model="currentPath" disabled></el-input>
+                        </el-form-item>
+                        
+                        <el-form-item label="选择文件">
+                            <el-upload
+                                ref="upload"
+                                action="#"
+                                :auto-upload="false"
+                                :on-change="handleFileChange"
+                                :file-list="fileList"
+                                :limit="1">
+                                <el-button slot="trigger" size="small" type="primary">选取文件</el-button>
+                                <div slot="tip" class="el-upload__tip">支持所有文本类型文件（.txt, .log, .json等）</div>
+                            </el-upload>
+                        </el-form-item>
+                    </el-form>
+                </el-tab-pane>
+                
+                <!-- API调用标签页 -->
+                <el-tab-pane label="API调用" name="api">
+                    <div class="api-docs">
+                        <h3 class="api-title">📡 API上传接口</h3>
+                        
+                        <div class="api-section">
+                            <h4>接口地址</h4>
+                            <div class="code-block">
+                                <code>POST {{`{{ getApiUrl() }}`}}/tools/api/logs/upload</code>
+                                <el-button class="copy-btn" type="text" size="mini" @click="copyApiUrl">复制</el-button>
+                            </div>
+                        </div>
+                        
+                        <div class="api-section">
+                            <h4>请求参数</h4>
+                            <table class="api-table">
+                                <thead>
+                                    <tr>
+                                        <th>参数名</th>
+                                        <th>类型</th>
+                                        <th>说明</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><code>file</code></td>
+                                        <td>文件</td>
+                                        <td>要上传的日志文件</td>
+                                    </tr>
+                                    <tr>
+                                        <td><code>path</code></td>
+                                        <td>字符串</td>
+                                        <td>相对路径（可选，默认为空）</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="api-section">
+                            <h4>调用示例</h4>
+                            <el-tabs type="card" class="example-tabs">
+                                <el-tab-pane label="cURL">
+                                    <div class="code-block">
+<pre>curl -X POST {{`{{ getApiUrl() }}`}}/tools/api/logs/upload \
+  -F "file=@/path/to/logfile.txt" \
+  -F "path=mycoria/Windows"</pre>
+                                        <el-button class="copy-btn" type="text" size="mini" @click="copyCurlExample">复制</el-button>
+                                    </div>
+                                </el-tab-pane>
+                                
+                                <el-tab-pane label="PowerShell">
+                                    <div class="code-block">
+<pre>$form = @{
+    path = "mycoria/Windows"
+    file = Get-Item -Path "C:\logs\test.log"
+}
+Invoke-RestMethod -Uri "{{`{{ getApiUrl() }}`}}/tools/api/logs/upload" `
+  -Method Post -Form $form</pre>
+                                        <el-button class="copy-btn" type="text" size="mini" @click="copyPsExample">复制</el-button>
+                                    </div>
+                                </el-tab-pane>
+                                
+                                <el-tab-pane label="C# (Unity)">
+                                    <div class="code-block">
+<pre>using var client = new HttpClient();
+using var formData = new MultipartFormDataContent();
+
+formData.Add(new StringContent("mycoria/Windows"), "path");
+
+var fileBytes = File.ReadAllBytes(filePath);
+var fileContent = new ByteArrayContent(fileBytes);
+formData.Add(fileContent, "file", fileName);
+
+var response = await client.PostAsync(
+    "{{`{{ getApiUrl() }}`}}/tools/api/logs/upload", 
+    formData);</pre>
+                                        <el-button class="copy-btn" type="text" size="mini" @click="copyCsharpExample">复制</el-button>
+                                    </div>
+                                </el-tab-pane>
+                                
+                                <el-tab-pane label="Python">
+                                    <div class="code-block">
+<pre>import requests
+
+files = {'file': open('/path/to/logfile.txt', 'rb')}
+data = {'path': 'mycoria/Windows'}
+
+response = requests.post(
+    '{{`{{ getApiUrl() }}`}}/tools/api/logs/upload',
+    files=files,
+    data=data
+)</pre>
+                                        <el-button class="copy-btn" type="text" size="mini" @click="copyPythonExample">复制</el-button>
+                                    </div>
+                                </el-tab-pane>
+                            </el-tabs>
+                        </div>
+                        
+                        <div class="api-section">
+                            <h4>响应示例</h4>
+                            <div class="code-block">
+<pre>{
+    "success": true,
+    "object_key": "logs/mycoria/Windows/test.log",
+    "url": "https://obs.cn-north-4.myhuaweicloud.com/...",
+    "size": 1024
+}</pre>
+                            </div>
+                        </div>
+                        
+                        <div class="api-note">
+                            <i class="el-icon-info"></i>
+                            <span>此接口无需登录和任何令牌验证，可直接调用</span>
+                        </div>
+                    </div>
+                </el-tab-pane>
+            </el-tabs>
+            
+            <span slot="footer">
+                <el-button @click="uploadDialogVisible = false" icon="el-icon-close">取消</el-button>
+                <el-button v-if="uploadTabActive === 'web'" type="primary" @click="submitUpload" :loading="uploading" icon="el-icon-upload2">确定上传</el-button>
+            </span>
+        </el-dialog>
+
+        <!-- 查看文件对话框 -->
+        <el-dialog
+            :title="viewDialogTitle"
+            :visible.sync="viewDialogVisible"
+            width="80%"
+            top="5vh"
+            :close-on-click-modal="false">
+            
+            <div v-if="loadingContent" class="loading-container">
+                <el-skeleton :rows="10" animated />
+            </div>
+            
+            <div v-else class="file-content">
+                <pre>{{`{{ fileContent }}`}}</pre>
+            </div>
+            
+            <span slot="footer">
+                <el-button @click="viewDialogVisible = false" icon="el-icon-close">关闭</el-button>
+                <el-button type="primary" @click="copyContent" icon="el-icon-document-copy">复制内容</el-button>
+            </span>
+        </el-dialog>
+    </div>
+
+    <script src="https://unpkg.com/vue@2.6.14/dist/vue.min.js"></script>
+    <script src="https://unpkg.com/element-ui@2.15.14/lib/index.js"></script>
+    <script src="https://unpkg.com/axios@1.6.0/dist/axios.min.js"></script>
+    <script>
+        // 初始化数据
+        window.initialData = {
+            relativePath: "{{ .relative_path }}"
+        };
+    </script>
+    <script src="/static/js/logs.js"></script>
+</body>
+</html>
+
+

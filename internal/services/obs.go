@@ -449,3 +449,156 @@ func (s *OBSService) BatchUploadImagesFromURLs(imageMap map[string]string, fileK
 
 	return results
 }
+
+// ===================== 日志文件管理 =====================
+
+// ObjectInfo 对象信息
+type ObjectInfo struct {
+	Key          string    `json:"key"`
+	Name         string    `json:"name"`
+	Size         int64     `json:"size"`
+	LastModified time.Time `json:"last_modified"`
+	IsDir        bool      `json:"is_dir"`
+}
+
+// ListObjectsInPath 列出指定路径下的对象
+func (s *OBSService) ListObjectsInPath(prefix string) ([]ObjectInfo, error) {
+	if !s.enabled {
+		return nil, fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.ListObjectsInput{}
+	input.Bucket = s.bucketName
+	input.Prefix = prefix
+	input.Delimiter = "/" // 使用分隔符来模拟目录结构
+	input.MaxKeys = 1000  // 每次最多返回1000个对象
+
+	output, err := s.client.ListObjects(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 列出对象失败: %v", err)
+		return nil, fmt.Errorf("列出对象失败: %w", err)
+	}
+
+	var objects []ObjectInfo
+
+	// 添加子目录（CommonPrefixes）
+	for _, commonPrefix := range output.CommonPrefixes {
+		// 移除前缀和末尾的斜杠，获取目录名
+		dirName := strings.TrimPrefix(commonPrefix, prefix)
+		dirName = strings.TrimSuffix(dirName, "/")
+
+		objects = append(objects, ObjectInfo{
+			Key:   commonPrefix,
+			Name:  dirName,
+			IsDir: true,
+		})
+	}
+
+	// 添加文件对象
+	for _, content := range output.Contents {
+		// 跳过目录本身
+		if content.Key == prefix {
+			continue
+		}
+
+		// 获取文件名（移除前缀）
+		fileName := strings.TrimPrefix(content.Key, prefix)
+
+		objects = append(objects, ObjectInfo{
+			Key:          content.Key,
+			Name:         fileName,
+			Size:         content.Size,
+			LastModified: content.LastModified,
+			IsDir:        false,
+		})
+	}
+
+	log.Printf("✅ [OBS] 列出对象成功: %s (%d 个对象)", prefix, len(objects))
+
+	return objects, nil
+}
+
+// UploadLogFile 上传日志文件到OBS
+func (s *OBSService) UploadLogFile(fileData []byte, relativePath, fileName string) (string, error) {
+	if !s.enabled {
+		return "", fmt.Errorf("OBS服务未启用")
+	}
+
+	// 构建完整的对象键：logs/{relativePath}/{fileName}
+	var objectKey string
+	if relativePath != "" && relativePath != "/" {
+		objectKey = filepath.Join("logs", relativePath, fileName)
+	} else {
+		objectKey = filepath.Join("logs", fileName)
+	}
+
+	// Windows路径分隔符转换为Unix风格
+	objectKey = filepath.ToSlash(objectKey)
+
+	// 根据文件扩展名确定Content-Type
+	contentType := "application/octet-stream"
+	ext := strings.ToLower(filepath.Ext(fileName))
+	switch ext {
+	case ".txt", ".log":
+		contentType = "text/plain; charset=utf-8"
+	case ".json":
+		contentType = "application/json; charset=utf-8"
+	case ".xml":
+		contentType = "application/xml; charset=utf-8"
+	case ".html":
+		contentType = "text/html; charset=utf-8"
+	}
+
+	// 上传到OBS
+	input := &obs.PutObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = objectKey
+	input.Body = bytes.NewReader(fileData)
+	input.ContentType = contentType
+
+	output, err := s.client.PutObject(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 上传日志文件失败: %v", err)
+		return "", fmt.Errorf("上传日志文件失败: %w", err)
+	}
+
+	if output.StatusCode != 200 {
+		return "", fmt.Errorf("上传失败，状态码: %d", output.StatusCode)
+	}
+
+	log.Printf("✅ [OBS] 日志文件上传成功: %s (%d bytes)", objectKey, len(fileData))
+
+	return objectKey, nil
+}
+
+// DownloadLogFile 下载日志文件
+func (s *OBSService) DownloadLogFile(objectKey string) ([]byte, string, error) {
+	if !s.enabled {
+		return nil, "", fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.GetObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = objectKey
+
+	output, err := s.client.GetObject(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 下载日志文件失败: %v", err)
+		return nil, "", fmt.Errorf("下载日志文件失败: %w", err)
+	}
+	defer output.Body.Close()
+
+	if output.StatusCode != 200 {
+		return nil, "", fmt.Errorf("下载失败，状态码: %d", output.StatusCode)
+	}
+
+	// 读取数据
+	data, err := io.ReadAll(output.Body)
+	if err != nil {
+		return nil, "", err
+	}
+
+	log.Printf("✅ [OBS] 日志文件下载成功: %s (%d bytes)", objectKey, len(data))
+
+	return data, output.ContentType, nil
+}

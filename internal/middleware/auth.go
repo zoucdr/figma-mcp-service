@@ -56,8 +56,10 @@ func CSRF() gin.HandlerFunc {
 			csrfToken = token
 		}
 
-		// 跳过MCP路径的CSRF验证
-		if strings.HasPrefix(c.Request.URL.Path, "/mcp/") || strings.HasPrefix(c.Request.URL.Path, "/mcp-api/") {
+		// 跳过MCP路径和日志API的CSRF验证
+		if strings.HasPrefix(c.Request.URL.Path, "/mcp/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/mcp-api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/tools/api/logs/") {
 			c.Next()
 			return
 		}
@@ -142,10 +144,10 @@ func GetUserIDOptional(c *gin.Context) uint {
 	if userID == nil {
 		return 0
 	}
-	
+
 	if id, ok := userID.(uint); ok {
 		return id
 	}
-	
+
 	return 0
 }

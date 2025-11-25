@@ -166,6 +166,9 @@ func main() {
 	controllers.SetGlobalOBSService(obsService)
 	services.SetGlobalOBSService(obsService)
 
+	// 设置日志管理OBS服务实例
+	controllers.SetLogsOBSService(obsService)
+
 	// 初始化缓存和队列服务
 	cacheService := services.NewCacheService(
 		uint32(appConfig.FigmaAPI.FileAPICooldown),
@@ -178,10 +181,10 @@ func main() {
 	)
 	// 初始化渲染批次服务
 	batchService := services.NewRenderBatchService(queueService)
-	
+
 	// 设置队列服务的批次服务引用（用于队列状态变化时更新批次）
 	queueService.SetBatchService(batchService)
-	
+
 	log.Printf("✅ 缓存和队列服务初始化完成")
 
 	// 初始化调度服务
@@ -359,6 +362,19 @@ func main() {
 	shareAPIGroup.POST("/shares/:id/unlike", middleware.RequireLogin(), controllers.UnlikePromptShare)
 	shareAPIGroup.GET("/shares/:id/like-status", middleware.RequireLogin(), controllers.CheckLikeStatus)
 	shareAPIGroup.GET("/my-shares", middleware.RequireLogin(), controllers.GetMyShares)
+
+	// 日志管理工具 - 无需登录
+	toolsGroup := r.Group("/tools")
+	// 日志查看页面（支持路径参数）
+	toolsGroup.GET("/logs", controllers.LogsPage)
+	toolsGroup.GET("/logs/*path", controllers.LogsPage)
+
+	// 日志管理 API - 无需登录
+	logsAPIGroup := toolsGroup.Group("/api/logs")
+	logsAPIGroup.GET("/list", controllers.ListLogs)        // 列出日志文件
+	logsAPIGroup.POST("/upload", controllers.UploadLog)    // 上传日志文件
+	logsAPIGroup.GET("/view", controllers.ViewLog)         // 查看日志文件内容
+	logsAPIGroup.GET("/download", controllers.DownloadLog) // 下载日志文件
 
 	// 个人资料页面 - 需要登录
 	profileGroup := r.Group("/profile")
