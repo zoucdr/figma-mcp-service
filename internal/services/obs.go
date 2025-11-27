@@ -618,7 +618,7 @@ func (s *OBSService) DeleteDirectory(prefix string) (int, error) {
 	input.MaxKeys = 1000 // 一次最多列出1000个
 
 	var allKeys []string
-	
+
 	for {
 		output, err := s.client.ListObjects(input)
 		if err != nil {
@@ -635,7 +635,7 @@ func (s *OBSService) DeleteDirectory(prefix string) (int, error) {
 		if !output.IsTruncated {
 			break
 		}
-		
+
 		// 设置下一次查询的起始位置
 		input.Marker = output.NextMarker
 	}
@@ -658,11 +658,11 @@ func (s *OBSService) DeleteDirectory(prefix string) (int, error) {
 		}
 
 		batch := allKeys[i:end]
-		
+
 		// 构造批量删除请求
 		deleteInput := &obs.DeleteObjectsInput{}
 		deleteInput.Bucket = s.bucketName
-		
+
 		objects := make([]obs.ObjectToDelete, len(batch))
 		for j, key := range batch {
 			objects[j] = obs.ObjectToDelete{Key: key}
@@ -678,7 +678,7 @@ func (s *OBSService) DeleteDirectory(prefix string) (int, error) {
 
 		// 统计成功删除的数量
 		deleteCount += len(deleteOutput.Deleteds)
-		
+
 		// 记录删除失败的对象
 		for _, deleted := range deleteOutput.Errors {
 			log.Printf("⚠️ [OBS] 删除失败: %s (错误: %s)", deleted.Key, deleted.Message)

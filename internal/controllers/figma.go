@@ -266,64 +266,47 @@ func GetFigmaNodeTree(c *gin.Context) {
 				project.FileKey, project.RootNodeID)
 			needAPIFallback = true
 		} else {
-			// 解析缓存数据
-			var result map[string]interface{}
-			if err := json.Unmarshal([]byte(cache.FileData), &result); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "解析节点树缓存失败: " + err.Error(),
-				})
-				return
-			}
+			// 使用与 LoadCachedNodesFromFile 相同的解析逻辑
+			var fileDataToUse string
 
 			// 如果需要提取子树
 			if cache.RootNodeID != project.RootNodeID {
 				// 找到的是父缓存树，需要提取子树
 				subtreeData, err := models.ExtractSubtree(cache.FileData, project.RootNodeID)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"error": "提取子树失败: " + err.Error(),
-					})
-					return
+					log.Printf("❌ [GetFigmaNodeTree] 提取子树失败: %v", err)
+					needAPIFallback = true
+				} else {
+					fileDataToUse = subtreeData
 				}
-
-				// 解析子树
-				if err := json.Unmarshal([]byte(subtreeData), &result); err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"error": "解析子树数据失败: " + err.Error(),
-					})
-					return
-				}
+			} else {
+				fileDataToUse = cache.FileData
 			}
 
-			// 解析节点数据
-			if nodesData, ok := result["nodes"].(map[string]interface{}); ok {
-				// 多节点格式
-				nodes = make([]map[string]interface{}, 0)
-				for _, nodeData := range nodesData {
-					if nodeMap, ok := nodeData.(map[string]interface{}); ok {
-						if document, ok := nodeMap["document"].(map[string]interface{}); ok {
-							nodes = append(nodes, document)
-						}
+			// 只有成功获取数据才继续解析
+			if !needAPIFallback {
+				// 解析 JSON 数据
+				var result map[string]interface{}
+				if err := json.Unmarshal([]byte(fileDataToUse), &result); err != nil {
+					log.Printf("❌ [GetFigmaNodeTree] 解析数据库缓存JSON失败: %v", err)
+					needAPIFallback = true
+				} else {
+					// 使用与 LoadCachedNodesFromFile 相同的 parseFigmaNodes 函数
+					dbNodes, err := services.ParseFigmaNodesFromData(result, project.RootNodeID)
+					if err != nil {
+						log.Printf("❌ [GetFigmaNodeTree] 解析节点数据失败: %v", err)
+						needAPIFallback = true
+					} else if len(dbNodes) == 0 {
+						log.Printf("⚠️ [GetFigmaNodeTree] 数据库缓存解析后无有效节点")
+						needAPIFallback = true
+					} else {
+						nodes = dbNodes
+						cacheSource = "database"
+						log.Printf("✅ [GetFigmaNodeTree] 从数据库缓存获取节点树 (FileKey=%s, NodeID=%s, 节点数=%d)",
+							project.FileKey, project.RootNodeID, len(nodes))
 					}
 				}
-			} else if document, ok := result["document"].(map[string]interface{}); ok {
-				// 单节点格式
-				nodes = []map[string]interface{}{document}
-			} else {
-				// 可能直接就是节点对象
-				nodes = []map[string]interface{}{result}
 			}
-
-			if len(nodes) == 0 {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "节点树数据格式错误",
-				})
-				return
-			}
-
-			cacheSource = "database"
-			log.Printf("✅ [GetFigmaNodeTree] 从数据库缓存获取节点树 (FileKey=%s, NodeID=%s)",
-				project.FileKey, project.RootNodeID)
 		}
 	}
 
@@ -1682,13 +1665,13 @@ func getNodesWithTypeFromLocalCache(projectID uint, fileKey, rootNodeID string) 
 
 	// 提取节点信息（包含类型）
 	return extractNodesWithTypeFromFileData(projectID, string(data), rootNodeID)
-		}
+}
 
 // extractNodeIDsFromFileData 从 Figma 文件数据（JSON）中提取所有节点ID
 func extractNodeIDsFromFileData(projectID uint, fileDataJSON string, rootNodeID string) ([]string, error) {
 	// 直接使用 models 包中的函数
 	return models.ExtractValidNodeIDs(fileDataJSON, projectID)
-					}
+}
 
 // extractNodesWithTypeFromFileData 从 Figma 文件数据（JSON）中提取节点信息（包含类型）
 func extractNodesWithTypeFromFileData(projectID uint, fileDataJSON string, rootNodeID string) ([]models.NodeInfo, error) {

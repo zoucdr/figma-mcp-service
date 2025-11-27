@@ -1919,6 +1919,25 @@ const ProjectEditorApp = {
         }
     },
     
+    // 确认刷新节点树（弹出二次确认框）
+    confirmRefreshNodeTree() {
+        this.$confirm('刷新节点树将从 Figma API 获取最新数据，这会消耗您的 API 配额。是否继续？', '确认刷新', {
+            confirmButtonText: '确定刷新',
+            cancelButtonText: '取消',
+            type: 'warning',
+            distinguishCancelAndClose: true,
+            cancelButtonClass: 'el-button--default',
+            customClass: 'refresh-confirm-dialog'
+        }).then(() => {
+            // 用户确认，执行刷新
+            this.loadProjectData(true);
+        }).catch((action) => {
+            if (action === 'cancel') {
+                this.$message.info('已取消刷新');
+            }
+        });
+    },
+    
     // 加载项目数据
     loadProjectData(forceRefresh = false) {
         if (!this.project || !this.project.id) return;

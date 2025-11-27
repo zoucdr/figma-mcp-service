@@ -4386,3 +4386,24 @@ h1, h2, h3, h4, h5, h6, p, span, div {
 .app-container:has(.dashboard-footer-status) {
     padding-bottom: 50px;
 }
+/* 鍒锋柊鑺傜偣鏍戠‘璁ゅ璇濇鏍峰紡 */
+.refresh-confirm-dialog .el-message-box__message {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.refresh-confirm-dialog .el-message-box__btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.refresh-confirm-dialog .el-button--primary {
+    background-color: #E6A23C;
+    border-color: #E6A23C;
+}
+
+.refresh-confirm-dialog .el-button--primary:hover {
+    background-color: #EBB563;
+    border-color: #EBB563;
+}

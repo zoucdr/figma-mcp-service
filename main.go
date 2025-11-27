@@ -371,10 +371,10 @@ func main() {
 
 	// 日志管理 API - 无需登录
 	logsAPIGroup := toolsGroup.Group("/api/logs")
-	logsAPIGroup.GET("/list", controllers.ListLogs)            // 列出日志文件
-	logsAPIGroup.POST("/upload", controllers.UploadLog)        // 上传日志文件
-	logsAPIGroup.GET("/view", controllers.ViewLog)             // 查看日志文件内容
-	logsAPIGroup.GET("/download", controllers.DownloadLog)     // 下载日志文件
+	logsAPIGroup.GET("/list", controllers.ListLogs)                // 列出日志文件
+	logsAPIGroup.POST("/upload", controllers.UploadLog)            // 上传日志文件
+	logsAPIGroup.GET("/view", controllers.ViewLog)                 // 查看日志文件内容
+	logsAPIGroup.GET("/download", controllers.DownloadLog)         // 下载日志文件
 	logsAPIGroup.DELETE("/directory", controllers.DeleteDirectory) // 删除目录
 
 	// 个人资料页面 - 需要登录

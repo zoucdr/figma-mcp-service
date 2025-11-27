@@ -699,6 +699,16 @@ func LoadCachedNodesFromFile(fileKey, nodeID string) ([]map[string]interface{}, 
 	return loadCachedNodes(fileKey, nodeID)
 }
 
+// ParseFigmaNodesFromData 解析Figma节点数据（导出给 controller 使用）
+// 这个函数提供与 LoadCachedNodesFromFile 相同的数据格式转换
+func ParseFigmaNodesFromData(data map[string]interface{}, rootNodeID string) ([]map[string]interface{}, error) {
+	nodes := parseFigmaNodes(data, rootNodeID)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("未能解析出有效的节点数据")
+	}
+	return nodes, nil
+}
+
 // loadCachedNodes 加载缓存的节点树数据
 func loadCachedNodes(fileKey, nodeID string) ([]map[string]interface{}, error) {
 	// 使用共享的文件读取函数

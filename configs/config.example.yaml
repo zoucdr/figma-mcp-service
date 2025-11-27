@@ -12,13 +12,12 @@ app:
   session_secret: "your-secret-key-here"
 
 database:
-  # MySQL 数据库配置
-  host: "127.0.0.1"
+  host: "localhost"
   port: "3306"
   user: "root"
-  password: "your-password-here"
+  password: "mysql@zht2182"
   name: "figma_deliver"
-
+  
 storage:
   # 导出文件存储目录
   export_dir: "./exports"
