@@ -39,20 +39,32 @@ func (t *FigmaTokenCooldown) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
-// FigmaFileCache 节点树缓存表
+// FigmaFileCache 节点树缓存表（纯数据缓存，不包含队列状态）
 type FigmaFileCache struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	FileKey     string `gorm:"size:100;not null;uniqueIndex:idx_file_root" json:"file_key"`
+	RootNodeID  string `gorm:"size:100;not null;uniqueIndex:idx_file_root" json:"root_node_id"`
+	NodeIDs     string `gorm:"type:text" json:"node_ids"`         // 逗号分隔的节点ID列表
+	FileData    string `gorm:"type:mediumtext;not null" json:"-"` // JSON数据，最大16MB
+	FileVersion string `gorm:"size:100" json:"file_version"`
+	HitCount    uint   `gorm:"default:0" json:"hit_count"`
+	CreatedAt   uint32 `gorm:"not null" json:"created_at"` // Unix时间戳（秒）
+	UpdatedAt   uint32 `gorm:"not null" json:"updated_at"` // Unix时间戳（秒）
+}
+
+// FigmaFileFetchQueue 文件获取请求队列表
+type FigmaFileFetchQueue struct {
 	ID           uint   `gorm:"primaryKey" json:"id"`
-	FigmaToken   string `gorm:"size:255;not null;index:idx_figma_token" json:"figma_token"` // 必须使用此token请求Figma API
-	FileKey      string `gorm:"size:100;not null;uniqueIndex:idx_file_root" json:"file_key"`
-	RootNodeID   string `gorm:"size:100;not null;uniqueIndex:idx_file_root" json:"root_node_id"`
-	NodeIDs      string `gorm:"type:text" json:"node_ids"`         // 逗号分隔的节点ID列表
-	FileData     string `gorm:"type:mediumtext;not null" json:"-"` // JSON数据，最大16MB
-	FileVersion  string `gorm:"size:100" json:"file_version"`
-	Status       string `gorm:"size:20;not null;default:'waiting';index:idx_status" json:"status"` // waiting, loading, loaded, error
+	FigmaToken   string `gorm:"size:255;not null;index:idx_figma_token;index:idx_token_status" json:"figma_token"` // 必须使用此token请求Figma API
+	FileKey      string `gorm:"size:100;not null;index:idx_file_key" json:"file_key"`
+	RootNodeID   string `gorm:"size:100;not null;uniqueIndex:idx_fetch_file_root" json:"root_node_id"`
+	NodeIDs      string `gorm:"type:text" json:"node_ids"`                                                                           // 逗号分隔的节点ID列表（请求参数）
+	Status       string `gorm:"size:20;not null;default:'waiting';index:idx_status;index:idx_token_status" json:"status"`           // waiting, loading, loaded, error
 	ErrorMessage string `gorm:"type:text" json:"error_message"`
-	HitCount     uint   `gorm:"default:0" json:"hit_count"`
-	CreatedAt    uint32 `gorm:"not null" json:"created_at"` // Unix时间戳（秒）
-	UpdatedAt    uint32 `gorm:"not null" json:"updated_at"` // Unix时间戳（秒）
+	StartedAt    uint32 `gorm:"default:0" json:"started_at"`    // Unix时间戳（秒）
+	CompletedAt  uint32 `gorm:"default:0" json:"completed_at"`  // Unix时间戳（秒）
+	CreatedAt    uint32 `gorm:"not null" json:"created_at"`     // Unix时间戳（秒）
+	UpdatedAt    uint32 `gorm:"not null" json:"updated_at"`     // Unix时间戳（秒）
 }
 
 // TableName 指定表名
@@ -71,6 +83,25 @@ func (f *FigmaFileCache) BeforeCreate(tx *gorm.DB) error {
 // BeforeUpdate GORM钩子：更新前设置时间戳
 func (f *FigmaFileCache) BeforeUpdate(tx *gorm.DB) error {
 	f.UpdatedAt = uint32(time.Now().Unix())
+	return nil
+}
+
+// TableName 指定表名
+func (FigmaFileFetchQueue) TableName() string {
+	return "figma_file_fetch_queues"
+}
+
+// BeforeCreate GORM钩子：创建前设置时间戳
+func (q *FigmaFileFetchQueue) BeforeCreate(tx *gorm.DB) error {
+	now := uint32(time.Now().Unix())
+	q.CreatedAt = now
+	q.UpdatedAt = now
+	return nil
+}
+
+// BeforeUpdate GORM钩子：更新前设置时间戳
+func (q *FigmaFileFetchQueue) BeforeUpdate(tx *gorm.DB) error {
+	q.UpdatedAt = uint32(time.Now().Unix())
 	return nil
 }
 
@@ -380,18 +411,6 @@ func UpdateFileCache(cache *FigmaFileCache) error {
 	return DB.Save(cache).Error
 }
 
-// UpdateFileCacheStatus 更新文件缓存状态
-func UpdateFileCacheStatus(id uint, status string, errorMsg string) error {
-	updates := map[string]interface{}{
-		"status":     status,
-		"updated_at": uint32(time.Now().Unix()),
-	}
-	if errorMsg != "" {
-		updates["error_message"] = errorMsg
-	}
-	return DB.Model(&FigmaFileCache{}).Where("id = ?", id).Updates(updates).Error
-}
-
 // UpdateFileCacheNodeIDs 更新文件缓存的节点ID列表（只更新 node_ids 字段）
 func UpdateFileCacheNodeIDs(id uint, nodeIDs string) error {
 	updates := map[string]interface{}{
@@ -405,6 +424,75 @@ func UpdateFileCacheNodeIDs(id uint, nodeIDs string) error {
 func IncrementFileCacheHit(id uint) error {
 	return DB.Model(&FigmaFileCache{}).Where("id = ?", id).
 		UpdateColumn("hit_count", DB.Raw("hit_count + 1")).Error
+}
+
+// ===================== 文件获取队列相关方法 =====================
+
+// GetFileFetchQueue 获取文件获取队列
+func GetFileFetchQueue(fileKey, rootNodeID string) (*FigmaFileFetchQueue, error) {
+	var queue FigmaFileFetchQueue
+	result := DB.Where("file_key = ? AND root_node_id = ?", fileKey, rootNodeID).First(&queue)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &queue, nil
+}
+
+// GetWaitingFileFetchQueues 获取等待中的文件获取队列
+func GetWaitingFileFetchQueues() ([]FigmaFileFetchQueue, error) {
+	var queues []FigmaFileFetchQueue
+	result := DB.Where("status = ?", "waiting").
+		Order("created_at ASC").
+		Find(&queues)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return queues, nil
+}
+
+// GetFileFetchQueuesByToken 获取指定Token的文件获取队列
+func GetFileFetchQueuesByToken(token string, statuses []string) ([]FigmaFileFetchQueue, error) {
+	var queues []FigmaFileFetchQueue
+	query := DB.Where("figma_token = ?", token)
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+	result := query.Order("created_at DESC").Find(&queues)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return queues, nil
+}
+
+// CreateFileFetchQueue 创建文件获取队列
+func CreateFileFetchQueue(queue *FigmaFileFetchQueue) error {
+	return DB.Create(queue).Error
+}
+
+// UpdateFileFetchQueue 更新文件获取队列
+func UpdateFileFetchQueue(queue *FigmaFileFetchQueue) error {
+	return DB.Save(queue).Error
+}
+
+// UpdateFileFetchQueueStatus 更新文件获取队列状态
+func UpdateFileFetchQueueStatus(id uint, status string, errorMsg string) error {
+	now := uint32(time.Now().Unix())
+	updates := map[string]interface{}{
+		"status":     status,
+		"updated_at": now,
+	}
+	if errorMsg != "" {
+		updates["error_message"] = errorMsg
+	}
+	
+	// 根据状态设置时间戳
+	if status == "loading" {
+		updates["started_at"] = now
+	} else if status == "loaded" || status == "error" {
+		updates["completed_at"] = now
+	}
+	
+	return DB.Model(&FigmaFileFetchQueue{}).Where("id = ?", id).Updates(updates).Error
 }
 
 // ===================== 渲染队列相关方法 =====================
@@ -1000,8 +1088,7 @@ func GetFileCacheContainingNode(fileKey, nodeID string) (*FigmaFileCache, error)
 	var cache FigmaFileCache
 
 	// 先尝试精确匹配
-	err := DB.Where("file_key = ? AND root_node_id = ? AND status = ?",
-		fileKey, nodeID, "loaded").First(&cache).Error
+	err := DB.Where("file_key = ? AND root_node_id = ?", fileKey, nodeID).First(&cache).Error
 
 	if err == nil {
 		log.Printf("✅ [GetFileCacheContainingNode] 精确匹配成功 (FileKey=%s, NodeID=%s, CacheID=%d)",
@@ -1014,7 +1101,7 @@ func GetFileCacheContainingNode(fileKey, nodeID string) (*FigmaFileCache, error)
 		fileKey, nodeID)
 
 	var caches []FigmaFileCache
-	err = DB.Where("file_key = ? AND status = ?", fileKey, "loaded").
+	err = DB.Where("file_key = ?", fileKey).
 		Order("LENGTH(node_ids) ASC"). // 优先返回最小的包含树
 		Find(&caches).Error
 

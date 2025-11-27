@@ -25,10 +25,10 @@ func LogsPage(c *gin.Context) {
 	// 从URL路径中获取相对路径
 	// 路径格式: /tools/logs/{relativePath}
 	fullPath := c.Param("path")
-	
+
 	// 移除开头的斜杠
 	relativePath := strings.TrimPrefix(fullPath, "/")
-	
+
 	c.HTML(http.StatusOK, "logs.html", gin.H{
 		"title":         "日志查看 - Figma Deliver",
 		"relative_path": relativePath,
@@ -46,7 +46,7 @@ func ListLogs(c *gin.Context) {
 
 	// 从查询参数获取路径
 	relativePath := c.DefaultQuery("path", "")
-	
+
 	// 构建完整的OBS路径前缀
 	var prefix string
 	if relativePath != "" && relativePath != "/" {
@@ -54,7 +54,7 @@ func ListLogs(c *gin.Context) {
 	} else {
 		prefix = "logs/"
 	}
-	
+
 	// Windows路径分隔符转换为Unix风格
 	prefix = filepath.ToSlash(prefix)
 
@@ -211,4 +211,52 @@ func ViewLog(c *gin.Context) {
 	})
 }
 
+// DeleteDirectory 删除目录下的所有文件和子目录
+func DeleteDirectory(c *gin.Context) {
+	if globalLogsOBSService == nil || !globalLogsOBSService.IsEnabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "OBS服务未启用",
+		})
+		return
+	}
 
+	// 从查询参数获取路径
+	relativePath := c.Query("path")
+	if relativePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "缺少路径参数",
+		})
+		return
+	}
+
+	// 构建完整的OBS路径前缀
+	var prefix string
+	if relativePath != "" && relativePath != "/" {
+		prefix = filepath.Join("logs", relativePath) + "/"
+	} else {
+		prefix = "logs/"
+	}
+
+	// Windows路径分隔符转换为Unix风格
+	prefix = filepath.ToSlash(prefix)
+
+	log.Printf("🗑️ [Logs] 删除目录: %s", prefix)
+
+	// 删除目录下的所有对象
+	deleteCount, err := globalLogsOBSService.DeleteDirectory(prefix)
+	if err != nil {
+		log.Printf("❌ [Logs] 删除失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("删除失败: %v", err),
+		})
+		return
+	}
+
+	log.Printf("✅ [Logs] 删除成功: %d 个对象", deleteCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"deleted_count": deleteCount,
+		"message":       fmt.Sprintf("成功删除 %d 个对象", deleteCount),
+	})
+}

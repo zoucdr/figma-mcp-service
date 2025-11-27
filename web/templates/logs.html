@@ -30,7 +30,7 @@
             <el-main class="app-main">
                 <!-- 面包屑导航 -->
                 <div class="breadcrumb-container">
-                    <el-breadcrumb separator="/">
+                    <el-breadcrumb separator="/" class="breadcrumb-path">
                         <el-breadcrumb-item>
                             <a @click="navigateTo('')">logs</a>
                         </el-breadcrumb-item>
@@ -38,6 +38,15 @@
                             <a @click="navigateTo(getPathUpToSegment(index))">{{`{{ segment }}`}}</a>
                         </el-breadcrumb-item>
                     </el-breadcrumb>
+                    <el-button 
+                        v-if="currentPath" 
+                        type="danger" 
+                        size="small" 
+                        icon="el-icon-delete"
+                        class="delete-directory-btn"
+                        @click="deleteCurrentDirectory">
+                        删除当前目录
+                    </el-button>
                 </div>
 
                 <!-- 加载状态 -->

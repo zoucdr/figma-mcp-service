@@ -114,7 +114,7 @@ func (cs *CacheService) UpdateImageRequestTime(token string) error {
 
 // ===================== 文件缓存管理 =====================
 
-// GetFileCache 获取文件缓存
+// GetFileCache 获取文件缓存（只查询已加载的数据缓存）
 // 返回: (缓存对象, 是否命中, 错误)
 func (cs *CacheService) GetFileCache(fileKey, rootNodeID string) (*models.FigmaFileCache, bool, error) {
 	cache, err := models.GetFileCache(fileKey, rootNodeID)
@@ -123,12 +123,6 @@ func (cs *CacheService) GetFileCache(fileKey, rootNodeID string) (*models.FigmaF
 		// 缓存未命中
 		log.Printf("❌ [FileCache] 未命中缓存 fileKey=%s, rootNodeID=%s", fileKey, rootNodeID)
 		return nil, false, nil
-	}
-
-	// 检查缓存状态
-	if cache.Status != "loaded" {
-		log.Printf("⏳ [FileCache] 缓存状态=%s, fileKey=%s, rootNodeID=%s", cache.Status, fileKey, rootNodeID)
-		return cache, false, nil
 	}
 
 	// 增加命中次数
@@ -140,80 +134,118 @@ func (cs *CacheService) GetFileCache(fileKey, rootNodeID string) (*models.FigmaF
 	return cache, true, nil
 }
 
-// CreateFileCache 创建文件缓存（排队状态）
+// GetFileFetchQueue 获取文件获取队列
+// 返回: (队列对象, 是否存在, 错误)
+func (cs *CacheService) GetFileFetchQueue(fileKey, rootNodeID string) (*models.FigmaFileFetchQueue, bool, error) {
+	queue, err := models.GetFileFetchQueue(fileKey, rootNodeID)
+
+	if err != nil {
+		// 队列不存在
+		return nil, false, nil
+	}
+
+	log.Printf("📋 [FileFetchQueue] 找到队列 fileKey=%s, rootNodeID=%s, status=%s",
+		fileKey, rootNodeID, queue.Status)
+
+	return queue, true, nil
+}
+
+// CreateFileFetchQueue 创建文件获取队列（排队状态）
 // 参数 token: 必须指定用于请求 Figma API 的 token，不允许使用其他 token
-func (cs *CacheService) CreateFileCache(fileKey, rootNodeID, token string, nodeIDs []string) (*models.FigmaFileCache, error) {
+func (cs *CacheService) CreateFileFetchQueue(fileKey, rootNodeID, token string, nodeIDs []string) (*models.FigmaFileFetchQueue, error) {
 	if token == "" {
 		return nil, fmt.Errorf("figma_token 不能为空")
 	}
 
 	now := uint32(time.Now().Unix())
 
-	cache := &models.FigmaFileCache{
+	queue := &models.FigmaFileFetchQueue{
 		FigmaToken: token,
 		FileKey:    fileKey,
 		RootNodeID: rootNodeID,
 		NodeIDs:    joinNodeIDs(nodeIDs),
-		FileData:   "",
 		Status:     "waiting",
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
 
-	err := models.CreateFileCache(cache)
+	err := models.CreateFileFetchQueue(queue)
 	if err != nil {
-		log.Printf("❌ [FileCache] 创建失败: %v", err)
+		log.Printf("❌ [FileFetchQueue] 创建失败: %v", err)
 		return nil, err
 	}
 
-	log.Printf("🆕 [FileCache] 已创建缓存记录 id=%d, fileKey=%s, rootNodeID=%s, token=%s..., status=waiting",
-		cache.ID, fileKey, rootNodeID, token[:10])
+	log.Printf("🆕 [FileFetchQueue] 已创建队列记录 id=%d, fileKey=%s, rootNodeID=%s, token=%s..., status=waiting",
+		queue.ID, fileKey, rootNodeID, token[:10])
 
-	return cache, nil
+	return queue, nil
 }
 
-// UpdateFileCacheData 更新文件缓存数据（加载成功）
-func (cs *CacheService) UpdateFileCacheData(cacheID uint, fileData interface{}, version string) error {
+// CreateOrUpdateFileCache 创建或更新文件缓存数据
+func (cs *CacheService) CreateOrUpdateFileCache(fileKey, rootNodeID string, fileData interface{}, version string, nodeIDs []string) (*models.FigmaFileCache, error) {
 	// 将数据转换为JSON字符串
 	jsonData, err := json.Marshal(fileData)
 	if err != nil {
-		return fmt.Errorf("序列化文件数据失败: %w", err)
+		return nil, fmt.Errorf("序列化文件数据失败: %w", err)
 	}
 
 	now := uint32(time.Now().Unix())
 
-	cache := &models.FigmaFileCache{
-		ID:          cacheID,
-		FileData:    string(jsonData),
-		FileVersion: version,
-		Status:      "loaded",
-		UpdatedAt:   now,
-	}
-
-	err = models.UpdateFileCache(cache)
+	// 先尝试查找已存在的缓存
+	cache, err := models.GetFileCache(fileKey, rootNodeID)
 	if err != nil {
-		log.Printf("❌ [FileCache] 更新数据失败 id=%d: %v", cacheID, err)
-		return err
+		// 不存在，创建新缓存
+		cache = &models.FigmaFileCache{
+			FileKey:     fileKey,
+			RootNodeID:  rootNodeID,
+			NodeIDs:     joinNodeIDs(nodeIDs),
+			FileData:    string(jsonData),
+			FileVersion: version,
+			HitCount:    0,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+
+		err = models.CreateFileCache(cache)
+		if err != nil {
+			log.Printf("❌ [FileCache] 创建失败: %v", err)
+			return nil, err
+		}
+
+		log.Printf("🆕 [FileCache] 已创建缓存数据 id=%d, fileKey=%s, rootNodeID=%s, version=%s, size=%d bytes",
+			cache.ID, fileKey, rootNodeID, version, len(jsonData))
+	} else {
+		// 已存在，更新缓存
+		cache.FileData = string(jsonData)
+		cache.FileVersion = version
+		cache.NodeIDs = joinNodeIDs(nodeIDs)
+		cache.UpdatedAt = now
+
+		err = models.UpdateFileCache(cache)
+		if err != nil {
+			log.Printf("❌ [FileCache] 更新失败: %v", err)
+			return nil, err
+		}
+
+		log.Printf("✅ [FileCache] 已更新缓存数据 id=%d, fileKey=%s, rootNodeID=%s, version=%s, size=%d bytes",
+			cache.ID, fileKey, rootNodeID, version, len(jsonData))
 	}
 
-	log.Printf("✅ [FileCache] 已更新缓存数据 id=%d, version=%s, size=%d bytes",
-		cacheID, version, len(jsonData))
-
-	return nil
+	return cache, nil
 }
 
-// UpdateFileCacheStatus 更新文件缓存状态
-func (cs *CacheService) UpdateFileCacheStatus(cacheID uint, status string, errorMsg string) error {
-	err := models.UpdateFileCacheStatus(cacheID, status, errorMsg)
+// UpdateFileFetchQueueStatus 更新文件获取队列状态
+func (cs *CacheService) UpdateFileFetchQueueStatus(queueID uint, status string, errorMsg string) error {
+	err := models.UpdateFileFetchQueueStatus(queueID, status, errorMsg)
 	if err != nil {
-		log.Printf("❌ [FileCache] 更新状态失败 id=%d: %v", cacheID, err)
+		log.Printf("❌ [FileFetchQueue] 更新状态失败 id=%d: %v", queueID, err)
 		return err
 	}
 
 	if errorMsg != "" {
-		log.Printf("⚠️ [FileCache] 状态更新 id=%d, status=%s, error=%s", cacheID, status, errorMsg)
+		log.Printf("⚠️ [FileFetchQueue] 状态更新 id=%d, status=%s, error=%s", queueID, status, errorMsg)
 	} else {
-		log.Printf("📝 [FileCache] 状态更新 id=%d, status=%s", cacheID, status)
+		log.Printf("📝 [FileFetchQueue] 状态更新 id=%d, status=%s", queueID, status)
 	}
 
 	return nil
@@ -541,14 +573,13 @@ func (cs *CacheService) GetProjectNodeIDs(projectID uint, fileKey, rootNodeID st
 	if err == nil && len(fileNodeIDs) > 0 {
 		log.Printf("✅ [GetProjectNodeIDs] 从文件系统缓存提取到 %d 个节点 (已过滤 ignore 和 visible)", len(fileNodeIDs))
 
-		// 构造一个临时的 cache 对象返回（用于兼容现有接口）
-		cache := &models.FigmaFileCache{
-			FileKey:    fileKey,
-			RootNodeID: rootNodeID,
-			NodeIDs:    strings.Join(fileNodeIDs, ","),
-			FileData:   fileDataJSON,
-			Status:     "loaded",
-		}
+	// 构造一个临时的 cache 对象返回（用于兼容现有接口）
+	cache := &models.FigmaFileCache{
+		FileKey:    fileKey,
+		RootNodeID: rootNodeID,
+		NodeIDs:    strings.Join(fileNodeIDs, ","),
+		FileData:   fileDataJSON,
+	}
 
 		return fileNodeIDs, cache, nil
 	}
@@ -583,8 +614,8 @@ func (cs *CacheService) GetProjectNodeIDs(projectID uint, fileKey, rootNodeID st
 	// 3. 始终从 file_data 中提取节点（应用 ignore 和 visible 过滤）
 	// 不再直接使用 node_ids 字段，因为它无法反映节点的树形关系，无法正确过滤子树
 	if cache.FileData == "" {
-		log.Printf("❌ [GetProjectNodeIDs] 节点树缓存数据为空 (FileKey=%s, RootNodeID=%s, CacheID=%d, Status=%s)",
-			fileKey, rootNodeID, cache.ID, cache.Status)
+		log.Printf("❌ [GetProjectNodeIDs] 节点树缓存数据为空 (FileKey=%s, RootNodeID=%s, CacheID=%d)",
+			fileKey, rootNodeID, cache.ID)
 		return nil, cache, fmt.Errorf("节点树缓存数据为空，请在 Dashboard 中重新刷新节点树")
 	}
 

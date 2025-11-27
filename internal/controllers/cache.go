@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/figma-deliver/internal/models"
 	"github.com/figma-deliver/internal/services"
@@ -174,35 +173,36 @@ func (cc *CacheController) RefreshFile(c *gin.Context) {
 		return
 	}
 
-	// 检查是否已有缓存记录
+	// 检查是否已有缓存数据
 	existingCache, hit, err := cc.cacheService.GetFileCache(req.FileKey, req.RootNodeID)
-	if err == nil && existingCache != nil {
-		// 已有缓存记录，根据状态返回
-		if existingCache.Status == "loading" {
-			// 正在加载中
-			c.JSON(http.StatusOK, gin.H{
-				"code":    0,
-				"message": "文件正在加载中",
-				"data": RefreshFileResponse{
-					CacheID:              existingCache.ID,
-					Status:               existingCache.Status,
-					EstimatedWaitSeconds: 0,
-				},
-			})
-			return
-		} else if existingCache.Status == "loaded" && hit {
-			// 已加载成功，返回缓存ID（前端可以查询状态获取数据）
-			c.JSON(http.StatusOK, gin.H{
-				"code":    0,
-				"message": "文件已缓存",
-				"data": RefreshFileResponse{
-					CacheID:              existingCache.ID,
-					Status:               existingCache.Status,
-					EstimatedWaitSeconds: 0,
-				},
-			})
-			return
-		}
+	if err == nil && existingCache != nil && hit {
+		// 已有缓存数据，返回缓存ID
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "文件已缓存",
+			"data": RefreshFileResponse{
+				CacheID:              existingCache.ID,
+				Status:               "loaded",
+				EstimatedWaitSeconds: 0,
+			},
+		})
+		return
+	}
+
+	// 检查是否有正在处理的队列
+	existingQueue, queueExists, _ := cc.cacheService.GetFileFetchQueue(req.FileKey, req.RootNodeID)
+	if queueExists && (existingQueue.Status == "loading" || existingQueue.Status == "waiting") {
+		// 正在加载中或等待中
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "文件正在处理中",
+			"data": RefreshFileResponse{
+				CacheID:              existingQueue.ID,
+				Status:               existingQueue.Status,
+				EstimatedWaitSeconds: 0,
+			},
+		})
+		return
 	}
 
 	// 检查 Token 冷却时间，用于返回预计等待时间
@@ -212,20 +212,21 @@ func (cc *CacheController) RefreshFile(c *gin.Context) {
 		return
 	}
 
-	// 创建或更新缓存记录
-	var cache *models.FigmaFileCache
-	if existingCache != nil {
+	// 创建或更新文件获取队列记录
+	var queue *models.FigmaFileFetchQueue
+
+	// 检查是否已存在队列记录
+	existingQueue, exists, _ := cc.cacheService.GetFileFetchQueue(req.FileKey, req.RootNodeID)
+
+	if exists {
 		// 更新状态为 waiting
-		now := uint32(time.Now().Unix())
-		existingCache.Status = "waiting"
-		existingCache.UpdatedAt = now
-		if err := cc.cacheService.UpdateFileCacheStatus(existingCache.ID, "waiting", ""); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新缓存状态失败"})
+		if err := cc.cacheService.UpdateFileFetchQueueStatus(existingQueue.ID, "waiting", ""); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新队列状态失败"})
 			return
 		}
-		cache = existingCache
+		queue = existingQueue
 	} else {
-		// 创建新缓存记录（需要获取用户的 token）
+		// 创建新队列记录（需要获取用户的 token）
 		// 从项目中获取用户 ID 和 token
 		var project models.FigmaProject
 		err = models.DB.Where("file_key = ? AND root_node_id = ?", req.FileKey, req.RootNodeID).
@@ -242,9 +243,9 @@ func (cc *CacheController) RefreshFile(c *gin.Context) {
 			return
 		}
 
-		cache, err = cc.cacheService.CreateFileCache(req.FileKey, req.RootNodeID, user.FigmaToken, []string{})
+		queue, err = cc.cacheService.CreateFileFetchQueue(req.FileKey, req.RootNodeID, user.FigmaToken, []string{})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建缓存记录失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建队列记录失败"})
 			return
 		}
 	}
@@ -253,7 +254,7 @@ func (cc *CacheController) RefreshFile(c *gin.Context) {
 		"code":    0,
 		"message": "已加入刷新队列",
 		"data": RefreshFileResponse{
-			CacheID:              cache.ID,
+			CacheID:              queue.ID,
 			Status:               "waiting",
 			EstimatedWaitSeconds: remaining,
 		},
@@ -272,35 +273,59 @@ func (cc *CacheController) GetFileCacheStatus(c *gin.Context) {
 		return
 	}
 
-	// 直接查询数据库
+	// 先尝试查询缓存数据表
 	var cache models.FigmaFileCache
-	if err := models.DB.First(&cache, uint(cacheID)).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "缓存记录不存在"})
+	cacheErr := models.DB.First(&cache, uint(cacheID)).Error
+
+	if cacheErr == nil {
+		// 找到缓存数据，表示已加载完成
+		response := gin.H{
+			"cache_id":   cache.ID,
+			"status":     "loaded",
+			"progress":   100,
+			"file_data":  cache.FileData,
+			"created_at": cache.CreatedAt,
+			"updated_at": cache.UpdatedAt,
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "success",
+			"data":    response,
+		})
 		return
 	}
 
-	response := gin.H{
-		"cache_id":      cache.ID,
-		"status":        cache.Status,
-		"progress":      0,
-		"error_message": cache.ErrorMessage,
-		"created_at":    cache.CreatedAt,
-		"updated_at":    cache.UpdatedAt,
+	// 未找到缓存数据，尝试查询获取队列表
+	var queue models.FigmaFileFetchQueue
+	queueErr := models.DB.First(&queue, uint(cacheID)).Error
+
+	if queueErr == nil {
+		// 找到队列记录
+		progress := 0
+		if queue.Status == "loading" {
+			progress = 50
+		} else if queue.Status == "loaded" {
+			progress = 100
+		}
+
+		response := gin.H{
+			"cache_id":      queue.ID,
+			"status":        queue.Status,
+			"progress":      progress,
+			"error_message": queue.ErrorMessage,
+			"created_at":    queue.CreatedAt,
+			"updated_at":    queue.UpdatedAt,
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "success",
+			"data":    response,
+		})
+		return
 	}
 
-	// 如果状态是 loaded，返回文件数据
-	if cache.Status == "loaded" {
-		response["file_data"] = cache.FileData
-		response["progress"] = 100
-	} else if cache.Status == "loading" {
-		response["progress"] = 50
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    response,
-	})
+	// 两个表都没找到
+	c.JSON(http.StatusNotFound, gin.H{"error": "记录不存在"})
 }
 
 // ===================== 项目渲染 =====================
@@ -1006,34 +1031,33 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 			projectID, waitSeconds)
 
 		// 检查是否已存在缓存记录
-		existingCache, err := models.GetFileCache(project.FileKey, project.RootNodeID)
+		existingQueue, err := models.GetFileFetchQueue(project.FileKey, project.RootNodeID)
 
-		if err != nil || existingCache == nil {
-			// 创建新的缓存记录（状态为 waiting）
-			cache := &models.FigmaFileCache{
+		if err != nil || existingQueue == nil {
+			// 创建新的获取队列记录（状态为 waiting）
+			queue := &models.FigmaFileFetchQueue{
 				FigmaToken: user.FigmaToken,
 				FileKey:    project.FileKey,
 				RootNodeID: project.RootNodeID,
 				NodeIDs:    "",
-				FileData:   "",
 				Status:     "waiting",
 			}
-			if err := models.CreateFileCache(cache); err != nil {
+			if err := models.CreateFileFetchQueue(queue); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": "创建刷新队列失败: " + err.Error(),
 				})
 				return
 			}
 			log.Printf("✅ [RefreshProjectNodeTree] 已创建刷新队列 (Token=%s...)", user.FigmaToken[:10])
-			log.Printf("✅ [RefreshProjectNodeTree] 已创建刷新队列 (CacheID=%d)",
-				cache.ID)
+			log.Printf("✅ [RefreshProjectNodeTree] 已创建刷新队列 (QueueID=%d)",
+				queue.ID)
 		} else {
-			// 更新现有缓存记录的状态
-			if err := cc.cacheService.UpdateFileCacheStatus(existingCache.ID, "waiting", ""); err != nil {
-				log.Printf("⚠️ [RefreshProjectNodeTree] 更新缓存状态失败: %v", err)
+			// 更新现有队列记录的状态
+			if err := cc.cacheService.UpdateFileFetchQueueStatus(existingQueue.ID, "waiting", ""); err != nil {
+				log.Printf("⚠️ [RefreshProjectNodeTree] 更新队列状态失败: %v", err)
 			}
-			log.Printf("✅ [RefreshProjectNodeTree] 已更新刷新队列 (CacheID=%d)",
-				existingCache.ID)
+			log.Printf("✅ [RefreshProjectNodeTree] 已更新刷新队列 (QueueID=%d)",
+				existingQueue.ID)
 		}
 
 		c.JSON(http.StatusAccepted, gin.H{
@@ -1162,23 +1186,22 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 			existingCache, err := models.GetFileCache(req.FileKey, nodeID)
 			if err != nil || existingCache == nil {
 				// 创建新的缓存记录（状态为 waiting）
-				cache := &models.FigmaFileCache{
+				queue := &models.FigmaFileFetchQueue{
 					FigmaToken: user.FigmaToken,
 					FileKey:    req.FileKey,
 					RootNodeID: nodeID,
 					NodeIDs:    "",
-					FileData:   "",
 					Status:     "waiting",
 				}
-				if err := models.CreateFileCache(cache); err != nil {
-					log.Printf("⚠️ [BatchRefreshNodeTree] 创建缓存记录失败: NodeID=%s, Error=%v", nodeID, err)
+				if err := models.CreateFileFetchQueue(queue); err != nil {
+					log.Printf("⚠️ [BatchRefreshNodeTree] 创建队列记录失败: NodeID=%s, Error=%v", nodeID, err)
 				} else {
-					log.Printf("✅ [BatchRefreshNodeTree] 已创建刷新队列: CacheID=%d, NodeID=%s", cache.ID, nodeID)
+					log.Printf("✅ [BatchRefreshNodeTree] 已创建刷新队列: QueueID=%d, NodeID=%s", queue.ID, nodeID)
 				}
 			} else {
-				// 更新现有缓存记录的状态
-				if err := cc.cacheService.UpdateFileCacheStatus(existingCache.ID, "waiting", ""); err != nil {
-					log.Printf("⚠️ [BatchRefreshNodeTree] 更新缓存状态失败: CacheID=%d, Error=%v", existingCache.ID, err)
+				// 更新现有队列记录的状态
+				if err := cc.cacheService.UpdateFileFetchQueueStatus(existingCache.ID, "waiting", ""); err != nil {
+					log.Printf("⚠️ [BatchRefreshNodeTree] 更新队列状态失败: CacheID=%d, Error=%v", existingCache.ID, err)
 				} else {
 					log.Printf("✅ [BatchRefreshNodeTree] 已更新刷新队列: CacheID=%d, NodeID=%s", existingCache.ID, nodeID)
 				}

@@ -866,7 +866,7 @@ func getProjectNodeTree(userID uint, projectIDInt uint, nodeID string) (map[stri
 func getNodesFromCache(fileKey, nodeID string) ([]map[string]interface{}, error) {
 	// 1. 先尝试直接查找该节点ID的缓存
 	cache, err := models.GetFileCache(fileKey, nodeID)
-	if err == nil && cache != nil && cache.Status == "loaded" && cache.FileData != "" {
+	if err == nil && cache != nil && cache.FileData != "" {
 		// 解析缓存的节点数据
 		var result map[string]interface{}
 		if err := json.Unmarshal([]byte(cache.FileData), &result); err == nil {

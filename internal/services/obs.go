@@ -602,3 +602,90 @@ func (s *OBSService) DownloadLogFile(objectKey string) ([]byte, string, error) {
 
 	return data, output.ContentType, nil
 }
+
+// DeleteDirectory 删除目录下的所有对象（文件和子目录）
+func (s *OBSService) DeleteDirectory(prefix string) (int, error) {
+	if !s.enabled {
+		return 0, fmt.Errorf("OBS服务未启用")
+	}
+
+	log.Printf("🗑️ [OBS] 开始删除目录: %s", prefix)
+
+	// 列出所有对象（包括子目录中的文件）
+	input := &obs.ListObjectsInput{}
+	input.Bucket = s.bucketName
+	input.Prefix = prefix
+	input.MaxKeys = 1000 // 一次最多列出1000个
+
+	var allKeys []string
+	
+	for {
+		output, err := s.client.ListObjects(input)
+		if err != nil {
+			log.Printf("❌ [OBS] 列出对象失败: %v", err)
+			return 0, fmt.Errorf("列出对象失败: %w", err)
+		}
+
+		// 收集所有对象的Key
+		for _, content := range output.Contents {
+			allKeys = append(allKeys, content.Key)
+		}
+
+		// 检查是否还有更多对象
+		if !output.IsTruncated {
+			break
+		}
+		
+		// 设置下一次查询的起始位置
+		input.Marker = output.NextMarker
+	}
+
+	if len(allKeys) == 0 {
+		log.Printf("⚠️ [OBS] 目录为空，无需删除: %s", prefix)
+		return 0, nil
+	}
+
+	log.Printf("📋 [OBS] 找到 %d 个对象需要删除", len(allKeys))
+
+	// 批量删除对象
+	deleteCount := 0
+	batchSize := 1000 // OBS批量删除最多1000个
+
+	for i := 0; i < len(allKeys); i += batchSize {
+		end := i + batchSize
+		if end > len(allKeys) {
+			end = len(allKeys)
+		}
+
+		batch := allKeys[i:end]
+		
+		// 构造批量删除请求
+		deleteInput := &obs.DeleteObjectsInput{}
+		deleteInput.Bucket = s.bucketName
+		
+		objects := make([]obs.ObjectToDelete, len(batch))
+		for j, key := range batch {
+			objects[j] = obs.ObjectToDelete{Key: key}
+		}
+		deleteInput.Objects = objects
+
+		// 执行批量删除
+		deleteOutput, err := s.client.DeleteObjects(deleteInput)
+		if err != nil {
+			log.Printf("❌ [OBS] 批量删除失败: %v", err)
+			return deleteCount, fmt.Errorf("批量删除失败: %w", err)
+		}
+
+		// 统计成功删除的数量
+		deleteCount += len(deleteOutput.Deleteds)
+		
+		// 记录删除失败的对象
+		for _, deleted := range deleteOutput.Errors {
+			log.Printf("⚠️ [OBS] 删除失败: %s (错误: %s)", deleted.Key, deleted.Message)
+		}
+	}
+
+	log.Printf("✅ [OBS] 目录删除完成: %s (删除了 %d 个对象)", prefix, deleteCount)
+
+	return deleteCount, nil
+}

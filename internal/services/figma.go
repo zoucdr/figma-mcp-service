@@ -485,17 +485,14 @@ func GetFigmaNodesBatch(token, fileKey string, nodeIDs []string) (map[string][]m
 			if err != nil || existingCache == nil {
 				// 创建新记录
 				cache := &models.FigmaFileCache{
-					FigmaToken:   token,
-					FileKey:      fileKey,
-					RootNodeID:   nID,
-					FileData:     string(nData),
-					NodeIDs:      nodeIDsStr,
-					Status:       "loaded",
-					FileVersion:  "",
-					HitCount:     0,
-					ErrorMessage: "",
-					CreatedAt:    now,
-					UpdatedAt:    now,
+					FileKey:     fileKey,
+					RootNodeID:  nID,
+					FileData:    string(nData),
+					NodeIDs:     nodeIDsStr,
+					FileVersion: "",
+					HitCount:    0,
+					CreatedAt:   now,
+					UpdatedAt:   now,
 				}
 
 				if err := models.CreateFileCache(cache); err != nil {
@@ -507,8 +504,6 @@ func GetFigmaNodesBatch(token, fileKey string, nodeIDs []string) (map[string][]m
 				// 更新已有记录
 				existingCache.FileData = string(nData)
 				existingCache.NodeIDs = nodeIDsStr
-				existingCache.Status = "loaded"
-				existingCache.ErrorMessage = ""
 				existingCache.UpdatedAt = now
 
 				if err := models.UpdateFileCache(existingCache); err != nil {
@@ -605,17 +600,14 @@ func GetFigmaNodesNoCache(token, fileKey, nodeID string) ([]map[string]interface
 		if err != nil || existingCache == nil {
 			// 创建新记录
 			cache := &models.FigmaFileCache{
-				FigmaToken:   token,
-				FileKey:      fileKey,
-				RootNodeID:   nodeID,
-				FileData:     string(respBody),
-				NodeIDs:      nodeIDsStr,
-				Status:       "loaded",
-				FileVersion:  "",
-				HitCount:     0,
-				ErrorMessage: "",
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				FileKey:     fileKey,
+				RootNodeID:  nodeID,
+				FileData:    string(respBody),
+				NodeIDs:     nodeIDsStr,
+				FileVersion: "",
+				HitCount:    0,
+				CreatedAt:   now,
+				UpdatedAt:   now,
 			}
 
 			if err := models.CreateFileCache(cache); err != nil {
@@ -627,8 +619,6 @@ func GetFigmaNodesNoCache(token, fileKey, nodeID string) ([]map[string]interface
 			// 更新已有记录
 			existingCache.FileData = string(respBody)
 			existingCache.NodeIDs = nodeIDsStr
-			existingCache.Status = "loaded"
-			existingCache.ErrorMessage = ""
 			existingCache.UpdatedAt = now
 
 			if err := models.UpdateFileCache(existingCache); err != nil {
@@ -655,14 +645,35 @@ func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, err
 	// 2. 从数据库查询节点树缓存
 	fmt.Printf("🔍 查询数据库缓存: fileKey=%s, nodeID=%s\n", fileKey, nodeID)
 	dbCache, err := models.GetFileCache(fileKey, nodeID)
-	if err == nil && dbCache != nil && dbCache.Status == "loaded" && dbCache.FileData != "" {
+	if err == nil && dbCache != nil && dbCache.FileData != "" {
 		fmt.Printf("✅ 从数据库缓存获取节点树: fileKey=%s, nodeID=%s, 数据大小=%d bytes\n",
 			fileKey, nodeID, len(dbCache.FileData))
 
 		// 解析数据库中的 JSON 数据
 		var result map[string]interface{}
 		if err := json.Unmarshal([]byte(dbCache.FileData), &result); err == nil {
+			// 调试：打印数据结构
+			if nodesMap, ok := result["nodes"].(map[string]interface{}); ok {
+				fmt.Printf("📊 [DB缓存] 包含 %d 个节点键\n", len(nodesMap))
+				for nid, ndata := range nodesMap {
+					if ndataMap, ok := ndata.(map[string]interface{}); ok {
+						if doc, ok := ndataMap["document"].(map[string]interface{}); ok {
+							if children, ok := doc["children"].([]interface{}); ok {
+								fmt.Printf("📊 [DB缓存] 节点 %s 有 %d 个子节点\n", nid, len(children))
+							} else {
+								fmt.Printf("📊 [DB缓存] 节点 %s 没有 children 字段\n", nid)
+							}
+						}
+					}
+				}
+			} else if doc, ok := result["document"].(map[string]interface{}); ok {
+				if children, ok := doc["children"].([]interface{}); ok {
+					fmt.Printf("📊 [DB缓存] document 格式，有 %d 个子节点\n", len(children))
+				}
+			}
+
 			nodes := parseFigmaNodes(result, nodeID)
+			fmt.Printf("📊 [DB缓存] 解析后返回 %d 个节点\n", len(nodes))
 
 			// 同时保存到本地文件缓存，加速下次访问
 			go func() {

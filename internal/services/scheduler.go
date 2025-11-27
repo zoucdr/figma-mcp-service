@@ -638,89 +638,94 @@ func (s *SchedulerService) runFileCacheQueueProcessor() {
 	}
 }
 
-// processFileCacheQueue 处理文件缓存刷新队列
+// processFileCacheQueue 处理文件获取队列
 func (s *SchedulerService) processFileCacheQueue() {
-	// 查询等待中的文件缓存刷新请求（status = 'waiting'）
+	// 查询等待中的文件获取请求（status = 'waiting'）
 	// Token 冷却时间由 figma_token_cooldowns 表统一管理
-	var caches []models.FigmaFileCache
-
-	err := models.DB.Where("status = ?", "waiting").
-		Order("updated_at ASC").
-		Limit(10). // 每次最多处理 10 个
-		Find(&caches).Error
+	queues, err := models.GetWaitingFileFetchQueues()
 
 	if err != nil {
-		log.Printf("❌ [文件缓存处理器] 查询队列失败: %v", err)
+		log.Printf("❌ [文件获取处理器] 查询队列失败: %v", err)
 		return
 	}
 
-	if len(caches) == 0 {
+	if len(queues) == 0 {
 		return // 没有待处理的队列
 	}
 
-	log.Printf("📁 [文件缓存处理器] 找到 %d 个待处理的刷新请求", len(caches))
+	// 限制每次处理数量
+	if len(queues) > 10 {
+		queues = queues[:10]
+	}
 
-	for _, cache := range caches {
+	log.Printf("📁 [文件获取处理器] 找到 %d 个待处理的请求", len(queues))
+
+	for _, queue := range queues {
 		// ============ 关键：检查 FigmaToken 字段 ============
-		if cache.FigmaToken == "" {
-			log.Printf("❌ [文件缓存处理器] 缓存记录缺少 figma_token 字段 (CacheID=%d)", cache.ID)
-			models.UpdateFileCacheStatus(cache.ID, "error", "缺少 figma_token 字段")
+		if queue.FigmaToken == "" {
+			log.Printf("❌ [文件获取处理器] 队列记录缺少 figma_token 字段 (QueueID=%d)", queue.ID)
+			models.UpdateFileFetchQueueStatus(queue.ID, "error", "缺少 figma_token 字段")
 			continue
 		}
 
-		log.Printf("🔍 [文件缓存处理器] 处理缓存记录 (CacheID=%d, Token=%s..., FileKey=%s)",
-			cache.ID, cache.FigmaToken[:10], cache.FileKey)
+		log.Printf("🔍 [文件获取处理器] 处理队列记录 (QueueID=%d, Token=%s..., FileKey=%s)",
+			queue.ID, queue.FigmaToken[:10], queue.FileKey)
 
 		// 更新状态为 loading
-		if err := models.UpdateFileCacheStatus(cache.ID, "loading", ""); err != nil {
-			log.Printf("⚠️ [文件缓存处理器] 更新状态失败: %v", err)
+		if err := models.UpdateFileFetchQueueStatus(queue.ID, "loading", ""); err != nil {
+			log.Printf("⚠️ [文件获取处理器] 更新状态失败: %v", err)
 			continue
 		}
 
-		// ============ 必须使用缓存记录中的 figma_token ============
+		// ============ 必须使用队列记录中的 figma_token ============
 		// 禁止切换到其他冷却好的 token
-		token := cache.FigmaToken
+		token := queue.FigmaToken
 
 		// 检查 Token 冷却状态
 		canRequest, waitSeconds, err := s.cacheService.CheckFileAPICooldown(token)
 		if err != nil {
-			log.Printf("⚠️ [文件缓存处理器] 检查冷却状态失败: %v", err)
-			models.UpdateFileCacheStatus(cache.ID, "error", "检查冷却状态失败")
+			log.Printf("⚠️ [文件获取处理器] 检查冷却状态失败: %v", err)
+			models.UpdateFileFetchQueueStatus(queue.ID, "error", "检查冷却状态失败")
 			continue
 		}
 
 		if !canRequest {
 			// 还在冷却中，保持 waiting 状态，等待下次轮询
 			// Token 冷却时间由 figma_token_cooldowns 表统一管理
-			models.DB.Model(&models.FigmaFileCache{}).
-				Where("id = ?", cache.ID).
+			models.DB.Model(&models.FigmaFileFetchQueue{}).
+				Where("id = ?", queue.ID).
 				Updates(map[string]interface{}{
 					"status":     "waiting",
 					"updated_at": uint32(time.Now().Unix()),
 				})
-			log.Printf("⏰ [文件缓存处理器] Token 冷却中，延迟处理 (CacheID=%d, Token=%s..., WaitSeconds=%d)",
-				cache.ID, token[:10], waitSeconds)
+			log.Printf("⏰ [文件获取处理器] Token 冷却中，延迟处理 (QueueID=%d, Token=%s..., WaitSeconds=%d)",
+				queue.ID, token[:10], waitSeconds)
 			continue
 		}
 
-		// Token 可用，调用 Figma API 刷新节点树
-		log.Printf("🔄 [文件缓存处理器] 开始刷新节点树 (CacheID=%d, Token=%s..., FileKey=%s, RootNodeID=%s)",
-			cache.ID, token[:10], cache.FileKey, cache.RootNodeID)
+		// Token 可用，调用 Figma API 获取节点树
+		log.Printf("🔄 [文件获取处理器] 开始获取节点树 (QueueID=%d, Token=%s..., FileKey=%s, RootNodeID=%s)",
+			queue.ID, token[:10], queue.FileKey, queue.RootNodeID)
 
 		// 更新冷却时间
 		if err := s.cacheService.UpdateFileRequestTime(token); err != nil {
-			log.Printf("⚠️ [文件缓存处理器] 更新冷却时间失败: %v", err)
+			log.Printf("⚠️ [文件获取处理器] 更新冷却时间失败: %v", err)
 		}
 
-		// 调用 Figma API（GetFigmaNodesNoCache 会自动保存到数据库）
-		nodes, err := GetFigmaNodesNoCache(token, cache.FileKey, cache.RootNodeID)
+		// 调用 Figma API（GetFigmaNodesNoCache 会保存到数据库）
+		nodes, err := GetFigmaNodesNoCache(token, queue.FileKey, queue.RootNodeID)
 		if err != nil {
-			log.Printf("❌ [文件缓存处理器] 刷新失败 (CacheID=%d): %v", cache.ID, err)
-			models.UpdateFileCacheStatus(cache.ID, "error", err.Error())
+			log.Printf("❌ [文件获取处理器] 获取失败 (QueueID=%d): %v", queue.ID, err)
+			models.UpdateFileFetchQueueStatus(queue.ID, "error", err.Error())
 			continue
 		}
 
-		log.Printf("✅ [文件缓存处理器] 刷新成功 (CacheID=%d, Token=%s..., NodeCount=%d)",
-			cache.ID, token[:10], len(nodes))
+		// 更新队列状态为 loaded
+		if err := models.UpdateFileFetchQueueStatus(queue.ID, "loaded", ""); err != nil {
+			log.Printf("⚠️ [文件获取处理器] 更新队列状态失败: %v", err)
+		}
+
+		log.Printf("✅ [文件获取处理器] 获取成功 (QueueID=%d, Token=%s..., NodeCount=%d)",
+			queue.ID, token[:10], len(nodes))
 	}
 }

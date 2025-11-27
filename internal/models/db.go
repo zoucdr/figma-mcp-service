@@ -132,6 +132,7 @@ func InitDB() {
 		// 缓存与速率限制相关表
 		&FigmaTokenCooldown{},
 		&FigmaFileCache{},
+		&FigmaFileFetchQueue{}, // 新增：文件获取队列表
 		&FigmaRenderQueue{},
 		&FigmaNodeImage{},
 		// 渲染批次相关表
@@ -144,27 +145,47 @@ func InitDB() {
 
 	log.Printf("数据库连接和迁移成功（包含缓存表）")
 
-	// 重置所有处理中的渲染队列任务
-	resetProcessingRenderQueues()
+	// 重置所有处理中的队列任务
+	resetProcessingQueues()
 }
 
-// resetProcessingRenderQueues 重置所有状态为 processing 的渲染队列任务为 waiting
+// resetProcessingQueues 重置所有处理中的队列任务为 waiting
 // 用于服务重启时恢复未完成的任务
-func resetProcessingRenderQueues() {
-	result := DB.Model(&FigmaRenderQueue{}).
+func resetProcessingQueues() {
+	now := uint32(time.Now().Unix())
+
+	// 1. 重置文件获取队列
+	resultFetch := DB.Model(&FigmaFileFetchQueue{}).
+		Where("status = ?", "loading").
+		Updates(map[string]interface{}{
+			"status":     "waiting",
+			"started_at": 0,
+			"updated_at": now,
+		})
+
+	if resultFetch.Error != nil {
+		log.Printf("⚠️ 重置文件获取队列失败: %v", resultFetch.Error)
+	} else if resultFetch.RowsAffected > 0 {
+		log.Printf("✅ 已重置 %d 个处理中的文件获取队列为 waiting 状态", resultFetch.RowsAffected)
+	}
+
+	// 2. 重置渲染队列
+	resultRender := DB.Model(&FigmaRenderQueue{}).
 		Where("status = ?", "processing").
 		Updates(map[string]interface{}{
 			"status":     "waiting",
 			"started_at": 0,
-			"updated_at": uint32(time.Now().Unix()),
+			"updated_at": now,
 		})
 
-	if result.Error != nil {
-		log.Printf("⚠️ 重置渲染队列失败: %v", result.Error)
-	} else if result.RowsAffected > 0 {
-		log.Printf("✅ 已重置 %d 个处理中的渲染队列任务为 waiting 状态", result.RowsAffected)
-	} else {
-		log.Printf("✅ 没有需要重置的渲染队列任务")
+	if resultRender.Error != nil {
+		log.Printf("⚠️ 重置渲染队列失败: %v", resultRender.Error)
+	} else if resultRender.RowsAffected > 0 {
+		log.Printf("✅ 已重置 %d 个处理中的渲染队列任务为 waiting 状态", resultRender.RowsAffected)
+	}
+
+	if resultFetch.RowsAffected == 0 && resultRender.RowsAffected == 0 {
+		log.Printf("✅ 没有需要重置的队列任务")
 	}
 }
 

@@ -293,6 +293,67 @@ response = requests.post(
             document.body.removeChild(textarea);
         },
         
+        // 删除当前目录
+        async deleteCurrentDirectory() {
+            if (!this.currentPath) {
+                this.$message.warning('无法删除根目录');
+                return;
+            }
+            
+            try {
+                await this.$confirm(
+                    `确定要删除目录 "${this.currentPath}" 及其下的所有文件和子目录吗？此操作不可恢复！`, 
+                    '警告', 
+                    {
+                        confirmButtonText: '确定删除',
+                        cancelButtonText: '取消',
+                        type: 'warning',
+                        dangerouslyUseHTMLString: true
+                    }
+                );
+                
+                const loading = this.$loading({
+                    lock: true,
+                    text: '正在删除...',
+                    spinner: 'el-icon-loading',
+                    background: 'rgba(0, 0, 0, 0.7)'
+                });
+                
+                try {
+                    const response = await axios.delete('/tools/api/logs/directory', {
+                        params: {
+                            path: this.currentPath
+                        }
+                    });
+                    
+                    loading.close();
+                    
+                    if (response.data.success) {
+                        this.$message.success(response.data.message || '删除成功');
+                        
+                        // 返回上级目录
+                        const segments = this.currentPath.split('/').filter(s => s);
+                        if (segments.length > 1) {
+                            // 有上级目录，跳转到上级
+                            const parentPath = segments.slice(0, -1).join('/');
+                            this.navigateTo(parentPath);
+                        } else {
+                            // 只有一级目录，跳转到根目录
+                            this.navigateTo('');
+                        }
+                    } else {
+                        this.$message.error(response.data.error || '删除失败');
+                    }
+                } catch (error) {
+                    loading.close();
+                    console.error('删除目录失败:', error);
+                    this.$message.error('删除失败: ' + (error.response?.data?.error || error.message));
+                }
+            } catch {
+                // 用户取消删除
+            }
+        },
+        
         // 格式化文件大小
         formatSize(bytes) {
             if (bytes === 0) return '0 B';
