@@ -518,6 +518,78 @@ func (s *OBSService) ListObjectsInPath(prefix string) ([]ObjectInfo, error) {
 	return objects, nil
 }
 
+// ListObjectsInPathWithPagination 带分页的列出对象
+func (s *OBSService) ListObjectsInPathWithPagination(prefix string, maxKeys int, marker string) ([]ObjectInfo, string, bool, error) {
+	if !s.enabled {
+		return nil, "", false, fmt.Errorf("OBS服务未启用")
+	}
+
+	// 默认每页50条
+	if maxKeys <= 0 {
+		maxKeys = 50
+	}
+	// 最大不超过1000
+	if maxKeys > 1000 {
+		maxKeys = 1000
+	}
+
+	input := &obs.ListObjectsInput{}
+	input.Bucket = s.bucketName
+	input.Prefix = prefix
+	input.Delimiter = "/" // 使用分隔符来模拟目录结构
+	input.MaxKeys = maxKeys
+	if marker != "" {
+		input.Marker = marker
+	}
+
+	output, err := s.client.ListObjects(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 列出对象失败: %v", err)
+		return nil, "", false, fmt.Errorf("列出对象失败: %w", err)
+	}
+
+	var objects []ObjectInfo
+
+	// 添加子目录（CommonPrefixes）
+	for _, commonPrefix := range output.CommonPrefixes {
+		// 移除前缀和末尾的斜杠，获取目录名
+		dirName := strings.TrimPrefix(commonPrefix, prefix)
+		dirName = strings.TrimSuffix(dirName, "/")
+
+		objects = append(objects, ObjectInfo{
+			Key:   commonPrefix,
+			Name:  dirName,
+			IsDir: true,
+		})
+	}
+
+	// 添加文件对象
+	for _, content := range output.Contents {
+		// 跳过目录本身
+		if content.Key == prefix {
+			continue
+		}
+
+		// 获取文件名（移除前缀）
+		fileName := strings.TrimPrefix(content.Key, prefix)
+
+		objects = append(objects, ObjectInfo{
+			Key:          content.Key,
+			Name:         fileName,
+			Size:         content.Size,
+			LastModified: content.LastModified,
+			IsDir:        false,
+		})
+	}
+
+	nextMarker := output.NextMarker
+	isTruncated := output.IsTruncated
+
+	log.Printf("✅ [OBS] 列出对象成功: %s (%d 个对象, 是否还有更多: %v)", prefix, len(objects), isTruncated)
+
+	return objects, nextMarker, isTruncated, nil
+}
+
 // UploadLogFile 上传日志文件到OBS
 func (s *OBSService) UploadLogFile(fileData []byte, relativePath, fileName string) (string, error) {
 	if !s.enabled {
@@ -688,4 +760,95 @@ func (s *OBSService) DeleteDirectory(prefix string) (int, error) {
 	log.Printf("✅ [OBS] 目录删除完成: %s (删除了 %d 个对象)", prefix, deleteCount)
 
 	return deleteCount, nil
+}
+
+// UploadSharedFile 上传文件到共享目录
+func (s *OBSService) UploadSharedFile(fileData []byte, fileName string) (string, error) {
+	if !s.enabled {
+		return "", fmt.Errorf("OBS服务未启用")
+	}
+
+	// 构建完整的对象键：file_share/{fileName}
+	objectKey := filepath.Join("file_share", fileName)
+	objectKey = filepath.ToSlash(objectKey)
+
+	// 根据文件扩展名确定Content-Type
+	contentType := "application/octet-stream"
+	ext := strings.ToLower(filepath.Ext(fileName))
+	switch ext {
+	case ".txt", ".log", ".md":
+		contentType = "text/plain; charset=utf-8"
+	case ".json":
+		contentType = "application/json; charset=utf-8"
+	case ".xml":
+		contentType = "application/xml; charset=utf-8"
+	case ".html":
+		contentType = "text/html; charset=utf-8"
+	case ".png":
+		contentType = "image/png"
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".pdf":
+		contentType = "application/pdf"
+	case ".zip":
+		contentType = "application/zip"
+	}
+
+	// 上传到OBS
+	input := &obs.PutObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = objectKey
+	input.Body = bytes.NewReader(fileData)
+	input.ContentType = contentType
+
+	output, err := s.client.PutObject(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 上传共享文件失败: %v", err)
+		return "", fmt.Errorf("上传共享文件失败: %w", err)
+	}
+
+	if output.StatusCode != 200 {
+		return "", fmt.Errorf("上传失败，状态码: %d", output.StatusCode)
+	}
+
+	log.Printf("✅ [OBS] 共享文件上传成功: %s (%d bytes)", objectKey, len(fileData))
+
+	return objectKey, nil
+}
+
+// DownloadFile 下载OBS文件（通用）
+func (s *OBSService) DownloadFile(objectKey string) ([]byte, string, error) {
+	if !s.enabled {
+		return nil, "", fmt.Errorf("OBS服务未启用")
+	}
+
+	input := &obs.GetObjectInput{}
+	input.Bucket = s.bucketName
+	input.Key = objectKey
+
+	output, err := s.client.GetObject(input)
+	if err != nil {
+		log.Printf("❌ [OBS] 下载文件失败: %v", err)
+		return nil, "", fmt.Errorf("从OBS下载失败: %w", err)
+	}
+	defer output.Body.Close()
+
+	if output.StatusCode != 200 {
+		return nil, "", fmt.Errorf("下载失败，状态码: %d", output.StatusCode)
+	}
+
+	// 读取数据
+	data, err := io.ReadAll(output.Body)
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := output.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	log.Printf("✅ [OBS] 下载成功: %s (%d bytes)", objectKey, len(data))
+
+	return data, contentType, nil
 }

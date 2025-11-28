@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Figma Deliver - 让设计交付更高效</title>
+    <style>
+        :root {
+            --primary-color: #2196f3;
+            --bg-color: #0a0a0a;
+            --card-bg: #1a1a1a;
+            --text-color: #e0e0e0;
+            --border-color: #333;
+            --hover-bg: #252525;
+            --shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+            flex: 1;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 35px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .header-left h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 5px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .header-left p {
+            font-size: 0.9rem;
+            color: #888;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .user-avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .user-avatar:hover {
+            transform: scale(1.05);
+        }
+        
+        .login-btn {
+            padding: 8px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .user-menu {
+            position: relative;
+        }
+        
+        .user-dropdown {
+            position: absolute;
+            top: 48px;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 6px 0;
+            min-width: 160px;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+        }
+        
+        .user-menu:hover .user-dropdown {
+            display: block;
+        }
+        
+        .user-dropdown a {
+            display: block;
+            padding: 8px 16px;
+            color: var(--text-color);
+            text-decoration: none;
+            transition: background 0.2s;
+            font-size: 0.9rem;
+        }
+        
+        .user-dropdown a:hover {
+            background: var(--hover-bg);
+        }
+        
+        .user-dropdown .divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 8px 0;
+        }
+        
+        .tools-section {
+            margin-bottom: 40px;
+        }
+        
+        .section-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 18px;
+            color: var(--text-color);
+        }
+        
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 18px;
+        }
+        
+        .tool-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+            text-decoration: none;
+            color: var(--text-color);
+            transition: all 0.2s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .tool-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+        
+        .tool-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            border-color: var(--primary-color);
+        }
+        
+        .tool-card:hover::before {
+            transform: scaleX(1);
+        }
+        
+        .tool-icon {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+            display: block;
+        }
+        
+        .tool-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-color);
+        }
+        
+        .tool-description {
+            font-size: 0.85rem;
+            color: #999;
+            line-height: 1.5;
+            flex: 1;
+        }
+        
+        .quick-links {
+            margin-top: 35px;
+            padding-top: 25px;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        .quick-links-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--text-color);
+        }
+        
+        .quick-links-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 12px;
+        }
+        
+        .quick-link {
+            padding: 12px 16px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            text-decoration: none;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+        
+        .quick-link:hover {
+            border-color: var(--primary-color);
+            transform: translateX(3px);
+        }
+        
+        .quick-link span:first-child {
+            font-size: 1.1rem;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 25px 20px;
+            color: #666;
+            border-top: 1px solid var(--border-color);
+            margin-top: 40px;
+            font-size: 0.9rem;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 30px;
+            color: var(--primary-color);
+            text-decoration: none;
+            font-size: 1rem;
+            transition: color 0.2s;
+        }
+        
+        .back-link:hover {
+            color: #1976d2;
+        }
+        
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 20px;
+            }
+            
+            .header-left h1 {
+                font-size: 2rem;
+            }
+            
+            .tools-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .quick-links-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-left">
+                <h1>Figma Deliver</h1>
+                <p>让设计交付更高效、更简单</p>
+            </div>
+            <div class="header-right">
+                {{ if .logged_in }}
+                <div class="user-menu">
+                    <div class="user-avatar" title="{{ .username }}">
+                        {{ .user_initial }}
+                    </div>
+                    <div class="user-dropdown">
+                        <a href="/profile">👤 个人资料</a>
+                        <a href="/projects">📁 我的项目</a>
+                        <div class="divider"></div>
+                        <a href="/logout">🚪 退出登录</a>
+                    </div>
+                </div>
+                {{ else }}
+                <a href="/login" class="login-btn">登录 / 注册</a>
+                {{ end }}
+            </div>
+        </div>
+        
+        <!-- 主要工具 -->
+        <div class="tools-section">
+            <h2 class="section-title">🛠️ 实用工具</h2>
+            <div class="tools-grid">
+                <!-- 局域网共享中心 -->
+                <a href="/tools/share" class="tool-card">
+                    <span class="tool-icon">🚀</span>
+                    <h2 class="tool-title">局域网共享中心</h2>
+                    <p class="tool-description">
+                        快速共享文本和文件，支持多剪贴板和实时同步
+                    </p>
+                </a>
+                
+                <!-- 日志管理工具 -->
+                <a href="/tools/logs" class="tool-card">
+                    <span class="tool-icon">📋</span>
+                    <h2 class="tool-title">日志管理工具</h2>
+                    <p class="tool-description">
+                        上传、查看和管理日志文件，支持目录浏览和预览
+                    </p>
+                </a>
+            </div>
+        </div>
+        
+        <!-- 快捷链接 -->
+        {{ if .logged_in }}
+        <div class="quick-links">
+            <h3 class="quick-links-title">🔗 快捷访问</h3>
+            <div class="quick-links-grid">
+                <a href="/projects" class="quick-link">
+                    <span>📁</span>
+                    <span>我的项目</span>
+                </a>
+                <a href="/share" class="quick-link">
+                    <span>💡</span>
+                    <span>提示词分享</span>
+                </a>
+                <a href="/mcp-logs" class="quick-link">
+                    <span>📊</span>
+                    <span>MCP 调用记录</span>
+                </a>
+                <a href="/profile" class="quick-link">
+                    <span>👤</span>
+                    <span>个人资料</span>
+                </a>
+            </div>
+        </div>
+        {{ end }}
+    </div>
+    
+    <div class="footer">
+        <p>Figma Deliver - 让设计交付更高效</p>
+    </div>
+</body>
+</html>
+

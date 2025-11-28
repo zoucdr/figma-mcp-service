@@ -13,8 +13,8 @@
             <!-- 头部导航 -->
             <el-header class="app-header">
                 <div class="header-left">
-                    <h1 class="logo" @click="goToHome">Figma Deliver</h1>
-                    <span class="page-title">日志查看工具</span>
+                    <h1 class="logo" @click="goToHome" style="cursor: pointer;">Figma Deliver</h1>
+                    <span class="page-title">📋 日志查看工具</span>
                 </div>
                 <div class="header-right">
                     <el-button type="primary" size="medium" @click="showUploadDialog" icon="el-icon-upload">
@@ -110,6 +110,20 @@
                             </template>
                         </el-table-column>
                     </el-table>
+                    
+                    <!-- 分页组件 -->
+                    <div v-if="totalObjects > pageSize" class="pagination-container">
+                        <el-pagination
+                            background
+                            @current-change="handlePageChange"
+                            :current-page="currentPage"
+                            :page-size="pageSize"
+                            layout="total, prev, pager, next"
+                            :total="totalObjects"
+                            :pager-count="5"
+                            :hide-on-single-page="true">
+                        </el-pagination>
+                    </div>
                 </div>
             </el-main>
         </el-container>

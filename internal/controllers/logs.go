@@ -47,6 +47,21 @@ func ListLogs(c *gin.Context) {
 	// 从查询参数获取路径
 	relativePath := c.DefaultQuery("path", "")
 
+	// 从查询参数获取分页参数
+	pageSize := 50 // 默认每页50条
+	if pageSizeStr := c.Query("page_size"); pageSizeStr != "" {
+		if ps, err := fmt.Sscanf(pageSizeStr, "%d", &pageSize); err == nil && ps == 1 {
+			if pageSize <= 0 {
+				pageSize = 50
+			}
+			if pageSize > 1000 {
+				pageSize = 1000
+			}
+		}
+	}
+	
+	marker := c.DefaultQuery("marker", "")
+
 	// 构建完整的OBS路径前缀
 	var prefix string
 	if relativePath != "" && relativePath != "/" {
@@ -58,10 +73,10 @@ func ListLogs(c *gin.Context) {
 	// Windows路径分隔符转换为Unix风格
 	prefix = filepath.ToSlash(prefix)
 
-	log.Printf("📂 [Logs] 列出日志文件: %s", prefix)
+	log.Printf("📂 [Logs] 列出日志文件: %s (page_size=%d, marker=%s)", prefix, pageSize, marker)
 
-	// 列出对象
-	objects, err := globalLogsOBSService.ListObjectsInPath(prefix)
+	// 列出对象（带分页）
+	objects, nextMarker, hasMore, err := globalLogsOBSService.ListObjectsInPathWithPagination(prefix, pageSize, marker)
 	if err != nil {
 		log.Printf("❌ [Logs] 列出日志失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -71,9 +86,11 @@ func ListLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"path":    relativePath,
-		"objects": objects,
+		"success":     true,
+		"path":        relativePath,
+		"objects":     objects,
+		"next_marker": nextMarker,
+		"has_more":    hasMore,
 	})
 }
 

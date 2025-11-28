@@ -5,10 +5,18 @@ new Vue({
         return {
             // 当前路径
             currentPath: window.initialData.relativePath || '',
-            // 对象列表
+            // 当前页对象列表
             objects: [],
             // 加载状态
             loading: false,
+            // 分页参数
+            pageSize: 50,
+            currentPage: 1,
+            totalObjects: 0,
+            // 缓存的marker，用于分页导航
+            pageMarkers: [''], // 第一页marker为空
+            nextMarker: '',
+            hasMore: false,
             // 上传对话框
             uploadDialogVisible: false,
             uploadTabActive: 'web', // 默认显示网页上传标签页
@@ -39,18 +47,45 @@ new Vue({
     },
     methods: {
         // 加载文件列表
-        async loadList() {
+        async loadList(page = 1) {
             this.loading = true;
             try {
+                // 获取对应页码的marker
+                let marker = '';
+                if (page > 1 && page <= this.pageMarkers.length) {
+                    marker = this.pageMarkers[page - 1];
+                }
+                
                 const response = await axios.get('/tools/api/logs/list', {
                     params: {
-                        path: this.currentPath
+                        path: this.currentPath,
+                        page_size: this.pageSize,
+                        marker: marker
                     }
                 });
                 
                 if (response.data.success) {
                     this.objects = response.data.objects || [];
-                    console.log('加载文件列表成功:', this.objects.length, '个对象');
+                    this.nextMarker = response.data.next_marker || '';
+                    this.hasMore = response.data.has_more || false;
+                    this.currentPage = page;
+                    
+                    // 如果是新页面且有下一页，保存marker
+                    if (this.hasMore && page === this.pageMarkers.length) {
+                        this.pageMarkers.push(this.nextMarker);
+                    }
+                    
+                    // 计算总数（估算值，用于显示分页）
+                    if (this.hasMore) {
+                        // 如果还有更多，总数至少是当前页+1页的数量
+                        this.totalObjects = page * this.pageSize + 1;
+                    } else {
+                        // 没有更多了，精确计算总数
+                        this.totalObjects = (page - 1) * this.pageSize + this.objects.length;
+                    }
+                    
+                    console.log('加载文件列表成功:', this.objects.length, '个对象', 
+                                '第', page, '页', '还有更多:', this.hasMore);
                 } else {
                     this.$message.error(response.data.error || '加载失败');
                 }
@@ -62,6 +97,11 @@ new Vue({
             }
         },
         
+        // 处理分页变化
+        handlePageChange(page) {
+            this.loadList(page);
+        },
+        
         // 刷新列表
         refreshList() {
             this.loadList();
@@ -70,10 +110,15 @@ new Vue({
         // 导航到指定路径
         navigateTo(path) {
             this.currentPath = path;
+            // 重置分页
+            this.currentPage = 1;
+            this.pageMarkers = [''];
+            this.nextMarker = '';
+            this.hasMore = false;
             // 更新URL（不刷新页面）
             const newUrl = path ? `/tools/logs/${path}` : '/tools/logs';
             window.history.pushState({}, '', newUrl);
-            this.loadList();
+            this.loadList(1);
         },
         
         // 获取到指定分段的路径

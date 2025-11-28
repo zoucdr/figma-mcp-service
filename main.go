@@ -258,8 +258,11 @@ func main() {
 		c.Next()
 	})
 
-	// 首页路由
-	r.GET("/", controllers.Home)
+	// 首页路由 - 工具中心
+	r.GET("/", controllers.ToolsIndexPage)
+
+	// 旧的主页逻辑（已登录跳转到 /projects，未登录跳转到 /login）
+	r.GET("/home", controllers.Home)
 
 	// 健康检查路由 - 无需验证
 	r.GET("/health", func(c *gin.Context) {
@@ -365,9 +368,25 @@ func main() {
 
 	// 日志管理工具 - 无需登录
 	toolsGroup := r.Group("/tools")
+
+	// 工具索引页面
+	toolsGroup.GET("", controllers.ToolsIndexPage)
+
 	// 日志查看页面（支持路径参数）
 	toolsGroup.GET("/logs", controllers.LogsPage)
 	toolsGroup.GET("/logs/*path", controllers.LogsPage)
+
+	// 局域网共享中心
+	toolsGroup.GET("/share", controllers.ShareToolsPage)
+	toolsGroup.GET("/share/api/text/list", controllers.GetTextClipsAPI)
+	toolsGroup.POST("/share/api/text/update", controllers.UpdateTextClipAPI)
+	toolsGroup.GET("/share/api/files/list", controllers.GetSharedFilesListAPI)
+	toolsGroup.POST("/share/clipboard/add", controllers.AddTextClip)
+	toolsGroup.GET("/share/clipboard/delete/:id", controllers.DeleteTextClip)
+	toolsGroup.POST("/share/upload", controllers.UploadSharedFile)
+	toolsGroup.GET("/share/files/:filename", controllers.DownloadSharedFile)
+	toolsGroup.GET("/share/delete/:filename", controllers.DeleteSharedFile)
+	toolsGroup.POST("/share/clear", controllers.ClearSharedFiles)
 
 	// 日志管理 API - 无需登录
 	logsAPIGroup := toolsGroup.Group("/api/logs")
