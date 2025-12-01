@@ -13,14 +13,21 @@
     "allowedDomains": [
       "https://google.com",
       "ws://figma-deliver.wekoi.cc",
-      "wss://figma-deliver.wekoi.cc"
+      "ws://figma-deliver.wekoi.cc:80",
+      "wss://figma-deliver.wekoi.cc",
+      "wss://figma-deliver.wekoi.cc:80",
+      "wss://figma-deliver.wekoi.cc:443"
     ],
     "devAllowedDomains": [
       "http://localhost:8080",
       "ws://localhost:8080",
       "ws://figma-deliver.wekoi.cc",
-      "wss://figma-deliver.wekoi.cc"
-    ]
+      "ws://figma-deliver.wekoi.cc:80",
+      "wss://figma-deliver.wekoi.cc",
+      "wss://figma-deliver.wekoi.cc:80",
+      "wss://figma-deliver.wekoi.cc:443"
+    ],
+    "reasoning": "This plugin connects to the Figma-Deliver MCP service via WebSocket to enable AI-powered design automation and delivery features."
   },
   "documentAccess": "dynamic-page",
   "enableProposedApi": true,

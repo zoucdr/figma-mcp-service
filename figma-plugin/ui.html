@@ -664,9 +664,23 @@
           state.serverPort = port;
           state.connectionId = connectionId;
           
-          // Determine protocol based on host
-          const isSecure = host !== "localhost" && host !== "127.0.0.1" && !host.startsWith("192.168.") && !host.startsWith("10.") && !host.startsWith("172.");
-          const protocol = isSecure ? "wss" : "ws";
+          // Determine protocol based on host and port
+          // Use ws:// for localhost, port 80, or local networks
+          // Use wss:// for port 443 or remote hosts with other ports
+          const isLocalHost = host === "localhost" || host === "127.0.0.1" || host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.");
+          const isPort80 = port === "80" || port === 80;
+          const isPort443 = port === "443" || port === 443;
+          
+          let protocol;
+          if (isLocalHost) {
+            protocol = "ws"; // Always use ws for localhost
+          } else if (isPort80) {
+            protocol = "ws"; // Port 80 is for non-encrypted connections
+          } else if (isPort443) {
+            protocol = "wss"; // Port 443 is for encrypted connections
+          } else {
+            protocol = "wss"; // Default to secure for remote hosts on non-standard ports
+          }
           
           // Build WebSocket URL with /mcp-ws path and connection_id as query parameter
           let wsUrl = `${protocol}://${host}:${port}/mcp-ws`;
