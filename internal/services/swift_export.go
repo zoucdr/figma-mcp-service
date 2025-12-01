@@ -84,7 +84,7 @@ func ProcessSwiftExportJob(jobID uint, config SwiftExportConfig) {
 	defer os.RemoveAll(tempDir)
 
 	// 获取优化后的节点数据（复用现有逻辑）
-	rootNode, nodeImages, err := getOptimizedNodesForSwift(project, user.FigmaToken)
+	rootNode, nodeImages, err := getOptimizedNodesForSwift(project, user.FigmaToken, user.ID)
 	if err != nil {
 		models.UpdateExportJobStatus(jobID, "failed", 0, "", "获取节点数据失败: "+err.Error())
 		return
@@ -157,7 +157,7 @@ func GenerateSwiftPreview(project *models.FigmaProject, config SwiftExportConfig
 	}
 
 	// 获取优化后的节点数据
-	rootNode, nodeImages, err := getOptimizedNodesForSwift(project, user.FigmaToken)
+	rootNode, nodeImages, err := getOptimizedNodesForSwift(project, user.FigmaToken, user.ID)
 	if err != nil {
 		return "", fmt.Errorf("获取节点数据失败: %v", err)
 	}
@@ -186,7 +186,7 @@ func GenerateSwiftFullPreview(project *models.FigmaProject, config SwiftExportCo
 	}
 
 	// 获取优化后的节点数据
-	rootNode, nodeImages, err := getOptimizedNodesForSwift(project, user.FigmaToken)
+	rootNode, nodeImages, err := getOptimizedNodesForSwift(project, user.FigmaToken, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点数据失败: %v", err)
 	}
@@ -839,9 +839,9 @@ func (g *SwiftCodeGenerator) generateComponentConstraints(component SwiftUICompo
 }
 
 // 获取优化节点数据（复用现有逻辑）
-func getOptimizedNodesForSwift(project *models.FigmaProject, token string) (gin.H, map[string]string, error) {
-	// 获取完整的Figma节点树数据
-	figmaNodes, err := GetFigmaNodes(token, project.FileKey, project.RootNodeID)
+func getOptimizedNodesForSwift(project *models.FigmaProject, token string, userID uint) (gin.H, map[string]string, error) {
+	// 获取完整的Figma节点树数据（支持 WebSocket 兜底，会自动等待响应）
+	figmaNodes, err := GetFigmaNodesWithUser(token, project.FileKey, project.RootNodeID, userID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("获取节点树数据失败: %v", err)
 	}

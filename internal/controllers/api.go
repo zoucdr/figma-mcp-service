@@ -235,8 +235,8 @@ func APIGetOptimizedNodes(c *gin.Context) {
 // getOptimizedProjectData 获取优化后的项目数据
 // level: 0=不砍任何原数据, 1=过滤空值(当前逻辑), 2=更激进的简化
 func getOptimizedProjectData(user *models.User, project *models.FigmaProject, fileKey, rootNodeID string, level int) (gin.H, error) {
-	// 获取节点树数据
-	nodes, err := services.GetFigmaNodes(user.FigmaToken, fileKey, rootNodeID)
+	// 获取节点树数据（支持 WebSocket 兜底，会自动等待响应）
+	nodes, err := services.GetFigmaNodesWithUser(user.FigmaToken, fileKey, rootNodeID, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点树失败: %v", err)
 	}
@@ -589,11 +589,18 @@ func APIDownloadFigmaImage(c *gin.Context) {
 	// 获取可选参数
 	format := c.DefaultQuery("format", "png")
 	scaleStr := c.DefaultQuery("scale", "1.0")
+	ignoreTextsStr := c.DefaultQuery("ignore_texts", "false")
 
 	// 解析缩放比例
 	scale, err := strconv.ParseFloat(scaleStr, 64)
 	if err != nil || scale <= 0 || scale > 4.0 {
 		scale = 1.0
+	}
+
+	// 解析是否忽略文字
+	ignoreTexts := false
+	if ignoreTextsStr == "true" || ignoreTextsStr == "1" {
+		ignoreTexts = true
 	}
 
 	// 验证格式
@@ -603,7 +610,7 @@ func APIDownloadFigmaImage(c *gin.Context) {
 	}
 
 	// 使用缓存机制下载图片
-	imagePath, err := downloadFigmaImageWithCache(user.FigmaToken, fileKey, nodeIDs, format, scale)
+	imagePath, err := downloadFigmaImageWithCache(user.ID, user.FigmaToken, fileKey, nodeIDs, format, scale, ignoreTexts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "下载图片失败: " + err.Error(),
@@ -718,9 +725,9 @@ func APIClearNodeCache(c *gin.Context) {
 }
 
 // downloadFigmaImageWithCache 使用缓存机制下载Figma图片
-func downloadFigmaImageWithCache(token, fileKey, nodeIDs, format string, scale float64) (string, error) {
-	fmt.Printf("开始下载Figma图片（带缓存）: fileKey=%s, nodeIDs=%s, format=%s, scale=%.1f\n",
-		fileKey, nodeIDs, format, scale)
+func downloadFigmaImageWithCache(userID uint, _ /*token*/, fileKey, nodeIDs, format string, scale float64, ignoreTexts bool) (string, error) {
+	fmt.Printf("开始下载Figma图片（带缓存）: fileKey=%s, nodeIDs=%s, format=%s, scale=%.1f, ignoreTexts=%v\n",
+		fileKey, nodeIDs, format, scale, ignoreTexts)
 
 	// 创建临时文件夹
 	tempDir := filepath.Join("temp", fileKey, "previews")
@@ -733,14 +740,59 @@ func downloadFigmaImageWithCache(token, fileKey, nodeIDs, format string, scale f
 	// 生成安全的文件名 - 替换特殊字符为下划线
 	safeNodeIDs := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_", ",", "_").Replace(nodeIDs)
 
-	// 检查是否已经有缓存的图片文件（根据缩放等级）
-	existingFile := findLatestNodeImage(tempDir, safeNodeIDs, scale)
-	if existingFile != "" {
-		fmt.Printf("找到节点 %s 的缓存图片文件，直接使用: %s\n", nodeIDs, existingFile)
-		return existingFile, nil
+	// 步骤1：优先检查 WebSocket 是否可用，如果可用则使用最新数据
+	fmt.Printf("步骤1：检查 WebSocket 连接状态 (userID=%d)\n", userID)
+	mcpService := services.GetMCPService()
+	if mcpService != nil {
+		connection, exists := mcpService.GetUserConnection(userID)
+		if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+			fmt.Printf("✅ WebSocket 连接存在，优先使用 WebSocket 获取最新图片数据 (ignoreTexts=%v)\n", ignoreTexts)
+
+			// 通过WebSocket调用Figma插件导出图片
+			imagePath, err := services.TryGetImageViaWebSocket(fileKey, nodeIDs, format, scale, userID, tempDir, safeNodeIDs, ignoreTexts)
+			if err == nil {
+				fmt.Printf("✅ 成功通过 WebSocket 获取最新图片: %s\n", imagePath)
+				// WebSocket 成功获取，handleImageDataFromPlugin 已经自动更新了 OBS、数据库和本地文件
+				return imagePath, nil
+			}
+			fmt.Printf("⚠️ WebSocket 获取失败: %v，尝试降级到缓存\n", err)
+		} else {
+			fmt.Printf("⚠️ WebSocket 连接不存在，使用缓存数据\n")
+		}
 	}
 
-	return "", nil
+	// 步骤2：WebSocket 不可用或失败，检查本地缓存文件
+	existingFile := findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeIDs, scale, ignoreTexts)
+	if existingFile != "" {
+		fmt.Printf("✅ 找到节点 %s 的本地缓存图片: %s\n", nodeIDs, existingFile)
+		return existingFile, nil
+	}
+	fmt.Printf("⚠️ 本地缓存未找到\n")
+
+	// 步骤3：从数据库查找华为云OBS URL
+	fmt.Printf("步骤3：从数据库查找华为云OBS URL\n")
+	var nodeImage models.FigmaNodeImage
+	err = models.DB.Where("file_key = ? AND node_id = ? AND format = ? AND scale = ? AND ignore_texts = ? AND status IN ('obs_synced', 'figma_cdn')",
+		fileKey, nodeIDs, format, scale, ignoreTexts).First(&nodeImage).Error
+
+	if err == nil && nodeImage.OBSKey != "" {
+		// 找到了OBS记录，尝试从OBS下载
+		fmt.Printf("📦 找到OBS记录: obsKey=%s, status=%s\n", nodeImage.OBSKey, nodeImage.Status)
+
+		// 尝试从OBS下载（使用全局OBS服务）
+		imagePath, err := services.DownloadImageFromOBS(nodeImage.OBSKey, tempDir, safeNodeIDs, format, scale, ignoreTexts)
+		if err == nil {
+			fmt.Printf("✅ 从OBS下载成功: %s\n", imagePath)
+			return imagePath, nil
+		}
+		fmt.Printf("⚠️ 从OBS下载失败: %v\n", err)
+	} else if err != nil {
+		fmt.Printf("⚠️ 数据库未找到图片记录: %v\n", err)
+	}
+
+	// 步骤4：所有途径都失败
+	fmt.Printf("❌ 所有获取途径都失败\n")
+	return "", fmt.Errorf("无法获取图片：WebSocket不可用，本地缓存不存在，数据库无OBS记录")
 }
 
 // getFigmaImageURL 通过Figma API获取图片URL
@@ -869,9 +921,10 @@ func downloadAndCacheImage(imageURL, tempDir, safeNodeIDs, format string, scale 
 	fmt.Printf("图片文件哈希值: %s, 大小: %d bytes\n", hashSum, bytes)
 
 	// 生成最终文件名（包含缩放等级和哈希值）
-	// 格式：节点-缩放等级-hash.ext，例如：节点-1-hash.png 或 节点-0.5-hash.png
+	// 格式：节点-缩放等级x-hash.ext，例如：节点-1x-hash.png 或 节点-0.5x-hash.png
+	// 注意：这里默认使用x后缀（带文字），如需支持p后缀需要传入ignoreTexts参数
 	scaleStr := formatScaleForFilename(scale)
-	finalFileName := fmt.Sprintf("%s-%s-%s%s", safeNodeIDs, scaleStr, hashSum[:8], fileExt)
+	finalFileName := fmt.Sprintf("%s-%sx-%s%s", safeNodeIDs, scaleStr, hashSum[:8], fileExt)
 	finalFilePath := filepath.Join(tempDir, finalFileName)
 
 	// 检查是否已经存在相同哈希的文件
@@ -898,16 +951,28 @@ func downloadAndCacheImage(imageURL, tempDir, safeNodeIDs, format string, scale 
 
 // findLatestNodeImage 查找节点的最新图片文件（根据缩放等级）
 func findLatestNodeImage(tempDir, safeNodeID string, scale float64) string {
+	return findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeID, scale, false)
+}
+
+// findLatestNodeImageWithIgnoreTexts 查找节点的最新图片文件（根据缩放等级和忽略文字标志）
+func findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeID string, scale float64, ignoreTexts bool) string {
 	// 构建缩放等级字符串
 	scaleStr := formatScaleForFilename(scale)
+
+	// 根据ignoreTexts决定文件名后缀：x表示带文字，p表示不带文字
+	suffix := "x"
+	if ignoreTexts {
+		suffix = "p"
+	}
 
 	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
 	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
-		// 匹配格式：节点-缩放等级-*.*
-		pattern := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+"-*"+ext)
+		// 匹配格式：节点-缩放等级x/p-*.*
+		// 例如：1_1223-1.0x-abc123.png 或 1_1223-1.0p-abc123.png
+		pattern := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+suffix+"-*"+ext)
 		files, err := filepath.Glob(pattern)
 		if err == nil && len(files) > 0 {
 			allFiles = append(allFiles, files...)
@@ -963,15 +1028,22 @@ func cleanupOldNodeImages(tempDir, safeNodeID string, scale float64, keepCount i
 	scaleStr := formatScaleForFilename(scale)
 
 	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
+	// 同时支持x后缀（带文字）和p后缀（不带文字）
 	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
-		// 匹配格式：节点-缩放等级-*.*
-		pattern := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+"-*"+ext)
-		files, err := filepath.Glob(pattern)
-		if err == nil && len(files) > 0 {
-			allFiles = append(allFiles, files...)
+		// 匹配格式：节点-缩放等级x-*.* 和 节点-缩放等级p-*.*
+		patternX := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+"x-*"+ext)
+		filesX, err := filepath.Glob(patternX)
+		if err == nil && len(filesX) > 0 {
+			allFiles = append(allFiles, filesX...)
+		}
+
+		patternP := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+"p-*"+ext)
+		filesP, err := filepath.Glob(patternP)
+		if err == nil && len(filesP) > 0 {
+			allFiles = append(allFiles, filesP...)
 		}
 	}
 

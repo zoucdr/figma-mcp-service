@@ -76,8 +76,8 @@ func ProcessExportJob(jobID uint) {
 	}
 	fmt.Printf("总共加载了 %d 个节点的修改信息\n", len(nodeSettings))
 
-	// 获取完整的Figma节点树数据
-	figmaNodes, err := GetFigmaNodes(user.FigmaToken, project.FileKey, project.RootNodeID)
+	// 获取完整的Figma节点树数据（支持 WebSocket 兜底，会自动等待响应）
+	figmaNodes, err := GetFigmaNodesWithUser(user.FigmaToken, project.FileKey, project.RootNodeID, user.ID)
 	if err != nil {
 		models.UpdateExportJobStatus(jobID, "failed", 0, "", "获取节点树数据失败: "+err.Error())
 		return
@@ -117,8 +117,8 @@ func ProcessExportJob(jobID uint) {
 		optimizedNodes = append(optimizedNodes, optimizedNode)
 	}
 
-	// 从优化后的节点中提取需要下载的图片列表
-	imageDownloadList := extractImageDownloadListFromNodes(optimizedNodes, nodeSettings, job.Format)
+	// 从优化后的节点中提取需要下载的图片列表（传入完整的figmaNodes用于检查子树）
+	imageDownloadList := extractImageDownloadListFromNodes(optimizedNodes, figmaNodes, nodeSettings, job.Format)
 	fmt.Printf("需要下载的图片数量: %d\n", len(imageDownloadList))
 
 	// 下载图片
@@ -133,7 +133,7 @@ func ProcessExportJob(jobID uint) {
 		for _, imageInfo := range imageDownloadList {
 			// 下载图片，使用任务中指定的缩放比例
 			// 这会返回previews目录中按照hash处理后的图片路径
-			imagePath, err := downloadImageForExport(user.FigmaToken, project.FileKey, imageInfo.DownloadID, imageInfo.Format, job.Scale, jobID, processedCount, totalImages)
+			imagePath, err := downloadImageForExport(user.FigmaToken, project.FileKey, imageInfo.DownloadID, imageInfo.Format, job.Scale, imageInfo.IgnoreTexts, user.ID, jobID, processedCount, totalImages)
 			if err == nil && imagePath != "" {
 				// 检查图片文件是否存在
 				if _, err := os.Stat(imagePath); err == nil {
@@ -745,14 +745,22 @@ func removeParentIDFromTree(node gin.H) {
 
 // ImageDownloadInfo 图片下载信息
 type ImageDownloadInfo struct {
-	NodeID     string // 节点ID（用于记录图片路径）
-	DownloadID string // 实际下载的ID（可能是节点ID或img_id）
-	Format     string // 图片格式
+	NodeID      string // 节点ID（用于记录图片路径）
+	DownloadID  string // 实际下载的ID（可能是节点ID或img_id）
+	Format      string // 图片格式
+	IgnoreTexts bool   // 是否忽略文字（如果子树中有文本节点，且res_mode不为attach，则为true）
 }
 
 // extractImageDownloadListFromNodes 从优化后的节点中提取需要下载的图片列表
-func extractImageDownloadListFromNodes(nodes []gin.H, nodeSettings map[string]map[string]interface{}, defaultFormat string) []ImageDownloadInfo {
+func extractImageDownloadListFromNodes(nodes []gin.H, figmaNodes []map[string]interface{}, nodeSettings map[string]map[string]interface{}, defaultFormat string) []ImageDownloadInfo {
 	var imageList []ImageDownloadInfo
+
+	// 构建完整节点树的映射，用于检查子树
+	figmaNodeMap := make(map[string]map[string]interface{})
+	for _, node := range figmaNodes {
+		nodeID := node["id"].(string)
+		figmaNodeMap[nodeID] = node
+	}
 
 	for _, node := range nodes {
 		nodeID := node["id"].(string)
@@ -790,23 +798,194 @@ func extractImageDownloadListFromNodes(nodes []gin.H, nodeSettings map[string]ma
 			format = imgExt
 		}
 
+		// 检查是否需要忽略文字：如果子树中有文本节点，且res_mode不为attach，则标记IgnoreTexts为true
+		ignoreTexts := false
+		if resMode != "attach" {
+			// 检查子树中是否有文本节点
+			if hasTextNodeInSubtree(downloadID, figmaNodeMap) {
+				ignoreTexts = true
+				fmt.Printf("节点 %s 的子树中包含文本节点，设置 ignoreTexts=true\n", nodeID)
+			}
+		}
+
 		imageInfo := ImageDownloadInfo{
-			NodeID:     nodeID,
-			DownloadID: downloadID,
-			Format:     format,
+			NodeID:      nodeID,
+			DownloadID:  downloadID,
+			Format:      format,
+			IgnoreTexts: ignoreTexts,
 		}
 
 		imageList = append(imageList, imageInfo)
-		fmt.Printf("添加图片下载任务: 节点=%s, 下载ID=%s, 格式=%s\n", nodeID, downloadID, format)
+		fmt.Printf("添加图片下载任务: 节点=%s, 下载ID=%s, 格式=%s, ignoreTexts=%v\n", nodeID, downloadID, format, ignoreTexts)
 	}
 
 	return imageList
 }
 
+// hasTextNodeInSubtree 检查节点子树中是否包含文本节点
+func hasTextNodeInSubtree(nodeID string, figmaNodeMap map[string]map[string]interface{}) bool {
+	node, exists := figmaNodeMap[nodeID]
+	if !exists {
+		return false
+	}
+
+	// 检查当前节点是否是文本节点
+	if nodeType, ok := node["type"].(string); ok && nodeType == "TEXT" {
+		return true
+	}
+
+	// 递归检查子节点
+	if children, ok := node["children"].([]interface{}); ok {
+		for _, child := range children {
+			if childMap, ok := child.(map[string]interface{}); ok {
+				if childID, ok := childMap["id"].(string); ok {
+					if hasTextNodeInSubtree(childID, figmaNodeMap) {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// DownloadPreviewFigmaImageForExport 专门用于导出的图片下载函数，支持 ignoreTexts 参数
+// 这是 DownloadPreviewFigmaImageWithOptions 的变体，增加了对 ignoreTexts 的支持
+func DownloadFigmaImageForExport(token, fileKey, nodeID, imageFormat string, imageScale float64, ignoreTexts bool, userID uint) (string, error) {
+	// 打印调试信息
+	fmt.Printf("📖 获取Figma图片(导出): fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v, userID=%d\n",
+		fileKey, nodeID, imageFormat, imageScale, ignoreTexts, userID)
+
+	// 准备目录和文件名
+	tempDir := filepath.Join("temp", fileKey, "previews")
+	fmt.Printf("缓存目录路径: %s\n", tempDir)
+	err := os.MkdirAll(tempDir, os.ModePerm)
+	if err != nil {
+		fmt.Printf("创建临时文件夹失败: %v\n", err)
+		return "", fmt.Errorf("创建临时文件夹失败: %v", err)
+	}
+
+	// 生成文件名 - 替换特殊字符为下划线
+	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+	fmt.Printf("原始节点ID: %s, 安全节点ID: %s\n", nodeID, safeNodeID)
+
+	// 1. 优先检查 WebSocket 是否可用（如果提供了有效的 userID）
+	if userID > 0 {
+		fmt.Printf("🔌 检查 WebSocket 连接状态 (UserID=%d)\n", userID)
+
+		// 检查用户是否有活跃的 WebSocket 连接
+		mcpService := GetMCPService()
+		if mcpService != nil {
+			_, exists := mcpService.GetUserConnection(userID)
+			if exists {
+				fmt.Printf("✅ WebSocket 连接存在，优先使用 WebSocket 获取最新数据 (ignoreTexts=%v)\n", ignoreTexts)
+				localPath, err := TryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID, ignoreTexts)
+				if err == nil && localPath != "" {
+					fmt.Printf("✅ 成功通过 WebSocket 获取最新图片: %s\n", localPath)
+					// WebSocket 成功获取，handleImageDataFromPlugin 已经自动更新了 OBS、数据库和本地文件
+					return localPath, nil
+				}
+				fmt.Printf("⚠️ WebSocket 获取失败: %v，尝试降级到缓存\n", err)
+			} else {
+				fmt.Printf("⚠️ WebSocket 连接不存在，使用缓存数据\n")
+			}
+		}
+	} else {
+		fmt.Printf("⚠️ 未提供 userID，跳过 WebSocket 检查\n")
+	}
+
+	// 2. WebSocket 不可用或失败，检查本地缓存文件
+	existingFile := findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeID, imageScale, ignoreTexts)
+	if existingFile != "" {
+		fmt.Printf("✅ 找到本地缓存图片: %s\n", existingFile)
+		return existingFile, nil
+	}
+	fmt.Printf("⚠️ 本地缓存未找到\n")
+
+	// 3. 查询数据库中的图片记录
+	fmt.Printf("🔍 查询数据库: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v\n", fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
+	image, err := models.GetNodeImage(fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
+	if err != nil {
+		fmt.Printf("⚠️ 数据库查询失败: %v\n", err)
+	} else if image != nil {
+		// 4. 优先使用 OBS Key（如果存在）
+		if image.OBSKey != "" {
+			fmt.Printf("📦 找到 OBS Key: %s\n", image.OBSKey)
+			// 尝试从 OBS 下载到本地缓存（使用 ignoreTexts 参数）
+			localPath, err := DownloadImageFromOBS(image.OBSKey, tempDir, safeNodeID, imageFormat, imageScale, ignoreTexts)
+			if err == nil && localPath != "" {
+				fmt.Printf("✅ 成功从 OBS 下载图片到本地: %s\n", localPath)
+				return localPath, nil
+			}
+			fmt.Printf("⚠️ 从 OBS 下载失败: %v，尝试 Figma CDN\n", err)
+		}
+
+		// 5. 使用 Figma CDN URL（如果存在）
+		if image.FigmaCDNURL != "" {
+			fmt.Printf("🌐 找到 Figma CDN URL: %s\n", image.FigmaCDNURL)
+			// 尝试从 Figma CDN 下载到本地缓存
+			localPath, err := downloadImageFromURL(image.FigmaCDNURL, tempDir, safeNodeID, imageFormat, imageScale)
+			if err == nil && localPath != "" {
+				fmt.Printf("✅ 成功从 Figma CDN 下载图片到本地: %s\n", localPath)
+				return localPath, nil
+			}
+			fmt.Printf("⚠️ 从 Figma CDN 下载失败: %v\n", err)
+		}
+	} else {
+		fmt.Printf("⚠️ 数据库中未找到图片记录\n")
+	}
+
+	// 6. 所有途径都失败了
+	fmt.Printf("❌ 所有获取途径都失败\n")
+	return "", fmt.Errorf("无法获取图片")
+}
+
+// findLatestNodeImageWithIgnoreTexts 查找最新的节点图片（考虑 ignoreTexts 标记）
+// 图片文件名格式: nodeID-scale{x|p}-hash.ext
+// x 表示带文字，p 表示不带文字
+func findLatestNodeImageWithIgnoreTexts(dir, safeNodeID string, imageScale float64, ignoreTexts bool) string {
+	scaleStr := formatScaleForFilename(imageScale)
+	suffix := "x" // 默认带文字
+	if ignoreTexts {
+		suffix = "p" // 不带文字
+	}
+
+	// 查找匹配的文件
+	pattern := fmt.Sprintf("%s-%s%s-", safeNodeID, scaleStr, suffix)
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+
+	var latestFile string
+	var latestTime time.Time
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		fileName := file.Name()
+		if strings.HasPrefix(fileName, pattern) {
+			info, err := file.Info()
+			if err != nil {
+				continue
+			}
+			if latestFile == "" || info.ModTime().After(latestTime) {
+				latestFile = filepath.Join(dir, fileName)
+				latestTime = info.ModTime()
+			}
+		}
+	}
+
+	return latestFile
+}
+
 // downloadImageForExport 专门用于导出时下载图片，会在使用缓存时也更新进度
-func downloadImageForExport(token, fileKey, nodeID, format string, scale float64, jobID uint, processedCount, totalNodes int) (string, error) {
-	// 调用原有的下载方法
-	imagePath, err := DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, format, scale, true)
+func downloadImageForExport(token, fileKey, nodeID, format string, scale float64, ignoreTexts bool, userID uint, jobID uint, processedCount, totalNodes int) (string, error) {
+	// 调用支持 ignoreTexts 的下载方法
+	imagePath, err := DownloadFigmaImageForExport(token, fileKey, nodeID, format, scale, ignoreTexts, userID)
 
 	// 无论是否使用缓存，都更新进度
 	progress := 20 + int(float64(processedCount+1)/float64(totalNodes)*60)

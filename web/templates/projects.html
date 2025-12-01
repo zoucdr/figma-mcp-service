@@ -88,15 +88,6 @@
                             <el-tag size="mini" type="info">{{`{{ group.projectCount }}`}}个项目</el-tag>
                         </div>
                         <div class="group-header-right">
-                            <el-button 
-                                size="mini" 
-                                type="warning" 
-                                icon="el-icon-picture" 
-                                @click.stop="renderGroupNodes(group)"
-                                title="渲染该分组所有节点"
-                                style="margin-right: 10px;">
-                                渲染
-                            </el-button>
                             <!-- 显示分组名称或 File Key -->
                             <el-tag v-if="group.groupName" size="mini" type="success">
                                 <i class="el-icon-collection-tag"></i> {{`{{ group.groupName }}`}}
@@ -149,7 +140,6 @@
                                            @click="openFigmaLink(scope.row.figma_url)"
                                            title="在Figma中打开">
                                 </el-button>
-                                <!-- 移除渲染按钮，因为 Dashboard 中已有项目渲染功能 -->
                                 <el-button size="mini" type="primary" @click="showEditDialog(scope.row)">编辑</el-button>
                                 <el-button size="mini" type="danger" @click="deleteProject(scope.row)">删除</el-button>
                             </template>
@@ -229,212 +219,11 @@
         </div>
     </el-dialog>
     
-    <!-- 渲染对话框 -->
-    <el-dialog 
-        title="渲染节点图片" 
-        :visible.sync="renderDialogVisible" 
-        width="600px"
-        :close-on-click-modal="false"
-        :close-on-press-escape="!rendering">
-        
-        <div v-if="!rendering" class="render-form">
-            <el-form label-width="100px">
-                <el-form-item label="文件Key">
-                    <el-input v-model="renderForm.fileKey" disabled></el-input>
-                </el-form-item>
-                <el-form-item label="节点总数">
-                    <el-tag type="info">{{`{{ allNodes.length }}`}} 个节点</el-tag>
-                </el-form-item>
-                <el-form-item label="节点类型">
-                    <el-select 
-                        v-model="renderForm.nodeTypes" 
-                        multiple 
-                        placeholder="请选择要渲染的节点类型"
-                        @change="updateFilteredNodes"
-                        style="width: 100%"
-                        clearable>
-                        <el-option label="GROUP" value="GROUP"></el-option>
-                        <el-option label="FRAME" value="FRAME"></el-option>
-                        <el-option label="TEXT" value="TEXT"></el-option>
-                        <el-option label="INSTANCE" value="INSTANCE"></el-option>
-                        <el-option label="COMPONENT" value="COMPONENT"></el-option>
-                        <el-option label="COMPONENT_SET" value="COMPONENT_SET"></el-option>
-                        <el-option label="VECTOR" value="VECTOR"></el-option>
-                        <el-option label="BOOLEAN_OPERATION" value="BOOLEAN_OPERATION"></el-option>
-                        <el-option label="STAR" value="STAR"></el-option>
-                        <el-option label="LINE" value="LINE"></el-option>
-                        <el-option label="ELLIPSE" value="ELLIPSE"></el-option>
-                        <el-option label="RECTANGLE" value="RECTANGLE"></el-option>
-                        <el-option label="POLYGON" value="POLYGON"></el-option>
-                    </el-select>
-                    <div class="form-tip">
-                        <i class="el-icon-info"></i>
-                        <span>请选择要渲染的节点类型，不选择则不渲染任何节点</span>
-                    </div>
-                </el-form-item>
-                <el-form-item label="筛选结果">
-                    <el-tag type="success">{{`{{ filteredNodes.length }}`}} 个节点将被渲染</el-tag>
-                </el-form-item>
-                <el-form-item label="图片格式">
-                    <el-select v-model="renderForm.format" style="width: 100%">
-                        <el-option label="PNG" value="png"></el-option>
-                        <el-option label="JPG" value="jpg"></el-option>
-                        <el-option label="SVG" value="svg"></el-option>
-                    </el-select>
-                </el-form-item>
-                <el-form-item label="缩放比例">
-                    <el-select v-model="renderForm.scale" style="width: 100%">
-                        <el-option label="1x" :value="1.0"></el-option>
-                        <el-option label="1.5x" :value="1.5"></el-option>
-                        <el-option label="2x (推荐)" :value="2.0"></el-option>
-                        <el-option label="3x" :value="3.0"></el-option>
-                        <el-option label="4x" :value="4.0"></el-option>
-                    </el-select>
-                </el-form-item>
-            </el-form>
-        </div>
-        
-        <!-- 渲染进度 -->
-        <div v-else class="render-progress">
-            <div class="progress-header">
-                <el-tag :type="getStatusType(renderProgress.status)">
-                    {{`{{ formatStatus(renderProgress.status) }}`}}
-                </el-tag>
-                <span class="progress-message">{{`{{ renderProgress.message }}`}}</span>
-            </div>
-            
-            <!-- 等待时间提示 -->
-            <div v-if="renderProgress.status === 'waiting' && renderProgress.nextAvailableTime > 0" class="wait-time-info">
-                <i class="el-icon-time"></i>
-                <span>预计等待时间：{{`{{ formatWaitTime(calculateWaitSeconds(renderProgress.nextAvailableTime)) }}`}}</span>
-            </div>
-            
-            <!-- 进度条 -->
-            <el-progress 
-                :percentage="renderProgress.progress" 
-                :status="getProgressStatus(renderProgress.status)"
-                :stroke-width="20">
-            </el-progress>
-            
-            <!-- 详细信息 -->
-            <div class="progress-details">
-                <div class="detail-item">
-                    <span class="label">状态：</span>
-                    <span class="value">{{`{{ getStatusText(renderProgress.status) }}`}}</span>
-                </div>
-                <div class="detail-item">
-                    <span class="label">总节点数:</span>
-                    <span class="value">{{`{{ renderProgress.totalNodes }}`}}</span>
-                </div>
-                <div class="detail-item">
-                    <span class="label">已处理:</span>
-                    <span class="value success">{{`{{ renderProgress.processedNodes }}`}}</span>
-                </div>
-                <div class="detail-item" v-if="renderProgress.failedNodes > 0">
-                    <span class="label">失败:</span>
-                    <span class="value error">{{`{{ renderProgress.failedNodes }}`}}</span>
-                </div>
-                <div class="detail-item" v-if="renderProgress.queueId">
-                    <span class="label">队列ID:</span>
-                    <span class="value">{{`{{ renderProgress.queueId }}`}}</span>
-                </div>
-            </div>
-        </div>
-        
-        <div slot="footer" class="dialog-footer">
-            <el-button @click="cancelRender" v-if="!rendering || renderProgress.status === 'completed'">
-                {{`{{ renderProgress.status === 'completed' ? '关闭' : '取消' }}`}}
-            </el-button>
-            <el-button type="primary" @click="startRender" v-if="!rendering" :loading="rendering">
-                开始渲染
-            </el-button>
-        </div>
-    </el-dialog>
 </div>
 {{ end }}
 
 {{ define "projects_styles" }}
 <link rel="stylesheet" href="/static/css/projects.css?v={{ .timestamp }}">
-<style>
-/* 渲染对话框样式 */
-.render-form {
-    padding: 20px 0;
-}
-
-.render-progress {
-    padding: 20px;
-}
-
-.progress-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-.progress-message {
-    margin-left: 10px;
-    color: #606266;
-    font-size: 14px;
-}
-
-.wait-time-info {
-    display: flex;
-    align-items: center;
-    padding: 12px 15px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 8px;
-    margin-bottom: 20px;
-    color: #fff;
-    font-size: 14px;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-}
-
-.wait-time-info i {
-    font-size: 18px;
-    margin-right: 10px;
-    animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.6;
-    }
-}
-
-.progress-details {
-    margin-top: 20px;
-    padding: 15px;
-    background-color: #f5f7fa;
-    border-radius: 4px;
-}
-
-.detail-item {
-    display: flex;
-    justify-content: space-between;
-    padding: 5px 0;
-}
-
-.detail-item .label {
-    color: #909399;
-    font-size: 14px;
-}
-
-.detail-item .value {
-    font-weight: 500;
-    font-size: 14px;
-}
-
-.detail-item .value.success {
-    color: #67C23A;
-}
-
-.detail-item .value.error {
-    color: #F56C6C;
-}
-</style>
 {{ end }}
 
 {{ define "projects_scripts" }}
@@ -444,8 +233,6 @@ window.initialData = {
     projects: {{ if .projects }}{{ .projects }}{{ else }}[]{{ end }}
 };
 </script>
-<!-- 渲染功能模块 -->
-<script src="/static/js/figma-render.js?v={{ .timestamp }}"></script>
 <script src="/static/js/projects.js?v={{ .timestamp }}"></script>
 <script>
 // 确保Vue实例能正确初始化

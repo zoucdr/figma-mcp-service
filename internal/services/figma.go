@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -351,8 +352,8 @@ func GetFigmaProjectNodes(userID, projectID uint, fileKey, nodeID string) ([]mod
 		return nil, errors.New("用户未设置Figma Token")
 	}
 
-	// 获取节点信息
-	nodes, err := GetFigmaNodes(user.FigmaToken, fileKey, nodeID)
+	// 获取节点信息（支持 WebSocket 兜底）
+	nodes, err := GetFigmaNodesWithUser(user.FigmaToken, fileKey, nodeID, user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +634,18 @@ func GetFigmaNodesNoCache(token, fileKey, nodeID string) ([]map[string]interface
 }
 
 // GetFigmaNodes 获取Figma节点，支持缓存
+// 为了保持向后兼容，提供无 userID 参数的版本
 func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, error) {
+	return GetFigmaNodesWithUser(token, fileKey, nodeID, 0)
+}
+
+// GetFigmaNodesWithUser 获取Figma节点，支持缓存和 WebSocket 兜底
+// userID: 用户ID，如果为 0 则不尝试 WebSocket 兜底
+func GetFigmaNodesWithUser(token, fileKey, nodeID string, userID uint) ([]map[string]interface{}, error) {
+	// 如果 nodeID 含有 "-"，转换为 "_"
+	if strings.Contains(nodeID, "-") {
+		nodeID = strings.ReplaceAll(nodeID, "-", ":")
+	}
 	// 1. 检查本地文件缓存
 	cachedNodes, err := loadCachedNodes(fileKey, nodeID)
 	if err == nil && cachedNodes != nil {
@@ -690,8 +702,147 @@ func GetFigmaNodes(token, fileKey, nodeID string) ([]map[string]interface{}, err
 		fmt.Printf("⚠️ 数据库缓存未找到或状态异常\n")
 	}
 
-	// 3. 本地缓存和数据库都没有，调用 Figma API
-	return GetFigmaNodesNoCache(token, fileKey, nodeID)
+	// 3. 如果提供了有效的 userID，尝试通过 WebSocket 请求 Figma 插件
+	if userID > 0 {
+		mcpService := GetMCPService()
+		if mcpService == nil {
+			fmt.Printf("⚠️ [GetFigmaNodesWithUser] MCP 服务未初始化\n")
+			return nil, fmt.Errorf("节点数据缓存未找到，且 MCP 服务不可用")
+		}
+
+		connection, exists := mcpService.GetUserConnection(userID)
+		if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+			fmt.Printf("🔌 [GetFigmaNodesWithUser] 发现活跃 WebSocket 连接 (UserID=%d, ConnectionID=%s)，发送插件请求并等待响应\n",
+				userID, connection.ConnectionID)
+
+			// 构造 read_my_design 工具调用（使用与 mcp_tools.go 相同的格式）
+			requestID := fmt.Sprintf("req_service_%d_%s", time.Now().UnixNano(), strings.ReplaceAll(nodeID, ":", "_"))
+
+			// 创建响应通道
+			responseChan := make(chan interface{}, 1)
+			errorChan := make(chan error, 1)
+
+			// 注册请求等待响应
+			mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
+			defer mcpService.UnregisterPendingRequest(requestID)
+
+			// 构建发送到 Figma 插件的消息（与 mcp_tools.go 相同的格式）
+			message := map[string]interface{}{
+				"id":      requestID,
+				"command": "read_my_design",
+				"params": map[string]interface{}{
+					"nodeId": nodeID,
+				},
+			}
+
+			// 获取当前用户的频道
+			channel := mcpService.GetUserChannel(connection.ConnectionID)
+			if channel == "" {
+				// 如果没有加入频道，默认使用 figma-bridge
+				channel = "figma-bridge"
+				// 自动加入默认频道
+				_ = mcpService.JoinChannel(connection.ConnectionID, channel)
+			}
+
+			// 广播消息到频道
+			err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message)
+			if err != nil {
+				fmt.Printf("❌ [GetFigmaNodesWithUser] 发送消息到频道失败: %v\n", err)
+				return nil, fmt.Errorf("发送消息到 Figma 插件失败: %v", err)
+			}
+
+			fmt.Printf("✅ [GetFigmaNodesWithUser] 已发送请求到频道 %s，等待响应...\n", channel)
+
+			// 等待响应（30秒超时）
+			var response interface{}
+			select {
+			case response = <-responseChan:
+				fmt.Printf("✅ [GetFigmaNodesWithUser] 收到响应 (ID=%s)\n", requestID)
+			case respErr := <-errorChan:
+				fmt.Printf("❌ [GetFigmaNodesWithUser] 收到错误响应 (ID=%s): %v\n", requestID, respErr)
+				return nil, fmt.Errorf("通过 Figma 插件获取数据失败: %v", respErr)
+			case <-time.After(30 * time.Second):
+				fmt.Printf("⏰ [GetFigmaNodesWithUser] 请求超时 (ID=%s)\n", requestID)
+				return nil, fmt.Errorf("请求超时，未在 30 秒内收到插件响应")
+			}
+
+			fmt.Printf("✅ [GetFigmaNodesWithUser] 收到插件响应，解析节点数据\n")
+
+			// 解析响应数据
+			// 插件响应格式应该是节点树的 JSON 数据
+			responseData, ok := response.(map[string]interface{})
+			if !ok {
+				fmt.Printf("❌ [GetFigmaNodesWithUser] 响应数据格式错误\n")
+				return nil, fmt.Errorf("插件响应数据格式错误")
+			}
+
+			// 将响应数据保存到本地缓存和数据库
+			responseJSON, err := json.Marshal(responseData)
+			if err != nil {
+				fmt.Printf("⚠️ [GetFigmaNodesWithUser] 序列化响应数据失败: %v\n", err)
+			} else {
+				// 保存到本地缓存
+				go func() {
+					if err := cacheNodes(fileKey, nodeID, responseJSON); err != nil {
+						fmt.Printf("⚠️ [GetFigmaNodesWithUser] 保存到本地缓存失败: %v\n", err)
+					} else {
+						fmt.Printf("✅ [GetFigmaNodesWithUser] 已保存到本地缓存\n")
+					}
+				}()
+
+				// 保存到数据库缓存
+				go func() {
+					// 提取所有可见节点ID（排除 visible=false 的节点）
+					nodeIDList, err := models.ExtractVisibleNodeIDs(string(responseJSON))
+					if err != nil {
+						fmt.Printf("⚠️ [GetFigmaNodesWithUser] 提取节点ID失败: %v\n", err)
+						nodeIDList = []string{}
+					}
+					nodeIDsStr := strings.Join(nodeIDList, ",")
+					now := uint32(time.Now().Unix())
+
+					// 先尝试获取现有缓存
+					existingCache, err := models.GetFileCache(fileKey, nodeID)
+					if err == nil && existingCache != nil {
+						// 更新现有缓存
+						existingCache.FileData = string(responseJSON)
+						existingCache.NodeIDs = nodeIDsStr
+						existingCache.UpdatedAt = now
+						if err := models.UpdateFileCache(existingCache); err != nil {
+							fmt.Printf("⚠️ [GetFigmaNodesWithUser] 更新数据库缓存失败: %v\n", err)
+						} else {
+							fmt.Printf("✅ [GetFigmaNodesWithUser] 已更新数据库缓存 (节点数=%d)\n", len(nodeIDList))
+						}
+					} else {
+						// 创建新缓存
+						newCache := &models.FigmaFileCache{
+							FileKey:    fileKey,
+							RootNodeID: nodeID,
+							FileData:   string(responseJSON),
+							NodeIDs:    nodeIDsStr,
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
+						if err := models.CreateFileCache(newCache); err != nil {
+							fmt.Printf("⚠️ [GetFigmaNodesWithUser] 创建数据库缓存失败: %v\n", err)
+						} else {
+							fmt.Printf("✅ [GetFigmaNodesWithUser] 已创建数据库缓存 (节点数=%d)\n", len(nodeIDList))
+						}
+					}
+				}()
+			}
+
+			// 解析节点数据
+			nodes := parseFigmaNodes(responseData, nodeID)
+			fmt.Printf("✅ [GetFigmaNodesWithUser] 从 WebSocket 获取并解析了 %d 个节点\n", len(nodes))
+			return nodes, nil
+		}
+
+		fmt.Printf("⚠️ [GetFigmaNodesWithUser] 未找到活跃 WebSocket 连接 (UserID=%d)\n", userID)
+	}
+
+	// 4. 本地缓存和数据库都没有，且无法使用 WebSocket，返回错误
+	return nil, fmt.Errorf("节点数据缓存未找到")
 }
 
 // LoadCachedNodesFromFile 加载文件缓存的节点树数据（导出给 controller 使用）
@@ -727,10 +878,10 @@ func loadCachedNodes(fileKey, nodeID string) ([]map[string]interface{}, error) {
 	return parseFigmaNodes(result, nodeID), nil
 }
 
-// cacheNodes 缓存节点树数据
+// cacheNodes 缓存节点树数据（内部使用）
 func cacheNodes(fileKey, nodeID string, data []byte) error {
 	// 创建安全的文件名
-	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+	safeNodeID := strings.NewReplacer("-", "_", ":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
 	cacheDir := filepath.Join("temp", fileKey, "documents")
 
 	// 确保目录存在
@@ -743,25 +894,43 @@ func cacheNodes(fileKey, nodeID string, data []byte) error {
 	return os.WriteFile(cacheFile, data, 0644)
 }
 
+// SaveCachedNodesToFile 保存节点树数据到文件缓存（导出给 controller 使用）
+func SaveCachedNodesToFile(fileKey, nodeID string, data []byte) error {
+	return cacheNodes(fileKey, nodeID, data)
+}
+
 // parseFigmaNodes 解析Figma节点数据
 func parseFigmaNodes(data map[string]interface{}, _ /*rootNodeID*/ string) []map[string]interface{} {
 	var nodes []map[string]interface{}
 
-	// 如果是节点查询
+	// 如果是节点查询（插件返回的格式：{ "document": {...}, "nodeId": "xxx" }）
 	if document, ok := data["document"].(map[string]interface{}); ok {
 		// 处理根节点 - 直接使用完整节点数据
 		documentCopy := make(map[string]interface{})
 		for k, v := range document {
 			documentCopy[k] = v
 		}
-		documentCopy["id"] = "0:0" // 设置根节点ID
+
+		// 优先使用 document 中的 id，如果不存在则使用外层的 nodeId
+		// 这样可以保留原始节点ID（如 "46:1384"）
+		var rootNodeID string
+		if docID, hasID := document["id"].(string); hasID && docID != "" {
+			rootNodeID = docID
+		} else if nodeID, hasNodeID := data["nodeId"].(string); hasNodeID && nodeID != "" {
+			rootNodeID = nodeID
+			documentCopy["id"] = nodeID // 补充 id 字段
+		} else {
+			rootNodeID = "0:0" // 兼容旧数据：如果都没有则使用默认值
+			documentCopy["id"] = "0:0"
+		}
+
 		documentCopy["parent_id"] = nil
 		nodes = append(nodes, documentCopy)
 
 		// 处理子节点
 		if children, ok := document["children"].([]interface{}); ok {
 			for _, child := range children {
-				childNodes := parseNodeRecursive(child.(map[string]interface{}), "0:0")
+				childNodes := parseNodeRecursive(child.(map[string]interface{}), rootNodeID)
 				nodes = append(nodes, childNodes...)
 			}
 		}
@@ -933,18 +1102,13 @@ func GetOrCreateFigmaProjectWithGroup(userID uint, fileKey, rootNodeID, name, fi
 	return project, nil
 }
 
-// DownloadFigmaImage 下载Figma图片
-func DownloadFigmaImage(token, fileKey, nodeID string) (string, error) {
-	// 使用默认参数，默认使用缓存
-	return DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, "png", 1.0, true)
-}
-
 // DownloadPreviewFigmaImageWithOptions 获取Figma图片（从缓存、数据库、OBS或Figma CDN）
 // 注意：此函数不会直接调用 Figma API 下载图片，请使用统一渲染接口
-func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat string, imageScale float64, useCache bool) (string, error) {
+// userID: 用户ID，用于 WebSocket 兜底，为 0 则不尝试 WebSocket
+func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat string, imageScale float64, useCache bool, userID uint, ignoreTexts bool) (string, error) {
 	// 打印调试信息
-	fmt.Printf("📖 获取Figma图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, useCache=%v\n",
-		fileKey, nodeID, imageFormat, imageScale, useCache)
+	fmt.Printf("📖 获取Figma图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, useCache=%v, userID=%d, ignoreTexts=%v\n",
+		fileKey, nodeID, imageFormat, imageScale, useCache, userID, ignoreTexts)
 
 	// 1. 检查本地缓存文件
 	tempDir := filepath.Join("temp", fileKey, "previews")
@@ -972,47 +1136,256 @@ func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat st
 	}
 
 	// 2. 查询数据库中的图片记录
-	fmt.Printf("🔍 查询数据库: fileKey=%s, nodeID=%s, format=%s, scale=%.1f\n", fileKey, nodeID, imageFormat, imageScale)
-	image, err := models.GetNodeImage(fileKey, nodeID, imageFormat, imageScale)
+	fmt.Printf("🔍 查询数据库: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v\n", fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
+	image, err := models.GetNodeImage(fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
 	if err != nil {
 		fmt.Printf("⚠️ 数据库查询失败: %v\n", err)
-		return getFallbackImage()
-	}
+		// 不直接返回裂图，先尝试 WebSocket
+	} else if image != nil {
+		// 3. 优先使用 OBS Key（如果存在）
+		if image.OBSKey != "" {
+			fmt.Printf("📦 找到 OBS Key: %s\n", image.OBSKey)
 
-	if image == nil {
+			// 尝试从 OBS 下载到本地缓存
+			localPath, err := downloadImageFromOBS(image.OBSKey, tempDir, safeNodeID, imageFormat, imageScale)
+			if err == nil && localPath != "" {
+				fmt.Printf("✅ 成功从 OBS 下载图片到本地: %s\n", localPath)
+				return localPath, nil
+			}
+			fmt.Printf("⚠️ 从 OBS 下载失败: %v，尝试 Figma CDN\n", err)
+		}
+
+		// 4. 使用 Figma CDN URL（如果存在）
+		if image.FigmaCDNURL != "" {
+			fmt.Printf("🌐 找到 Figma CDN URL: %s\n", image.FigmaCDNURL)
+
+			// 尝试从 Figma CDN 下载到本地缓存
+			localPath, err := downloadImageFromURL(image.FigmaCDNURL, tempDir, safeNodeID, imageFormat, imageScale)
+			if err == nil && localPath != "" {
+				fmt.Printf("✅ 成功从 Figma CDN 下载图片到本地: %s\n", localPath)
+				return localPath, nil
+			}
+			fmt.Printf("⚠️ 从 Figma CDN 下载失败: %v\n", err)
+		}
+	} else {
 		fmt.Printf("⚠️ 数据库中未找到图片记录\n")
-		return getFallbackImage()
 	}
 
-	// 3. 优先使用 OBS Key（如果存在）
-	if image.OBSKey != "" {
-		fmt.Printf("📦 找到 OBS Key: %s\n", image.OBSKey)
-
-		// 尝试从 OBS 下载到本地缓存
-		localPath, err := downloadImageFromOBS(image.OBSKey, tempDir, safeNodeID, imageFormat, imageScale)
+	// 5. 如果提供了有效的 userID，尝试通过 WebSocket 从 Figma 插件获取图片
+	if userID > 0 {
+		fmt.Printf("🔌 [DownloadPreviewFigmaImageWithOptions] 尝试通过 WebSocket 获取图片 (UserID=%d)\n", userID)
+		localPath, err := tryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID)
 		if err == nil && localPath != "" {
-			fmt.Printf("✅ 成功从 OBS 下载图片到本地: %s\n", localPath)
+			fmt.Printf("✅ [DownloadPreviewFigmaImageWithOptions] 成功通过 WebSocket 获取图片: %s\n", localPath)
 			return localPath, nil
 		}
-		fmt.Printf("⚠️ 从 OBS 下载失败: %v，尝试 Figma CDN\n", err)
+		fmt.Printf("⚠️ [DownloadPreviewFigmaImageWithOptions] WebSocket 获取失败: %v\n", err)
+	} else {
+		fmt.Printf("⚠️ [DownloadPreviewFigmaImageWithOptions] 未提供 userID，跳过 WebSocket 兜底\n")
 	}
 
-	// 4. 使用 Figma CDN URL（如果存在）
-	if image.FigmaCDNURL != "" {
-		fmt.Printf("🌐 找到 Figma CDN URL: %s\n", image.FigmaCDNURL)
-
-		// 尝试从 Figma CDN 下载到本地缓存
-		localPath, err := downloadImageFromURL(image.FigmaCDNURL, tempDir, safeNodeID, imageFormat, imageScale)
-		if err == nil && localPath != "" {
-			fmt.Printf("✅ 成功从 Figma CDN 下载图片到本地: %s\n", localPath)
-			return localPath, nil
-		}
-		fmt.Printf("⚠️ 从 Figma CDN 下载失败: %v\n", err)
-	}
-
-	// 5. 都失败了，返回裂图
+	// 6. 都失败了，返回裂图
 	fmt.Printf("❌ 所有获取途径都失败，返回裂图\n")
 	return getFallbackImage()
+}
+
+// tryGetImageViaWebSocket 尝试通过 WebSocket 从 Figma 插件获取图片
+func tryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale float64, userID uint, tempDir, safeNodeID string) (string, error) {
+	return TryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID, false)
+}
+
+// TryGetImageViaWebSocket 尝试通过 WebSocket 从 Figma 插件获取图片（公共函数，支持ignoreTexts参数）
+func TryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale float64, userID uint, tempDir, safeNodeID string, ignoreTexts bool) (string, error) {
+	mcpService := GetMCPService()
+	if mcpService == nil {
+		return "", fmt.Errorf("MCP 服务未初始化")
+	}
+
+	connection, exists := mcpService.GetUserConnection(userID)
+	if !exists || connection == nil || !mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+		return "", fmt.Errorf("用户没有活跃的 WebSocket 连接")
+	}
+
+	fmt.Printf("🔌 [TryGetImageViaWebSocket] 发现活跃 WebSocket 连接 (UserID=%d, ConnectionID=%s)\n",
+		userID, connection.ConnectionID)
+
+	// 构造 export_node_as_image 工具调用
+	requestID := fmt.Sprintf("req_img_%d_%s", time.Now().UnixNano(), strings.ReplaceAll(nodeID, ":", "_"))
+
+	// 创建响应通道
+	responseChan := make(chan interface{}, 1)
+	errorChan := make(chan error, 1)
+
+	// 注册请求等待响应
+	mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
+	defer mcpService.UnregisterPendingRequest(requestID)
+
+	// 构建发送到 Figma 插件的消息
+	message := map[string]interface{}{
+		"id":      requestID,
+		"command": "export_node_as_image",
+		"params": map[string]interface{}{
+			"nodeId":      nodeID,
+			"format":      strings.ToUpper(imageFormat), // PNG, JPG, SVG
+			"scale":       imageScale,
+			"ignore_text": ignoreTexts, // 是否忽略文字
+		},
+	}
+
+	// 获取当前用户的频道
+	channel := mcpService.GetUserChannel(connection.ConnectionID)
+	if channel == "" {
+		// 如果没有加入频道，默认使用 figma-bridge
+		channel = "figma-bridge"
+		// 自动加入默认频道
+		_ = mcpService.JoinChannel(connection.ConnectionID, channel)
+	}
+
+	// 广播消息到频道
+	err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message)
+	if err != nil {
+		return "", fmt.Errorf("发送消息到频道失败: %v", err)
+	}
+
+	fmt.Printf("✅ [TryGetImageViaWebSocket] 已发送请求到频道 %s，等待响应...\n", channel)
+
+	// 等待响应（30秒超时）
+	var response interface{}
+	select {
+	case response = <-responseChan:
+		fmt.Printf("✅ [tryGetImageViaWebSocket] 收到响应 (ID=%s)\n", requestID)
+	case respErr := <-errorChan:
+		return "", fmt.Errorf("收到错误响应: %v", respErr)
+	case <-time.After(30 * time.Second):
+		return "", fmt.Errorf("请求超时，未在 30 秒内收到插件响应")
+	}
+
+	// 解析响应数据
+	responseData, ok := response.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("响应数据格式错误")
+	}
+
+	// 提取 base64 图片数据
+	imageDataB64, ok := responseData["imageData"].(string)
+	if !ok || imageDataB64 == "" {
+		return "", fmt.Errorf("响应中没有图片数据")
+	}
+
+	fmt.Printf("✅ [TryGetImageViaWebSocket] 收到 base64 图片数据，大小: %d bytes\n", len(imageDataB64))
+
+	// 调用处理函数保存图片
+	return handleImageDataFromPlugin(fileKey, nodeID, imageFormat, imageScale, imageDataB64, responseData, tempDir, safeNodeID, ignoreTexts)
+}
+
+// handleImageDataFromPlugin 处理从 Figma 插件接收到的图片数据
+func handleImageDataFromPlugin(fileKey, nodeID, imageFormat string, imageScale float64, imageDataB64 string, responseData map[string]interface{}, tempDir, safeNodeID string, ignoreTexts bool) (string, error) {
+	fmt.Printf("🎨 [handleImageDataFromPlugin] 开始处理插件图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v\n",
+		fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
+
+	// 1. 解码 base64 图片数据
+	decodedBytes, err := base64.StdEncoding.DecodeString(imageDataB64)
+	if err != nil {
+		return "", fmt.Errorf("解码 base64 失败: %v", err)
+	}
+
+	fmt.Printf("✅ [handleImageDataFromPlugin] 图片解码成功，大小: %d bytes\n", len(decodedBytes))
+
+	// 2. 确定 MIME 类型和文件扩展名
+	mimeType := "image/png"
+	if mt, ok := responseData["mimeType"].(string); ok && mt != "" {
+		mimeType = mt
+	}
+
+	fileExt := "." + imageFormat
+	if imageFormat == "" {
+		fileExt = ".png"
+	}
+
+	// 3. 保存到本地缓存
+	scaleStr := formatScaleForFilename(imageScale)
+
+	// 根据ignoreTexts决定文件名后缀：x表示带文字，p表示不带文字
+	suffix := "x"
+	if ignoreTexts {
+		suffix = "p"
+	}
+
+	// 不添加hash，有单独的清理逻辑
+	fileName := fmt.Sprintf("%s-%s%s%s", safeNodeID, scaleStr, suffix, fileExt)
+	localPath := filepath.Join(tempDir, fileName)
+
+	// 检查文件是否已存在
+	if _, err := os.Stat(localPath); err == nil {
+		fmt.Printf("✅ [handleImageDataFromPlugin] 文件已存在，直接返回: %s\n", localPath)
+		return localPath, nil
+	}
+
+	// 写入文件
+	err = os.WriteFile(localPath, decodedBytes, 0644)
+	if err != nil {
+		return "", fmt.Errorf("写入本地文件失败: %v", err)
+	}
+
+	fmt.Printf("✅ [handleImageDataFromPlugin] 图片已保存到本地: %s\n", localPath)
+
+	// 4. 异步上传到华为云 OBS
+	go func() {
+		if globalOBSService == nil || !globalOBSService.IsEnabled() {
+			fmt.Printf("⚠️ [handleImageDataFromPlugin] OBS 服务未启用，跳过上传\n")
+			return
+		}
+
+		fmt.Printf("📤 [handleImageDataFromPlugin] 开始上传到 OBS\n")
+		obsURL, obsKey, fileSize, err := globalOBSService.UploadImageFromBytes(decodedBytes, fileKey, nodeID, imageFormat, imageScale, mimeType)
+		if err != nil {
+			fmt.Printf("❌ [handleImageDataFromPlugin] 上传到 OBS 失败: %v\n", err)
+			return
+		}
+
+		fmt.Printf("✅ [handleImageDataFromPlugin] 成功上传到 OBS: %s (URL: %s)\n", obsKey, obsURL)
+
+		// 5. 保存或更新数据库记录
+		now := uint32(time.Now().Unix())
+		expiresAt := uint32(time.Now().AddDate(0, 0, 7).Unix()) // 7天过期
+
+		existingImage, err := models.GetNodeImage(fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
+		if err == nil && existingImage != nil {
+			// 更新已有记录
+			existingImage.OBSKey = obsKey
+			existingImage.UpdatedAt = now
+			existingImage.OBSExpiresAt = expiresAt
+			existingImage.FileSize = uint64(fileSize)
+			existingImage.Status = "obs_synced"
+			if err := models.UpdateNodeImage(existingImage); err != nil {
+				fmt.Printf("❌ [handleImageDataFromPlugin] 更新数据库失败: %v\n", err)
+			} else {
+				fmt.Printf("✅ [handleImageDataFromPlugin] 已更新数据库记录\n")
+			}
+		} else {
+			// 创建新记录
+			newImage := &models.FigmaNodeImage{
+				FileKey:      fileKey,
+				NodeID:       nodeID,
+				Format:       imageFormat,
+				Scale:        imageScale,
+				OBSKey:       obsKey,
+				FigmaCDNURL:  "",
+				FileSize:     uint64(fileSize),
+				Status:       "obs_synced",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+				OBSExpiresAt: expiresAt,
+			}
+			if err := models.CreateNodeImage(newImage); err != nil {
+				fmt.Printf("❌ [handleImageDataFromPlugin] 创建数据库记录失败: %v\n", err)
+			} else {
+				fmt.Printf("✅ [handleImageDataFromPlugin] 已创建数据库记录\n")
+			}
+		}
+	}()
+
+	return localPath, nil
 }
 
 // getFallbackImage 获取裂图路径
@@ -1027,6 +1400,11 @@ func getFallbackImage() (string, error) {
 
 // downloadImageFromOBS 从 OBS 下载图片到本地缓存
 func downloadImageFromOBS(obsKey, tempDir, safeNodeID, imageFormat string, imageScale float64) (string, error) {
+	return DownloadImageFromOBS(obsKey, tempDir, safeNodeID, imageFormat, imageScale, false)
+}
+
+// DownloadImageFromOBS 从 OBS 下载图片到本地缓存（公共函数，支持ignoreTexts参数）
+func DownloadImageFromOBS(obsKey, tempDir, safeNodeID, imageFormat string, imageScale float64, ignoreTexts bool) (string, error) {
 	// 检查 OBS 服务是否可用
 	if globalOBSService == nil || !globalOBSService.IsEnabled() {
 		return "", fmt.Errorf("OBS 服务未启用")
@@ -1048,10 +1426,26 @@ func downloadImageFromOBS(obsKey, tempDir, safeNodeID, imageFormat string, image
 		fileExt = ".png"
 	}
 
-	// 生成本地文件路径
+	// 生成本地文件路径，根据ignoreTexts决定文件名后缀
 	scaleStr := formatScaleForFilename(imageScale)
-	fileName := fmt.Sprintf("%s-%s%s", safeNodeID, scaleStr, fileExt)
+	suffix := "x" // 默认带文字
+	if ignoreTexts {
+		suffix = "p" // 不带文字
+	}
+
+	// 计算哈希值（用于文件名）
+	hasher := md5.New()
+	hasher.Write(imageData)
+	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
+
+	fileName := fmt.Sprintf("%s-%s%s-%s%s", safeNodeID, scaleStr, suffix, hash, fileExt)
 	localPath := filepath.Join(tempDir, fileName)
+
+	// 检查文件是否已存在
+	if _, err := os.Stat(localPath); err == nil {
+		fmt.Printf("✅ [OBS] 文件已存在，直接返回: %s\n", localPath)
+		return localPath, nil
+	}
 
 	// 写入本地文件
 	err = os.WriteFile(localPath, imageData, 0644)
@@ -2114,14 +2508,15 @@ func traverseNodeTree(nodeID string, nodeMap map[string]map[string]interface{}, 
 
 // GetNodeSubtreeIDs 获取指定节点及其子树的所有节点ID
 // 如果nodeID为空或等于根节点ID，则返回所有节点ID
-func GetNodeSubtreeIDs(token, fileKey, rootNodeID, targetNodeID string) ([]string, error) {
+// userID: 可选，用于 WebSocket 兜底，为 0 则不尝试
+func GetNodeSubtreeIDs(token, fileKey, rootNodeID, targetNodeID string, userID uint) ([]string, error) {
 	// 如果目标节点ID为空，使用根节点ID
 	if targetNodeID == "" {
 		targetNodeID = rootNodeID
 	}
 
-	// 获取完整的节点树
-	nodes, err := GetFigmaNodes(token, fileKey, rootNodeID)
+	// 获取完整的节点树（支持 WebSocket 兜底）
+	nodes, err := GetFigmaNodesWithUser(token, fileKey, rootNodeID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点树失败: %v", err)
 	}

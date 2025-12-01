@@ -34,6 +34,7 @@ func RequireLogin() gin.HandlerFunc {
 		}
 
 		log.Printf("用户已登录，userID=%v，继续处理请求", userID)
+		c.Set("user_id", userID)
 		c.Next()
 	}
 }
@@ -56,9 +57,10 @@ func CSRF() gin.HandlerFunc {
 			csrfToken = token
 		}
 
-		// 跳过MCP路径和日志API的CSRF验证
+		// 跳过MCP路径、WebSocket路径和日志API的CSRF验证
 		if strings.HasPrefix(c.Request.URL.Path, "/mcp/") ||
 			strings.HasPrefix(c.Request.URL.Path, "/mcp-api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/mcp-ws") ||
 			strings.HasPrefix(c.Request.URL.Path, "/tools/api/logs/") {
 			c.Next()
 			return

@@ -301,7 +301,7 @@ func (s *SchedulerService) processQueue(queue *models.FigmaRenderQueue) {
 		}
 
 		// 创建或更新节点图片记录
-		nodeImage, exists, err := s.cacheService.GetNodeImage(queue.FileKey, nodeID, queue.Format, queue.Scale)
+		nodeImage, exists, err := s.cacheService.GetNodeImage(queue.FileKey, nodeID, queue.Format, queue.Scale, false) // 默认不忽略文本
 		if err != nil || !exists || nodeImage == nil {
 			// 创建新记录
 			nodeImage, err = s.cacheService.CreateNodeImage(
@@ -310,6 +310,7 @@ func (s *SchedulerService) processQueue(queue *models.FigmaRenderQueue) {
 				queue.Format,
 				queue.Scale,
 				figmaURL,
+				false, // 默认不忽略文本
 			)
 			if err != nil {
 				log.Printf("⚠️ [队列 #%d] 创建节点图片记录失败 (%s): %v", queue.ID, nodeID, err)

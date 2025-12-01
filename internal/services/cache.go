@@ -255,8 +255,8 @@ func (cs *CacheService) UpdateFileFetchQueueStatus(queueID uint, status string, 
 
 // GetNodeImage 获取节点图片缓存
 // 返回: (图片缓存对象, 是否有效, 错误)
-func (cs *CacheService) GetNodeImage(fileKey, nodeID, format string, scale float64) (*models.FigmaNodeImage, bool, error) {
-	image, err := models.GetNodeImage(fileKey, nodeID, format, scale)
+func (cs *CacheService) GetNodeImage(fileKey, nodeID, format string, scale float64, ignoreTexts bool) (*models.FigmaNodeImage, bool, error) {
+	image, err := models.GetNodeImage(fileKey, nodeID, format, scale, ignoreTexts)
 
 	if err != nil {
 		// 缓存未命中
@@ -293,7 +293,7 @@ func (cs *CacheService) GetNodeImage(fileKey, nodeID, format string, scale float
 }
 
 // CreateNodeImage 创建节点图片缓存记录
-func (cs *CacheService) CreateNodeImage(fileKey, nodeID, format string, scale float64, figmaCDNURL string) (*models.FigmaNodeImage, error) {
+func (cs *CacheService) CreateNodeImage(fileKey, nodeID, format string, scale float64, figmaCDNURL string, ignoreTexts bool) (*models.FigmaNodeImage, error) {
 	now := uint32(time.Now().Unix())
 	expiresAt := now + (cs.OBSExpiresDays * 24 * 3600) // 转换为秒
 
@@ -302,6 +302,7 @@ func (cs *CacheService) CreateNodeImage(fileKey, nodeID, format string, scale fl
 		NodeID:       nodeID,
 		Format:       format,
 		Scale:        scale,
+		IgnoreTexts:  ignoreTexts,
 		FigmaCDNURL:  figmaCDNURL,
 		OBSKey:       "",
 		OBSExpiresAt: expiresAt,
@@ -573,13 +574,13 @@ func (cs *CacheService) GetProjectNodeIDs(projectID uint, fileKey, rootNodeID st
 	if err == nil && len(fileNodeIDs) > 0 {
 		log.Printf("✅ [GetProjectNodeIDs] 从文件系统缓存提取到 %d 个节点 (已过滤 ignore 和 visible)", len(fileNodeIDs))
 
-	// 构造一个临时的 cache 对象返回（用于兼容现有接口）
-	cache := &models.FigmaFileCache{
-		FileKey:    fileKey,
-		RootNodeID: rootNodeID,
-		NodeIDs:    strings.Join(fileNodeIDs, ","),
-		FileData:   fileDataJSON,
-	}
+		// 构造一个临时的 cache 对象返回（用于兼容现有接口）
+		cache := &models.FigmaFileCache{
+			FileKey:    fileKey,
+			RootNodeID: rootNodeID,
+			NodeIDs:    strings.Join(fileNodeIDs, ","),
+			FileData:   fileDataJSON,
+		}
 
 		return fileNodeIDs, cache, nil
 	}

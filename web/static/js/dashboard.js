@@ -111,6 +111,13 @@ const ProjectEditorApp = {
             },
             jsonPreviewDialogVisible: false, // JSON预览弹窗是否可见
             renameDialogVisible: false, // 重命名对话框是否可见
+            
+            // MCP WebSocket 状态
+            mcpWsStatus: 'disconnected', // 'disconnected', 'connecting', 'connected', 'error'
+            mcpWsConnecting: false, // 是否正在连接
+            mcpWebSocket: null, // WebSocket 连接对象
+            mcpConnectionId: null, // 连接 ID
+            mcpStatusCheckTimer: null, // 连接状态检查定时器
             renameProcessing: false, // 重命名处理中标志，防止重复调用
             renameForm: {
                 nodeId: null,
@@ -393,6 +400,12 @@ const ProjectEditorApp = {
             console.log('🚀 [mounted] 页面加载完成，准备检查渲染任务 (projectId=%s)', this.project.id);
             this.startWatchingProjectRender();
         }
+        
+        // 尝试连接 MCP WebSocket（已禁用自动连接）
+        // this.initMcpWebSocket();
+        
+        // 启动 MCP 连接状态定期检查
+        this.startMcpStatusCheck();
     },
     
     beforeDestroy() {
@@ -410,6 +423,17 @@ const ProjectEditorApp = {
         // 移除键盘事件监听器
         document.removeEventListener('keydown', this.handleKeyDown);
         document.removeEventListener('keyup', this.handleKeyUp);
+        
+        // 关闭 MCP WebSocket 连接
+        if (this.mcpWebSocket) {
+            this.mcpWebSocket.close();
+        }
+        
+        // 清除 MCP 状态检查定时器
+        if (this.mcpStatusCheckTimer) {
+            clearInterval(this.mcpStatusCheckTimer);
+            this.mcpStatusCheckTimer = null;
+        }
         
         // 停止监控项目渲染进度
         if (this.project && this.project.id) {
@@ -1344,6 +1368,15 @@ const ProjectEditorApp = {
                 // 降级方案：使用传统方法
                 this.fallbackCopyProjectKeyInfo(textToCopy);
             }
+        },
+        
+        // 复制当前项目的 file_key 和 root_node_id
+        copyProjectFileKeyAndRootNodeId() {
+            if (!this.project || !this.project.file_key || !this.project.root_node_id) {
+                this.$message.warning('项目信息不完整，无法复制');
+                return;
+            }
+            this.copyProjectKeyInfo(this.project.file_key, this.project.root_node_id);
         },
         
         // 降级复制方法
@@ -2673,6 +2706,9 @@ const ProjectEditorApp = {
                 console.log('在依赖节点中找到节点:', this.currentNode);
                 // 标记这是一个依赖节点
                 this.currentNode.isRefNodeSelected = true;
+            } else {
+                console.error('未找到节点:', nodeId);
+                return; // 如果找不到节点，直接返回
             }
         } else {
             console.log('在主节点中找到节点:', this.currentNode);
@@ -2711,9 +2747,9 @@ const ProjectEditorApp = {
             return;
         }
         
-        // 如果没有选择有效节点或者没有预览图，隐藏缩略图容器
-        if (!this.currentNode || this.previewImages.length === 0) {
-            console.log('没有选择有效节点或没有预览图，隐藏缩略图');
+        // 如果没有预览图（首次加载根节点），隐藏缩略图容器但继续执行加载逻辑
+        if (this.previewImages.length === 0) {
+            console.log('没有预览图，隐藏缩略图（但会继续加载图片）');
             if (minimapContainer) {
                 minimapContainer.style.display = 'none';
             }
@@ -2723,10 +2759,6 @@ const ProjectEditorApp = {
             
             // 重置过滤图片URL
             this.filteredNodeImage = null;
-            
-            if (!this.currentNode) {
-                return; // 如果没有有效节点，直接返回
-            }
         }
         
         this.loadNodeSettings(this.currentNode);
@@ -2742,8 +2774,31 @@ const ProjectEditorApp = {
         if (previousNodeId === nodeId) {
             console.log('选择了相同的节点，保留现有预览图');
             
-            // 如果是相同节点，不清理预览图，只更新缩略图
-            if (minimapImage && this.previewImages.length > 0) {
+            // 如果是相同节点但没有预览图，需要加载
+            if (this.previewImages.length === 0) {
+                console.log('相同节点但没有预览图，需要加载');
+                this.addPreviewImage(this.currentNode, false, 1.0);
+                
+                // 确保预览图加载完成后显示缩略图
+                this.$nextTick(() => {
+                    const imageUrl = `/figma/image/${this.project.id}/${this.currentNode.id}?scale=1.0`;
+                    const preloadImg = new Image();
+                    preloadImg.onload = () => {
+                        console.log('预览图片加载完成:', imageUrl);
+                        
+                        const minimapImage = document.querySelector('.minimap-container:not(.filtered-minimap) .minimap-image');
+                        const minimapContainer = document.querySelector('.minimap-container:not(.filtered-minimap)');
+                        
+                        if (minimapImage && minimapContainer && this.currentNode) {
+                            minimapImage.src = imageUrl;
+                            minimapImage.style.display = 'block';
+                            minimapContainer.style.display = 'block';
+                        }
+                    };
+                    preloadImg.src = imageUrl;
+                });
+            } else if (minimapImage && this.previewImages.length > 0) {
+                // 如果已有预览图，只更新缩略图
                 minimapImage.onload = function() {
                     minimapImage.style.display = 'block';
                     // 确保图片清晰显示
@@ -6952,7 +7007,7 @@ const ProjectEditorApp = {
                 return;
             }
             
-            const url = `/mcp-logs?project=${this.project.id}`;
+            const url = `/mcp-api/mcp-logs?project=${this.project.id}`;
             window.open(url, '_blank');
         },
 
@@ -7838,6 +7893,163 @@ Generated on: ${new Date().toLocaleString()}
                 } else {
                     return `${days}天`;
                 }
+            }
+        },
+        
+        // ==================== MCP WebSocket 相关方法 ====================
+        
+        // 初始化 MCP WebSocket 连接
+        async initMcpWebSocket() {
+            try {
+                // 获取用户的 MCP Token
+                const response = await axios.get('/profile/api/mcp-token');
+                const mcpToken = response.data.mcp_token;
+                
+                if (!mcpToken) {
+                    console.log('用户未生成 MCP Token，跳过 WebSocket 连接');
+                    this.mcpWsStatus = 'disconnected';
+                    return;
+                }
+                
+                this.connectMcpWebSocket(mcpToken);
+            } catch (error) {
+                console.error('获取 MCP Token 失败:', error);
+                this.mcpWsStatus = 'error';
+            }
+        },
+        
+        // 连接 MCP WebSocket
+        connectMcpWebSocket(token) {
+            if (this.mcpWebSocket) {
+                console.log('WebSocket 已连接');
+                return;
+            }
+            
+            this.mcpWsStatus = 'connecting';
+            this.mcpWsConnecting = true;
+            
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = wsProtocol + '//' + window.location.host + '/mcp-ws?connection_id=' + encodeURIComponent(token);
+            
+            console.log('正在连接 MCP WebSocket:', wsUrl);
+            
+            this.mcpWebSocket = new WebSocket(wsUrl);
+            
+            this.mcpWebSocket.onopen = () => {
+                console.log('✅ MCP WebSocket 连接成功');
+                this.mcpWsStatus = 'connected';
+                this.mcpWsConnecting = false;
+                
+                // 加入项目频道
+                if (this.project && this.project.id) {
+                    const channelName = 'project_' + this.project.id;
+                    this.mcpWebSocket.send(JSON.stringify({
+                        type: 'join',
+                        channel: channelName,
+                        id: Date.now().toString()
+                    }));
+                    console.log('已加入频道:', channelName);
+                }
+            };
+            
+            this.mcpWebSocket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('📨 收到 MCP WebSocket 消息:', data);
+                    
+                    // 处理广播消息
+                    if (data.type === 'broadcast' && data.message) {
+                        this.handleMcpBroadcastMessage(data.message);
+                    }
+                } catch (e) {
+                    console.error('解析 WebSocket 消息失败:', e);
+                }
+            };
+            
+            this.mcpWebSocket.onerror = (error) => {
+                console.error('❌ MCP WebSocket 错误:', error);
+                this.mcpWsStatus = 'error';
+                this.mcpWsConnecting = false;
+            };
+            
+            this.mcpWebSocket.onclose = () => {
+                console.log('🔌 MCP WebSocket 连接已关闭');
+                this.mcpWsStatus = 'disconnected';
+                this.mcpWsConnecting = false;
+                this.mcpWebSocket = null;
+                
+                // 禁用自动重新连接
+                // setTimeout(() => {
+                //     if (!this.mcpWebSocket && this.mcpWsStatus === 'disconnected') {
+                //         this.initMcpWebSocket();
+                //     }
+                // }, 5000);
+            };
+        },
+        
+        // 处理 MCP 广播消息
+        handleMcpBroadcastMessage(message) {
+            // 这里可以处理来自其他客户端的消息
+            // 例如：节点更新、配置变更等
+            console.log('处理 MCP 广播消息:', message);
+            
+            // 可以在这里添加具体的业务逻辑
+            // 比如刷新节点树、更新预览等
+        },
+        
+        // 打开 MCP 调试器
+        openMcpDebugger() {
+            window.open('/mcp-api/mcp-ws-test', 'mcp-debugger', 'width=1000,height=800');
+        },
+        
+        // 获取 MCP 连接状态提示文本
+        getMcpStatusTooltip() {
+            let statusText = '';
+            switch (this.mcpWsStatus) {
+                case 'connected':
+                    statusText = 'MCP WebSocket 已连接';
+                    break;
+                case 'connecting':
+                    statusText = 'MCP WebSocket 连接中...';
+                    break;
+                case 'error':
+                    statusText = 'MCP WebSocket 连接错误';
+                    break;
+                case 'disconnected':
+                default:
+                    statusText = 'MCP WebSocket 未连接';
+                    break;
+            }
+            return statusText + ' (点击打开 MCP 测试中心)';
+        },
+        
+        // 启动 MCP 连接状态定期检查
+        startMcpStatusCheck() {
+            // 立即检查一次
+            this.checkMcpConnectionStatus();
+            
+            // 每 3 秒检查一次连接状态
+            this.mcpStatusCheckTimer = setInterval(() => {
+                this.checkMcpConnectionStatus();
+            }, 3000);
+        },
+        
+        // 检查 MCP 连接状态
+        async checkMcpConnectionStatus() {
+            try {
+                const response = await axios.get('/mcp-api/connection-status');
+                const isConnected = response.data.connected;
+                const status = response.data.status;
+                
+                // 更新状态
+                if (isConnected) {
+                    this.mcpWsStatus = 'connected';
+                } else {
+                    this.mcpWsStatus = 'disconnected';
+                }
+            } catch (error) {
+                console.error('检查 MCP 连接状态失败:', error);
+                // 发生错误时不改变当前状态
             }
         }
     }

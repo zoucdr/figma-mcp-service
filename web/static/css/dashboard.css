@@ -489,6 +489,17 @@
     cursor: pointer;
     display: flex;
     align-items: center;
+    position: relative;
+    z-index: 1000;
+}
+
+/* 确保下拉菜单触发器可以正常工作 */
+.user-info .el-dropdown {
+    pointer-events: auto !important;
+}
+
+.user-info .el-dropdown-link {
+    pointer-events: auto !important;
 }
 
 .user-avatar {
@@ -527,6 +538,8 @@
     box-shadow: 0 8px 32px var(--dark-shadow-lg) !important;
     backdrop-filter: blur(20px) !important;
     padding: 8px 0 !important;
+    pointer-events: auto !important;
+    z-index: 10003 !important;
 }
 
 .el-dropdown-menu .el-dropdown-menu__item {
@@ -535,6 +548,7 @@
     font-size: 14px !important;
     transition: all 0.3s ease !important;
     border-radius: 0 !important;
+    pointer-events: auto !important;
 }
 
 .el-dropdown-menu .el-dropdown-menu__item:hover {
@@ -555,10 +569,42 @@
 /* 下拉菜单箭头 */
 .el-popper[x-placement^="bottom"] .popper__arrow {
     border-bottom-color: var(--dark-bg-card) !important;
+    pointer-events: none !important;
 }
 
 .el-popper[x-placement^="bottom"] .popper__arrow::after {
     border-bottom-color: var(--dark-bg-card) !important;
+    pointer-events: none !important;
+}
+
+/* 修复下拉菜单鼠标移入时消失的问题 */
+.el-dropdown .el-dropdown-menu {
+    pointer-events: auto !important;
+}
+
+.el-popper {
+    pointer-events: auto !important;
+    z-index: 10003 !important;
+}
+
+/* 确保下拉框和触发器之间没有间隙 */
+.el-dropdown-menu.el-popper {
+    margin-top: 0 !important;
+}
+
+/* 修复 user-info 区域的下拉菜单 */
+.user-info .el-popper {
+    pointer-events: auto !important;
+    z-index: 10003 !important;
+}
+
+.user-info .el-dropdown-menu {
+    pointer-events: auto !important;
+}
+
+/* 确保下拉菜单的所有子元素都可以接收鼠标事件 */
+.el-dropdown-menu * {
+    pointer-events: auto !important;
 }
 
 .app-main {
@@ -1699,6 +1745,22 @@ body.resizing {
     display: block;
 }
 
+/* 创建一个不可见的桥接区域，防止鼠标移动到间隙时hover状态丢失 */
+.layer-menu-submenu::after {
+    content: '';
+    position: absolute;
+    left: 100%;
+    top: 0;
+    width: 10px; /* 覆盖间隙 */
+    height: 100%;
+    display: none;
+    z-index: 10001;
+}
+
+.layer-menu-submenu:hover::after {
+    display: block;
+}
+
 .submenu-arrow {
     margin-left: auto;
     font-size: 12px;
@@ -1726,6 +1788,11 @@ body.resizing {
     backdrop-filter: blur(20px);
     margin-left: 8px;
     padding: 8px 0;
+}
+
+/* 当子菜单显示时，保持hover状态 */
+.layer-submenu:hover {
+    display: block;
 }
 
 .preview-placeholder {
@@ -4026,6 +4093,7 @@ h1, h2, h3, h4, h5, h6, p, span, div {
     display: flex !important;
     align-items: center !important;
     gap: 8px !important;
+    pointer-events: auto !important;
 }
 
 .el-dropdown-menu__item:hover {

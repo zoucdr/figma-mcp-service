@@ -198,6 +198,21 @@ func (u *User) GenerateNewMCPToken() (string, error) {
 	return newToken, nil
 }
 
+// GetUserByMCPToken 通过MCP Token获取用户
+func GetUserByMCPToken(token string) (*User, error) {
+	if token == "" {
+		return nil, fmt.Errorf("token不能为空")
+	}
+
+	var user User
+	err := DB.Where("mcp_token = ?", token).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
 // EnsureUserExists 确保用户存在，如果不存在则创建一个临时用户
 func EnsureUserExists(userID uint) (*User, error) {
 	var user User

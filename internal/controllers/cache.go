@@ -2,10 +2,13 @@ package controllers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/figma-deliver/internal/models"
 	"github.com/figma-deliver/internal/services"
@@ -824,6 +827,7 @@ func (cc *CacheController) GetNodeImage(c *gin.Context) {
 	nodeID := c.Query("node_id")
 	format := c.DefaultQuery("format", "png")
 	scaleStr := c.DefaultQuery("scale", "1.0")
+	ignoreTextsStr := c.DefaultQuery("ignore_texts", "false")
 
 	if fileKey == "" || nodeID == "" {
 		// 参数错误，返回备用图片
@@ -838,8 +842,38 @@ func (cc *CacheController) GetNodeImage(c *gin.Context) {
 		return
 	}
 
-	// 查询缓存
-	image, valid, err := cc.cacheService.GetNodeImage(fileKey, nodeID, format, scale)
+	ignoreTexts := ignoreTextsStr == "true"
+
+	// 1. 优先尝试通过 WebSocket 获取实时图片（如果用户有活跃连接）
+	mcpService := services.GetMCPService()
+	if mcpService != nil {
+		connection, exists := mcpService.GetUserConnection(userID.(uint))
+		if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+			log.Printf("🔌 [GetNodeImage] 发现活跃 WebSocket 连接，优先请求插件获取实时图片")
+
+			// 构建临时目录路径
+			safeNodeID := strings.NewReplacer(
+				":", "_", ";", "_", "/", "_", "\\", "_",
+				"*", "_", "?", "_", "\"", "_", "<", "_",
+				">", "_", "|", "_", ",", "_",
+			).Replace(nodeID)
+			tempDir := filepath.Join("temp", fileKey, "previews")
+
+			// 通过 WebSocket 获取图片（30秒超时）
+			imagePath, wsErr := services.TryGetImageViaWebSocket(
+				fileKey, nodeID, format, scale, userID.(uint), tempDir, safeNodeID, ignoreTexts)
+
+			if wsErr == nil && imagePath != "" {
+				log.Printf("✅ [GetNodeImage] 成功通过 WebSocket 获取实时图片: %s", imagePath)
+				c.File(imagePath)
+				return
+			}
+			log.Printf("⚠️ [GetNodeImage] WebSocket 获取失败: %v，回退到缓存", wsErr)
+		}
+	}
+
+	// 2. WebSocket 不可用或失败，查询缓存
+	image, valid, err := cc.cacheService.GetNodeImage(fileKey, nodeID, format, scale, ignoreTexts)
 	if err != nil {
 		// 查询缓存失败，返回备用图片
 		cc.returnFallbackImage(c)
@@ -864,7 +898,7 @@ func (cc *CacheController) GetNodeImage(c *gin.Context) {
 		}
 	}
 
-	// 没有缓存，加入渲染队列（后台处理）
+	// 3. 没有缓存，加入渲染队列（后台处理）
 	_, err = cc.queueService.CreateRenderQueue(
 		user.FigmaToken,
 		fileKey,
@@ -1016,6 +1050,121 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 		return
 	}
 
+	// 1. 优先尝试通过 WebSocket 请求 Figma 插件
+	mcpService := services.GetMCPService()
+	connection, exists := mcpService.GetUserConnection(userID.(uint))
+
+	if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+		log.Printf("🔌 [RefreshProjectNodeTree] 发现活跃 WebSocket 连接，请求插件获取数据")
+
+		// 构造请求ID和消息（使用与 mcp_tools.go 相同的格式）
+		requestID := fmt.Sprintf("req_refresh_%d", time.Now().UnixNano())
+
+		// 创建响应通道
+		responseChan := make(chan interface{}, 1)
+		errorChan := make(chan error, 1)
+
+		// 注册请求等待响应
+		mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
+		defer mcpService.UnregisterPendingRequest(requestID)
+
+		message := map[string]interface{}{
+			"id":      requestID,
+			"command": "read_my_design",
+			"params": map[string]interface{}{
+				"nodeId": project.RootNodeID,
+			},
+		}
+
+		// 获取频道
+		channel := mcpService.GetUserChannel(connection.ConnectionID)
+		if channel == "" {
+			channel = "figma-bridge"
+			_ = mcpService.JoinChannel(connection.ConnectionID, channel)
+		}
+
+		// 广播消息到频道
+		if err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message); err != nil {
+			log.Printf("❌ [RefreshProjectNodeTree] 发送插件请求失败: %v，回退到 Figma API", err)
+		} else {
+			log.Printf("✅ [RefreshProjectNodeTree] 已发送请求到频道 %s，等待响应...", channel)
+
+			// 等待响应（30秒超时）
+			var response interface{}
+			select {
+			case response = <-responseChan:
+				log.Printf("✅ [RefreshProjectNodeTree] 收到响应 (ID=%s)", requestID)
+			case respErr := <-errorChan:
+				log.Printf("❌ [RefreshProjectNodeTree] 收到错误响应 (ID=%s): %v，回退到 Figma API", requestID, respErr)
+				// 继续执行 Figma API 兜底逻辑
+			case <-time.After(30 * time.Second):
+				log.Printf("⏰ [RefreshProjectNodeTree] 请求超时 (ID=%s)，回退到 Figma API", requestID)
+				// 继续执行 Figma API 兜底逻辑
+			}
+
+			// 如果收到了响应，处理并返回
+			if response != nil {
+				log.Printf("✅ [RefreshProjectNodeTree] 收到插件响应，解析并缓存节点数据")
+
+				// 解析响应数据
+				responseData, ok := response.(map[string]interface{})
+				if !ok {
+					log.Printf("❌ [RefreshProjectNodeTree] 响应数据格式错误，回退到 Figma API")
+				} else {
+					// 将响应数据保存到本地缓存和数据库
+					responseJSON, err := json.Marshal(responseData)
+					if err != nil {
+						log.Printf("⚠️ [RefreshProjectNodeTree] 序列化响应数据失败: %v", err)
+					} else {
+						// 保存到本地缓存（异步）
+						go func() {
+							if err := services.SaveCachedNodesToFile(project.FileKey, project.RootNodeID, responseJSON); err != nil {
+								log.Printf("⚠️ [RefreshProjectNodeTree] 保存到本地缓存失败: %v", err)
+							} else {
+								log.Printf("✅ [RefreshProjectNodeTree] 已保存到本地缓存")
+							}
+						}()
+
+						// 保存到数据库缓存（异步）
+						go func() {
+							existingCache, err := models.GetFileCache(project.FileKey, project.RootNodeID)
+							if err == nil && existingCache != nil {
+								existingCache.FileData = string(responseJSON)
+								if err := models.UpdateFileCache(existingCache); err != nil {
+									log.Printf("⚠️ [RefreshProjectNodeTree] 更新数据库缓存失败: %v", err)
+								} else {
+									log.Printf("✅ [RefreshProjectNodeTree] 已更新数据库缓存")
+								}
+							} else {
+								newCache := &models.FigmaFileCache{
+									FileKey:    project.FileKey,
+									RootNodeID: project.RootNodeID,
+									FileData:   string(responseJSON),
+								}
+								if err := models.CreateFileCache(newCache); err != nil {
+									log.Printf("⚠️ [RefreshProjectNodeTree] 创建数据库缓存失败: %v", err)
+								} else {
+									log.Printf("✅ [RefreshProjectNodeTree] 已创建数据库缓存")
+								}
+							}
+						}()
+					}
+
+					// 返回成功
+					c.JSON(http.StatusOK, gin.H{
+						"success": true,
+						"message": "已通过 Figma 插件成功刷新节点树",
+						"source":  "plugin",
+					})
+					return
+				}
+			}
+		}
+	} else {
+		log.Printf("⚠️ [RefreshProjectNodeTree] WebSocket 不可用，使用 Figma API 兜底")
+	}
+
+	// 2. WebSocket 不可用或失败，使用 Figma API 兜底
 	// 检查冷却状态
 	canRequest, waitSeconds, err := cc.cacheService.CheckFileAPICooldown(user.FigmaToken)
 	if err != nil {
@@ -1025,16 +1174,15 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 		return
 	}
 
-	// 如果还在冷却中，创建或更新文件缓存记录到队列，等待调度器处理
+	// 如果在冷却中，加入队列
 	if !canRequest {
-		log.Printf("⏰ [RefreshProjectNodeTree] Token 冷却中，加入队列 (ProjectID=%d, WaitSeconds=%d)",
-			projectID, waitSeconds)
+		log.Printf("⏰ [RefreshProjectNodeTree] Token 冷却中 (等待 %d 秒)，加入队列", waitSeconds)
 
-		// 检查是否已存在缓存记录
+		// 检查是否已存在队列记录
 		existingQueue, err := models.GetFileFetchQueue(project.FileKey, project.RootNodeID)
 
 		if err != nil || existingQueue == nil {
-			// 创建新的获取队列记录（状态为 waiting）
+			// 创建新的获取队列记录
 			queue := &models.FigmaFileFetchQueue{
 				FigmaToken: user.FigmaToken,
 				FileKey:    project.FileKey,
@@ -1048,29 +1196,28 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 				})
 				return
 			}
-			log.Printf("✅ [RefreshProjectNodeTree] 已创建刷新队列 (Token=%s...)", user.FigmaToken[:10])
-			log.Printf("✅ [RefreshProjectNodeTree] 已创建刷新队列 (QueueID=%d)",
-				queue.ID)
+			log.Printf("✅ [RefreshProjectNodeTree] 已创建刷新队列 (QueueID=%d)", queue.ID)
 		} else {
 			// 更新现有队列记录的状态
 			if err := cc.cacheService.UpdateFileFetchQueueStatus(existingQueue.ID, "waiting", ""); err != nil {
 				log.Printf("⚠️ [RefreshProjectNodeTree] 更新队列状态失败: %v", err)
 			}
-			log.Printf("✅ [RefreshProjectNodeTree] 已更新刷新队列 (QueueID=%d)",
-				existingQueue.ID)
+			log.Printf("✅ [RefreshProjectNodeTree] 已更新刷新队列 (QueueID=%d)", existingQueue.ID)
 		}
 
 		c.JSON(http.StatusAccepted, gin.H{
 			"success":            true,
-			"message":            "请求已加入队列，等待处理",
+			"message":            "Token 冷却中，请求已加入队列等待处理",
 			"status":             "queued",
 			"cooldown_remaining": waitSeconds,
 		})
 		return
 	}
 
-	// Token 冷却完成，可以直接调用 API
-	// 更新冷却时间（在调用 API 之前）
+	// Token 冷却完成，直接调用 Figma API
+	log.Printf("🚀 [RefreshProjectNodeTree] 调用 Figma API 获取节点树")
+
+	// 更新冷却时间
 	if err := cc.cacheService.UpdateFileRequestTime(user.FigmaToken); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "更新冷却时间失败: " + err.Error(),
@@ -1078,7 +1225,7 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 		return
 	}
 
-	// 直接调用 Figma API 获取节点树（跳过缓存，GetFigmaNodesNoCache 会自动保存到数据库）
+	// 调用 Figma API 获取节点树
 	nodes, fetchErr := services.GetFigmaNodesNoCache(user.FigmaToken, project.FileKey, project.RootNodeID)
 	if fetchErr != nil {
 		// Figma API 请求失败，尝试从数据库恢复数据
@@ -1089,7 +1236,7 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 			if err := json.Unmarshal([]byte(cache.FileData), &cachedNodes); err == nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": true,
-					"status":  "cached", // 使用缓存数据
+					"status":  "cached",
 					"message": "Figma API 请求失败，已返回缓存数据",
 					"warning": "数据可能不是最新的",
 					"nodes":   cachedNodes,
@@ -1107,10 +1254,11 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 		})
 		return
 	}
-	// 返回节点数据（兼容旧API格式）
+
+	// 返回节点数据
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"status":  "success", // 刷新成功
+		"status":  "success",
 		"message": "节点树刷新成功",
 		"nodes":   nodes,
 	})
@@ -1161,6 +1309,161 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 
 	log.Printf("📋 [BatchRefreshNodeTree] 批量刷新节点树: FileKey=%s, NodeIDs=%v", req.FileKey, req.NodeIDs)
 
+	// 1. 优先尝试通过 WebSocket 请求 Figma 插件
+	mcpService := services.GetMCPService()
+	connection, exists := mcpService.GetUserConnection(userID.(uint))
+
+	if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+		log.Printf("🔌 [BatchRefreshNodeTree] 发现活跃 WebSocket 连接，请求插件获取数据")
+
+		// 获取频道
+		channel := mcpService.GetUserChannel(connection.ConnectionID)
+		if channel == "" {
+			channel = "figma-bridge"
+			_ = mcpService.JoinChannel(connection.ConnectionID, channel)
+		}
+
+		// 为每个节点发送工具调用并注册等待响应
+		type nodeRequest struct {
+			nodeID       string
+			requestID    string
+			responseChan chan interface{}
+			errorChan    chan error
+		}
+
+		var requests []nodeRequest
+		for _, nodeID := range req.NodeIDs {
+			requestID := fmt.Sprintf("req_batch_%d_%s", time.Now().UnixNano(), strings.ReplaceAll(nodeID, ":", "_"))
+			responseChan := make(chan interface{}, 1)
+			errorChan := make(chan error, 1)
+
+			// 注册请求
+			mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
+
+			message := map[string]interface{}{
+				"id":      requestID,
+				"command": "read_my_design",
+				"params": map[string]interface{}{
+					"nodeId": nodeID,
+				},
+			}
+
+			if err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message); err != nil {
+				log.Printf("❌ [BatchRefreshNodeTree] 发送插件请求失败 (NodeID=%s): %v", nodeID, err)
+				mcpService.UnregisterPendingRequest(requestID)
+				close(responseChan)
+				close(errorChan)
+			} else {
+				requests = append(requests, nodeRequest{
+					nodeID:       nodeID,
+					requestID:    requestID,
+					responseChan: responseChan,
+					errorChan:    errorChan,
+				})
+			}
+		}
+
+		// 如果有成功发送的请求，等待响应
+		if len(requests) > 0 {
+			log.Printf("✅ [BatchRefreshNodeTree] 已发送 %d 个请求到频道 %s，等待响应...", len(requests), channel)
+
+			successCount := 0
+			failCount := 0
+			timeoutCount := 0
+
+			// 等待所有响应（30秒超时）
+			timeout := time.After(30 * time.Second)
+			for i, nodeReq := range requests {
+				select {
+				case response := <-nodeReq.responseChan:
+					log.Printf("✅ [BatchRefreshNodeTree] 收到响应 (%d/%d, NodeID=%s)", i+1, len(requests), nodeReq.nodeID)
+
+					// 解析并保存响应数据
+					if responseData, ok := response.(map[string]interface{}); ok {
+						responseJSON, err := json.Marshal(responseData)
+						if err == nil {
+							// 异步保存到本地缓存
+							go func(fileKey, nodeID string, data []byte) {
+								if err := services.SaveCachedNodesToFile(fileKey, nodeID, data); err != nil {
+									log.Printf("⚠️ [BatchRefreshNodeTree] 保存本地缓存失败 (NodeID=%s): %v", nodeID, err)
+								} else {
+									log.Printf("✅ [BatchRefreshNodeTree] 已保存本地缓存 (NodeID=%s)", nodeID)
+								}
+							}(req.FileKey, nodeReq.nodeID, responseJSON)
+
+							// 异步保存到数据库
+							go func(fileKey, nodeID string, data []byte) {
+								existingCache, err := models.GetFileCache(fileKey, nodeID)
+								if err == nil && existingCache != nil {
+									existingCache.FileData = string(data)
+									if err := models.UpdateFileCache(existingCache); err != nil {
+										log.Printf("⚠️ [BatchRefreshNodeTree] 更新数据库缓存失败 (NodeID=%s): %v", nodeID, err)
+									} else {
+										log.Printf("✅ [BatchRefreshNodeTree] 已更新数据库缓存 (NodeID=%s)", nodeID)
+									}
+								} else {
+									newCache := &models.FigmaFileCache{
+										FileKey:    fileKey,
+										RootNodeID: nodeID,
+										FileData:   string(data),
+									}
+									if err := models.CreateFileCache(newCache); err != nil {
+										log.Printf("⚠️ [BatchRefreshNodeTree] 创建数据库缓存失败 (NodeID=%s): %v", nodeID, err)
+									} else {
+										log.Printf("✅ [BatchRefreshNodeTree] 已创建数据库缓存 (NodeID=%s)", nodeID)
+									}
+								}
+							}(req.FileKey, nodeReq.nodeID, responseJSON)
+
+							successCount++
+						}
+					}
+
+				case respErr := <-nodeReq.errorChan:
+					log.Printf("❌ [BatchRefreshNodeTree] 收到错误响应 (%d/%d, NodeID=%s): %v", i+1, len(requests), nodeReq.nodeID, respErr)
+					failCount++
+
+				case <-timeout:
+					log.Printf("⏰ [BatchRefreshNodeTree] 请求超时 (%d/%d)", i+1, len(requests))
+					timeoutCount = len(requests) - i
+					// 跳出循环，不再等待剩余请求
+					goto cleanup
+				}
+
+				// 清理当前请求
+				mcpService.UnregisterPendingRequest(nodeReq.requestID)
+				close(nodeReq.responseChan)
+				close(nodeReq.errorChan)
+			}
+
+		cleanup:
+			// 清理剩余的未完成请求
+			for _, nodeReq := range requests {
+				mcpService.UnregisterPendingRequest(nodeReq.requestID)
+			}
+
+			// 返回结果
+			if successCount > 0 {
+				c.JSON(http.StatusOK, gin.H{
+					"success":       true,
+					"message":       fmt.Sprintf("批量刷新完成: 成功 %d, 失败 %d, 超时 %d", successCount, failCount, timeoutCount),
+					"success_count": successCount,
+					"fail_count":    failCount,
+					"timeout_count": timeoutCount,
+					"source":        "plugin",
+				})
+				return
+			} else if failCount > 0 || timeoutCount > 0 {
+				log.Printf("⚠️ [BatchRefreshNodeTree] 所有插件请求都失败或超时，回退到 Figma API")
+			}
+		} else {
+			log.Printf("⚠️ [BatchRefreshNodeTree] 所有 WebSocket 请求都失败，回退到 Figma API")
+		}
+	} else {
+		log.Printf("⚠️ [BatchRefreshNodeTree] WebSocket 不可用，使用 Figma API 兜底")
+	}
+
+	// 2. WebSocket 不可用或失败，使用 Figma API 兜底
 	// 检查冷却状态
 	canRequest, waitSeconds, err := cc.cacheService.CheckFileAPICooldown(user.FigmaToken)
 	if err != nil {
@@ -1169,23 +1472,15 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 		})
 		return
 	}
-	// 立即记录冷却时间，防止重复调用
-	if err := cc.cacheService.UpdateFileRequestTime(user.FigmaToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "立即记录冷却时间失败: " + err.Error(),
-		})
-		return
-	}
 
-	// 如果还在冷却中，返回队列状态
+	// 如果在冷却中，加入队列
 	if !canRequest {
-		log.Printf("⏰ [BatchRefreshNodeTree] Token 冷却中，等待 %d 秒", waitSeconds)
+		log.Printf("⏰ [BatchRefreshNodeTree] Token 冷却中 (等待 %d 秒)，加入队列", waitSeconds)
 
-		// 为每个节点创建或更新缓存记录到队列
+		// 为每个节点创建或更新队列记录
 		for _, nodeID := range req.NodeIDs {
-			existingCache, err := models.GetFileCache(req.FileKey, nodeID)
-			if err != nil || existingCache == nil {
-				// 创建新的缓存记录（状态为 waiting）
+			existingQueue, err := models.GetFileFetchQueue(req.FileKey, nodeID)
+			if err != nil || existingQueue == nil {
 				queue := &models.FigmaFileFetchQueue{
 					FigmaToken: user.FigmaToken,
 					FileKey:    req.FileKey,
@@ -1199,18 +1494,17 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 					log.Printf("✅ [BatchRefreshNodeTree] 已创建刷新队列: QueueID=%d, NodeID=%s", queue.ID, nodeID)
 				}
 			} else {
-				// 更新现有队列记录的状态
-				if err := cc.cacheService.UpdateFileFetchQueueStatus(existingCache.ID, "waiting", ""); err != nil {
-					log.Printf("⚠️ [BatchRefreshNodeTree] 更新队列状态失败: CacheID=%d, Error=%v", existingCache.ID, err)
+				if err := cc.cacheService.UpdateFileFetchQueueStatus(existingQueue.ID, "waiting", ""); err != nil {
+					log.Printf("⚠️ [BatchRefreshNodeTree] 更新队列状态失败: QueueID=%d, Error=%v", existingQueue.ID, err)
 				} else {
-					log.Printf("✅ [BatchRefreshNodeTree] 已更新刷新队列: CacheID=%d, NodeID=%s", existingCache.ID, nodeID)
+					log.Printf("✅ [BatchRefreshNodeTree] 已更新刷新队列: QueueID=%d, NodeID=%s", existingQueue.ID, nodeID)
 				}
 			}
 		}
 
 		c.JSON(http.StatusAccepted, gin.H{
 			"success":            true,
-			"message":            "请求已加入队列，等待处理",
+			"message":            "Token 冷却中，请求已加入队列等待处理",
 			"status":             "queued",
 			"cooldown_remaining": waitSeconds,
 			"queued_nodes":       len(req.NodeIDs),
@@ -1218,8 +1512,10 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 		return
 	}
 
-	// Token 冷却完成，可以直接调用 API
-	// 更新冷却时间（在调用 API 之前）
+	// Token 冷却完成，直接调用 Figma API
+	log.Printf("🚀 [BatchRefreshNodeTree] 调用 Figma API 批量获取节点树: FileKey=%s, NodeIDs=%v", req.FileKey, req.NodeIDs)
+
+	// 更新冷却时间
 	if err := cc.cacheService.UpdateFileRequestTime(user.FigmaToken); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "更新冷却时间失败: " + err.Error(),
@@ -1227,8 +1523,7 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 		return
 	}
 
-	// 批量调用 Figma API 获取节点树（一次请求多个节点）
-	log.Printf("🚀 [BatchRefreshNodeTree] 开始调用 Figma API: FileKey=%s, NodeIDs=%v", req.FileKey, req.NodeIDs)
+	// 批量调用 Figma API 获取节点树
 
 	allNodes, fetchErr := services.GetFigmaNodesBatch(user.FigmaToken, req.FileKey, req.NodeIDs)
 	if fetchErr != nil {

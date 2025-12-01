@@ -84,7 +84,7 @@ func ProcessAndroidExportJob(jobID uint, config AndroidExportConfig) {
 	defer os.RemoveAll(tempDir)
 
 	// 获取优化后的节点数据（复用现有逻辑）
-	rootNode, nodeImages, err := getOptimizedNodesForAndroid(project, user.FigmaToken)
+	rootNode, nodeImages, err := getOptimizedNodesForAndroid(project, user.FigmaToken, user.ID)
 	if err != nil {
 		models.UpdateExportJobStatus(jobID, "failed", 0, "", "获取节点数据失败: "+err.Error())
 		return
@@ -157,7 +157,7 @@ func GenerateAndroidPreview(project *models.FigmaProject, config AndroidExportCo
 	}
 
 	// 获取优化后的节点数据
-	rootNode, nodeImages, err := getOptimizedNodesForAndroid(project, user.FigmaToken)
+	rootNode, nodeImages, err := getOptimizedNodesForAndroid(project, user.FigmaToken, user.ID)
 	if err != nil {
 		return "", fmt.Errorf("获取节点数据失败: %v", err)
 	}
@@ -186,7 +186,7 @@ func GenerateAndroidFullPreview(project *models.FigmaProject, config AndroidExpo
 	}
 
 	// 获取优化后的节点数据
-	rootNode, nodeImages, err := getOptimizedNodesForAndroid(project, user.FigmaToken)
+	rootNode, nodeImages, err := getOptimizedNodesForAndroid(project, user.FigmaToken, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点数据失败: %v", err)
 	}
@@ -788,9 +788,9 @@ func (g *AndroidCodeGenerator) generateDimens() string {
 }
 
 // getOptimizedNodesForAndroid 获取优化后的节点数据（复用Swift的逻辑）
-func getOptimizedNodesForAndroid(project *models.FigmaProject, figmaToken string) (gin.H, map[string]string, error) {
+func getOptimizedNodesForAndroid(project *models.FigmaProject, figmaToken string, userID uint) (gin.H, map[string]string, error) {
 	// 复用Swift的逻辑
-	return getOptimizedNodesForSwift(project, figmaToken)
+	return getOptimizedNodesForSwift(project, figmaToken, userID)
 }
 
 // downloadImagesForAndroid 下载图片资源（复用Swift的逻辑）

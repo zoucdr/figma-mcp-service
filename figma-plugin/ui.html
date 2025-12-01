@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Cursor MCP Plugin</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        color: #e0e0e0;
+        background-color: transparent;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }
+      .container {
+        display: flex;
+        flex-direction: column;
+        background-color: #1e1e1e;
+        transition: all 0.3s ease;
+        box-sizing: border-box;
+      }
+      .container.expanded {
+        padding: 20px;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      .container.collapsed {
+        padding: 0;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #18a0fb 0%, #0d8ee0 100%);
+        position: relative;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(24, 160, 251, 0.4);
+        transition: all 0.3s ease;
+      }
+      .container.collapsed:hover {
+        box-shadow: 0 6px 16px rgba(24, 160, 251, 0.6);
+        transform: scale(1.05);
+      }
+      .container.collapsed.connected-ball {
+        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+      }
+      .container.collapsed.connected-ball:hover {
+        box-shadow: 0 6px 16px rgba(34, 197, 94, 0.6);
+      }
+      .container.collapsed.connected-ball::after {
+        content: '';
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 10px;
+        height: 10px;
+        background-color: #fff;
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.5;
+          transform: scale(1.2);
+        }
+      }
+      .collapsed-content {
+        display: none;
+      }
+      .container.collapsed .collapsed-content {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+      }
+      .collapsed-icon {
+        font-size: 24px;
+        color: white;
+        margin-bottom: 2px;
+      }
+      .collapsed-text {
+        font-size: 8px;
+        color: white;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .main-content {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        overflow: hidden;
+        width: 100%;
+      }
+      .container.collapsed .main-content {
+        display: none;
+      }
+      .toggle-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background-color: #333;
+        border: none;
+        color: #e0e0e0;
+        cursor: pointer;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        margin: 0;
+        transition: all 0.2s;
+        z-index: 1000;
+      }
+      .toggle-btn:hover {
+        background-color: #444;
+        transform: rotate(90deg);
+      }
+      .container.collapsed .toggle-btn {
+        display: none;
+      }
+      h1 {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: #ffffff;
+      }
+      h2 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 20px;
+        margin-bottom: 8px;
+        color: #ffffff;
+      }
+      button {
+        background-color: #18a0fb;
+        border: none;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin-top: 8px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background-color 0.2s;
+      }
+      button:hover {
+        background-color: #0d8ee0;
+      }
+      button.secondary {
+        background-color: #3d3d3d;
+        color: #e0e0e0;
+      }
+      button.secondary:hover {
+        background-color: #4d4d4d;
+      }
+      button:disabled {
+        background-color: #333333;
+        color: #666666;
+        cursor: not-allowed;
+      }
+      input {
+        border: 1px solid #444444;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 12px;
+        font-size: 14px;
+        width: 100%;
+        box-sizing: border-box;
+        background-color: #2d2d2d;
+        color: #e0e0e0;
+      }
+      input:focus {
+        outline: none;
+        border-color: #18a0fb;
+      }
+      .input-hint {
+        font-size: 11px;
+        color: #999999;
+        margin-top: -8px;
+        margin-bottom: 12px;
+        font-style: italic;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12px;
+        font-weight: 500;
+        color: #cccccc;
+      }
+      label.required::after {
+        content: " *";
+        color: #ff6b6b;
+      }
+      .status {
+        margin-top: 16px;
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      .status.connected {
+        background-color: #1a472a;
+        color: #4ade80;
+      }
+      .status.disconnected {
+        background-color: #471a1a;
+        color: #ff9999;
+      }
+      .status.info {
+        background-color: #1a3147;
+        color: #66b3ff;
+      }
+      .section {
+        margin-bottom: 24px;
+      }
+      .hidden {
+        display: none;
+      }
+      .logo {
+        width: 50px;
+        height: 50px;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .header-text {
+        margin-left: 12px;
+      }
+      .header-text h1 {
+        margin: 0;
+        font-size: 16px;
+      }
+      .header-text p {
+        margin: 4px 0 0 0;
+        font-size: 12px;
+        color: #999999;
+      }
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #444444;
+        margin-bottom: 16px;
+      }
+      .tab {
+        padding: 8px 16px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        color: #999999;
+      }
+      .tab.active {
+        border-bottom: 2px solid #18a0fb;
+        color: #18a0fb;
+      }
+      /* Scrollbar styles */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #444;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #555;
+      }
+      ::-webkit-scrollbar-corner {
+        background: transparent;
+      }
+
+      .tab-content {
+        display: none;
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        padding-bottom: 12px; /* Add some bottom padding for scroll */
+      }
+      #content-history {
+        overflow-y: auto;
+      }
+      .tab-content.active {
+        display: block;
+      }
+      .link {
+        color: #18a0fb;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .link:hover {
+        text-decoration: underline;
+      }
+      .header-logo {
+        padding: 16px;
+        border-radius: 16px;
+        background-color: #333;
+      }
+      .header-logo-image {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+      }
+      /* Progress styles */
+      .operation-complete {
+        color: #4ade80;
+      }
+      .operation-error {
+        color: #ff9999;
+      }
+      /* Call History styles */
+      .call-history {
+        /* max-height: 400px; Removed to allow container scrolling */
+        /* overflow-y: auto; Removed to allow container scrolling */
+      }
+      .call-item {
+        background-color: #2d2d2d;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 8px;
+        border-left: 3px solid #18a0fb;
+      }
+      .call-item.success {
+        border-left-color: #22c55e;
+      }
+      .call-item.error {
+        border-left-color: #ff6b6b;
+      }
+      .call-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .call-command {
+        font-weight: 600;
+        color: #18a0fb;
+        font-size: 14px;
+      }
+      .call-time {
+        font-size: 11px;
+        color: #999999;
+      }
+      .call-params {
+        background-color: #1e1e1e;
+        border-radius: 4px;
+        padding: 8px;
+        margin-top: 8px;
+        font-size: 12px;
+        font-family: 'Courier New', monospace;
+        color: #cccccc;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .call-status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .call-status.success {
+        background-color: #1a472a;
+        color: #4ade80;
+      }
+      .call-status.error {
+        background-color: #471a1a;
+        color: #ff9999;
+      }
+      .empty-history {
+        text-align: center;
+        padding: 40px 20px;
+        color: #999999;
+      }
+      .clear-history-btn {
+        width: 100%;
+        margin-top: 12px;
+        background-color: #3d3d3d;
+      }
+      .clear-history-btn:hover {
+        background-color: #4d4d4d;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container expanded" id="main-container">
+      <!-- Toggle Button -->
+      <button class="toggle-btn" id="toggle-btn" title="收起">−</button>
+      
+      <!-- Collapsed State (Ball) -->
+      <div class="collapsed-content" id="collapsed-content">
+        <div class="collapsed-icon">🔌</div>
+        <div class="collapsed-text">Deliver</div>
+      </div>
+      
+      <!-- Main Content -->
+      <div class="main-content" id="main-content">
+      <div class="header">
+        <div class="header-logo">
+          <img
+            class="header-logo-image"
+            src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAMAAAANIilAAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAJcEhZcwAAEJwAABCcASbNOjQAAAB1UExURUdwTP////////////////39/f////////////////////////////7+/v////////////39/f////////////////////////////////////////////////////39/fn5+ejo6P///+rq6uXl5f////Ly8gf4a04AAAAkdFJOUwAOdkZCfz04zIgbT0pkIagnm7C9b6C2LWqSxBMyB11W2Ovsy3D12ZYAAALtSURBVEjHndcJt6ogEADgXNAUcWlxSQVN3/3/P/EBAgJpWdM9p5ue78xANE2n05vIUduffgvn1oA0bX+hvRc1DYjTPHe+tiGIoqhx4zTNq/y72lMURQtmqasuPc4dAmgwfWuZrqquiw8uNnC5BRJT3YXhIZ7Xris0oLjlmOrArz7VHpOb6wpNee0ITVMHvvd25/qgvtFwla8dpxV7xnTi7dbed7iuTY16lZoV7iXQb3cqRgjVgoviKTZSUw2719pbD2OEVu5yjnqeOpZ75lMMobVzfUcwC6lrofGJpdb3jGtj6TkkNKRWtXMsU+ciNdfQUwe+zZ7/vo1CYYgv39G/kShMS6mHL+g8F96K2Uqi52E6j3DFnsc4uR/hMwugYd9bOLoeSTvPE1yx4/sLh9B9fKbziHVM3z/G+dKb5wdKdysxsNCc4+2l/yk7EnrOVhwGBt9auqJ0t9gR13C4cl77bdil88SPuK9jxrXksHjab48Mwo+4ha3aSbZJ52JpC4GFbY7OdsVst4Lls/mKZe1y6fXTonS3RFsIN7C5dAJsO+WiI21jbd8xesFEtoUdLLjH+qGNJ9WRuj3MOOQNycaV6khvsLc0MxsD2Uq7bhcHuBZh4rFdujjT1c6GkaXtszCx3sW3MRRfNjwiI7EjGjGfFjZwUgM9CuNggqRVXz+vOGDTBOCP5UnHE73ghjK1jYNlEIma9UnHBb/qdkvq1MSQjk4yCvGk4UneQylLbWAIio3I1t26q4sNTuM01tqQe9+My5pYv9wk8Ypv92w7JpXYulGoD8aJ3C/bUUp8tW5EuTa2oXI7ZGLzahZYE0l03QqZWI8Lfh1lw+zxEoNIrF8Dm/NQT8rzgz+WP/oQmL6Ud4pud/4DZzMWPKjXZfJufOyiVzzKV4/609yelDaWiZsDc6+DSwOLxNqxeD/6Ah3zf674+Kyf3xUeDi3WDFIKzCpOv/5phB4MD+cs/OWXVdych/GBf/xJd4pL9+1i/wOElMO5v/co4wAAAABJRU5ErkJggg=="
+          />
+        </div>
+        <div class="header-text">
+          <h1>Figma-Deliver MCP</h1>
+          <p>Connect Figma using MCP</p>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div id="tab-connection" class="tab active">连接</div>
+        <div id="tab-history" class="tab">调用记录</div>
+      </div>
+
+      <div id="content-connection" class="tab-content active">
+        <div class="section">
+          <label for="server-host">WebSocket Server Address</label>
+          <input
+            type="text"
+            id="server-host"
+            placeholder="localhost or figma-deliver.wekoi.cc"
+            value="localhost"
+            style="width: 100%; margin-bottom: 8px"
+          />
+          
+          <label for="port">WebSocket Server Port</label>
+          <input
+            type="number"
+            id="port"
+            placeholder="8080"
+            value="8080"
+            min="1024"
+            max="65535"
+            style="width: 100%; margin-bottom: 8px"
+          />
+          
+          <label for="connection-id" id="connection-id-label">Connection ID (MCP Token)</label>
+          <input
+            type="text"
+            id="connection-id"
+            placeholder="Enter your MCP token"
+            value=""
+            style="width: 100%; margin-bottom: 4px"
+          />
+          <div class="input-hint" id="connection-id-hint">
+            Optional for localhost, required for remote servers
+          </div>
+          
+          <button id="btn-connect" class="primary" style="width: 100%">Connect</button>
+        </div>
+
+        <div id="connection-status" class="status disconnected">
+          Not connected to Cursor MCP server
+        </div>
+
+        <div class="section">
+          <button id="btn-disconnect" class="secondary" disabled>
+            Disconnect
+          </button>
+        </div>
+        
+        <!-- Add Progress Bar Section -->
+        <div id="progress-container" class="section hidden">
+          <h2>Operation Progress</h2>
+          <div id="progress-message">No operation in progress</div>
+          <div style="width: 100%; background-color: #444; border-radius: 4px; margin-top: 8px;">
+            <div id="progress-bar" style="width: 0%; height: 8px; background-color: #18a0fb; border-radius: 4px; transition: width 0.3s;"></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 12px;">
+            <div id="progress-status">Not started</div>
+            <div id="progress-percentage">0%</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="content-history" class="tab-content">
+        <div class="section">
+          <h2>MCP 调用记录</h2>
+          <p style="font-size: 12px; color: #999999; margin-bottom: 12px;">
+            显示最近的 MCP 工具调用历史
+          </p>
+          
+          <button id="btn-clear-history" class="clear-history-btn">清空记录</button>
+          
+          <div id="call-history-list" class="call-history">
+            <div class="empty-history">
+              <div style="font-size: 40px; margin-bottom: 12px;">📋</div>
+              <div>暂无调用记录</div>
+              <div style="font-size: 11px; margin-top: 8px;">当插件收到 MCP 调用时，记录会显示在这里</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // WebSocket connection state
+      const state = {
+        connected: false,
+        socket: null,
+        serverHost: "localhost",
+        serverPort: 8080,
+        connectionId: "",
+        pendingRequests: new Map(),
+        channel: null,
+        callHistory: [], // 存储调用记录
+      };
+
+      // UI Elements
+      const serverHostInput = document.getElementById("server-host");
+      const portInput = document.getElementById("port");
+      const connectionIdInput = document.getElementById("connection-id");
+      const connectButton = document.getElementById("btn-connect");
+      const disconnectButton = document.getElementById("btn-disconnect");
+      const connectionStatus = document.getElementById("connection-status");
+
+      // Tabs
+      const tabs = document.querySelectorAll(".tab");
+      const tabContents = document.querySelectorAll(".tab-content");
+      const clearHistoryBtn = document.getElementById("btn-clear-history");
+      const callHistoryList = document.getElementById("call-history-list");
+
+      // Add UI elements for progress tracking
+      const progressContainer = document.getElementById("progress-container");
+      const progressBar = document.getElementById("progress-bar");
+      const progressMessage = document.getElementById("progress-message");
+      const progressStatus = document.getElementById("progress-status");
+      const progressPercentage = document.getElementById("progress-percentage");
+
+      // Load saved settings from storage
+      async function loadSavedSettings() {
+        try {
+          // Request settings from plugin code
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "get-settings",
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          console.error("Error loading settings:", error);
+        }
+      }
+      
+      // Save settings to storage
+      function saveSettings() {
+        const settings = {
+          serverHost: serverHostInput.value.trim() || "localhost",
+          serverPort: parseInt(portInput.value, 10) || 8080,
+          connectionId: connectionIdInput.value.trim(),
+        };
+        
+        // Send settings to plugin code for storage
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "save-settings",
+              settings: settings,
+            },
+          },
+          "*"
+        );
+        
+        console.log("Settings saved:", settings);
+      }
+      
+      // Apply loaded settings to UI
+      function applySettings(settings) {
+        if (settings) {
+          if (settings.serverHost) {
+            serverHostInput.value = settings.serverHost;
+            state.serverHost = settings.serverHost;
+          }
+          if (settings.serverPort) {
+            portInput.value = settings.serverPort;
+            state.serverPort = settings.serverPort;
+          }
+          if (settings.connectionId) {
+            connectionIdInput.value = settings.connectionId;
+            state.connectionId = settings.connectionId;
+          }
+          
+          // Update Connection ID requirement indicator
+          updateConnectionIdRequirement();
+          
+          // Show a brief notification that settings were loaded
+          const hasSettings = settings.serverHost || settings.serverPort || settings.connectionId;
+          if (hasSettings) {
+            connectionStatus.innerHTML = "上次连接设置已加载";
+            connectionStatus.className = "status info";
+            
+            // Clear the message after 3 seconds
+            setTimeout(() => {
+              if (!state.connected) {
+                connectionStatus.innerHTML = "未连接到 MCP 服务器";
+                connectionStatus.className = "status disconnected";
+              }
+            }, 3000);
+          }
+          
+          console.log("Settings loaded:", settings);
+        }
+      }
+
+      // Initialize UI
+      function updateConnectionStatus(isConnected, message) {
+        state.connected = isConnected;
+        connectionStatus.innerHTML =
+          message ||
+          (isConnected
+            ? "Connected to Cursor MCP server"
+            : "Not connected to Cursor MCP server");
+        connectionStatus.className = `status ${
+          isConnected ? "connected" : "disconnected"
+        }`;
+
+        connectButton.disabled = isConnected;
+        disconnectButton.disabled = !isConnected;
+        serverHostInput.disabled = isConnected;
+        portInput.disabled = isConnected;
+        connectionIdInput.disabled = isConnected;
+        
+        // Update collapsed ball appearance based on connection status
+        const mainContainer = document.getElementById("main-container");
+        if (isConnected) {
+          mainContainer.classList.add("connected-ball");
+        } else {
+          mainContainer.classList.remove("connected-ball");
+        }
+      }
+
+      // Connect to WebSocket server
+      async function connectToServer(host, port, connectionId) {
+        try {
+          if (state.connected && state.socket) {
+            updateConnectionStatus(true, "Already connected to server");
+            return;
+          }
+
+          state.serverHost = host;
+          state.serverPort = port;
+          state.connectionId = connectionId;
+          
+          // Determine protocol based on host
+          const isSecure = host !== "localhost" && host !== "127.0.0.1" && !host.startsWith("192.168.") && !host.startsWith("10.") && !host.startsWith("172.");
+          const protocol = isSecure ? "wss" : "ws";
+          
+          // Build WebSocket URL with /mcp-ws path and connection_id as query parameter
+          let wsUrl = `${protocol}://${host}:${port}/mcp-ws`;
+          if (connectionId && connectionId.trim() !== "") {
+            wsUrl += `?connection_id=${encodeURIComponent(connectionId.trim())}`;
+          }
+          
+          console.log("Connecting to:", wsUrl);
+          state.socket = new WebSocket(wsUrl);
+
+          state.socket.onopen = () => {
+            // Generate random channel name
+            const channelName = generateChannelName();
+            console.log("Joining channel:", channelName);
+            state.channel = channelName;
+
+            // Join the channel using the same format as App.tsx
+            state.socket.send(
+              JSON.stringify({
+                type: "join",
+                channel: channelName.trim(),
+              })
+            );
+          };
+
+          state.socket.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              console.log("Received message:", data);
+
+              if (data.type === "system") {
+                // Successfully joined channel
+                if (data.message && data.message.result) {
+                  state.connected = true;
+                  const channelName = data.channel;
+                  updateConnectionStatus(
+                    true,
+                    `Connected to <strong>${host}:${port}</strong> in channel: <strong>${channelName}</strong>`
+                  );
+
+                  // Save settings after successful connection
+                  saveSettings();
+
+                  // Notify the plugin code
+                  parent.postMessage(
+                    {
+                      pluginMessage: {
+                        type: "notify",
+                        message: `Connected to MCP server at ${host}:${port} in channel: ${channelName}`,
+                      },
+                    },
+                    "*"
+                  );
+                }
+              } else if (data.type === "error") {
+                console.error("Error:", data.message);
+                updateConnectionStatus(false, `Error: ${data.message}`);
+                state.socket.close();
+              }
+
+              handleSocketMessage(data);
+            } catch (error) {
+              console.error("Error parsing message:", error);
+            }
+          };
+
+          state.socket.onclose = () => {
+            state.connected = false;
+            state.socket = null;
+            updateConnectionStatus(false, "Disconnected from server");
+          };
+
+          state.socket.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            updateConnectionStatus(false, "Connection error");
+            state.connected = false;
+            state.socket = null;
+          };
+        } catch (error) {
+          console.error("Connection error:", error);
+          updateConnectionStatus(
+            false,
+            `Connection error: ${error.message || "Unknown error"}`
+          );
+        }
+      }
+
+      // Disconnect from websocket server
+      function disconnectFromServer() {
+        if (state.socket) {
+          state.socket.close();
+          state.socket = null;
+          state.connected = false;
+          updateConnectionStatus(false, "Disconnected from server");
+        }
+      }
+
+      // Handle messages from the WebSocket
+      async function handleSocketMessage(payload) {
+        const data = payload.message;
+        console.log("handleSocketMessage", data);
+
+        // If it's a response to a previous request
+        if (data.id && state.pendingRequests.has(data.id)) {
+          const { resolve, reject } = state.pendingRequests.get(data.id);
+          state.pendingRequests.delete(data.id);
+
+          if (data.error) {
+            reject(new Error(data.error));
+          } else {
+            resolve(data.result);
+          }
+          return;
+        }
+
+        // If it's a new command
+        if (data.command) {
+          try {
+            // Record the command call
+            console.log("收到 MCP 命令:", data.command, data.params);
+            
+            // Send the command to the plugin code
+            parent.postMessage(
+              {
+                pluginMessage: {
+                  type: "execute-command",
+                  id: data.id,
+                  command: data.command,
+                  params: data.params,
+                },
+              },
+              "*"
+            );
+          } catch (error) {
+            // Send error back to WebSocket
+            sendErrorResponse(
+              data.id,
+              error.message || "Error executing command"
+            );
+            
+            // Record error
+            addCallToHistory(data.command, data.params, 'error', error.message);
+          }
+        }
+      }
+
+      // Send a command to the WebSocket server
+      async function sendCommand(command, params) {
+        return new Promise((resolve, reject) => {
+          if (!state.connected || !state.socket) {
+            reject(new Error("Not connected to server"));
+            return;
+          }
+
+          const id = generateId();
+          state.pendingRequests.set(id, { resolve, reject });
+
+          state.socket.send(
+            JSON.stringify({
+              id,
+              type: "message",
+              channel: state.channel,
+              message: {
+                id,
+                command,
+                params,
+              },
+            })
+          );
+
+          // Set timeout to reject the promise after 30 seconds
+          setTimeout(() => {
+            if (state.pendingRequests.has(id)) {
+              state.pendingRequests.delete(id);
+              reject(new Error("Request timed out"));
+            }
+          }, 30000);
+        });
+      }
+
+      // Send success response back to WebSocket
+      function sendSuccessResponse(id, result) {
+        if (!state.connected || !state.socket) {
+          console.error("Cannot send response: socket not connected");
+          return;
+        }
+
+        state.socket.send(
+          JSON.stringify({
+            id,
+            type: "message",
+            channel: state.channel,
+            message: {
+              id,
+              result,
+            },
+          })
+        );
+      }
+
+      // Send error response back to WebSocket
+      function sendErrorResponse(id, errorMessage) {
+        if (!state.connected || !state.socket) {
+          console.error("Cannot send error response: socket not connected");
+          return;
+        }
+
+        state.socket.send(
+          JSON.stringify({
+            id,
+            type: "message",
+            channel: state.channel,
+            message: {
+              id,
+              error: errorMessage,
+              result: {}
+            },
+          })
+        );
+      }
+
+      // Helper to generate unique IDs
+      function generateId() {
+        return (
+          Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
+        );
+      }
+
+      // Add this function after the generateChannelName() function
+      function generateChannelName() {
+        // 使用固定频道名称，方便 MCP 工具连接
+        return "figma-bridge";
+      }
+      
+      // Add call to history
+      function addCallToHistory(command, params, status, error = null) {
+        const callRecord = {
+          id: generateId(),
+          command: command,
+          params: params,
+          status: status, // 'success' or 'error'
+          error: error,
+          timestamp: new Date(),
+        };
+        
+        // Add to beginning of array (newest first)
+        state.callHistory.unshift(callRecord);
+        
+        // Keep only last 50 records
+        if (state.callHistory.length > 50) {
+          state.callHistory = state.callHistory.slice(0, 50);
+        }
+        
+        // Save to storage
+        saveCallHistory();
+        
+        // Update UI
+        renderCallHistory();
+      }
+      
+      // Render call history list
+      function renderCallHistory() {
+        if (state.callHistory.length === 0) {
+          callHistoryList.innerHTML = `
+            <div class="empty-history">
+              <div style="font-size: 40px; margin-bottom: 12px;">📋</div>
+              <div>暂无调用记录</div>
+              <div style="font-size: 11px; margin-top: 8px;">当插件收到 MCP 调用时，记录会显示在这里</div>
+            </div>
+          `;
+          return;
+        }
+        
+        let html = '';
+        state.callHistory.forEach((call) => {
+          const statusClass = call.status === 'success' ? 'success' : 'error';
+          const statusText = call.status === 'success' ? '成功' : '失败';
+          const timeStr = formatTime(call.timestamp);
+          
+          // Format params
+          let paramsStr = '';
+          try {
+            if (call.params && Object.keys(call.params).length > 0) {
+              paramsStr = JSON.stringify(call.params, null, 2);
+            } else {
+              paramsStr = '无参数';
+            }
+          } catch (e) {
+            paramsStr = String(call.params);
+          }
+          
+          // Add error message if exists
+          let errorHtml = '';
+          if (call.error) {
+            errorHtml = `
+              <div style="margin-top: 8px; padding: 8px; background-color: #471a1a; border-radius: 4px; color: #ff9999; font-size: 12px;">
+                <strong>错误:</strong> ${escapeHtml(call.error)}
+              </div>
+            `;
+          }
+          
+          html += `
+            <div class="call-item ${statusClass}">
+              <div class="call-header">
+                <div>
+                  <span class="call-command">${escapeHtml(call.command)}</span>
+                  <span class="call-status ${statusClass}">${statusText}</span>
+                </div>
+                <span class="call-time">${timeStr}</span>
+              </div>
+              <div class="call-params">${escapeHtml(paramsStr)}</div>
+              ${errorHtml}
+            </div>
+          `;
+        });
+        
+        callHistoryList.innerHTML = html;
+      }
+      
+      // Format timestamp
+      function formatTime(timestamp) {
+        if (!timestamp) return '';
+        
+        const date = new Date(timestamp);
+        // Check if date is valid
+        if (isNaN(date.getTime())) {
+          return '';
+        }
+
+        const now = new Date();
+        const diff = now - date;
+        
+        // Less than 1 minute
+        if (diff < 60000) {
+          return '刚刚';
+        }
+        
+        // Less than 1 hour
+        if (diff < 3600000) {
+          const minutes = Math.floor(diff / 60000);
+          return `${minutes}分钟前`;
+        }
+        
+        // Less than 24 hours
+        if (diff < 86400000) {
+          const hours = Math.floor(diff / 3600000);
+          return `${hours}小时前`;
+        }
+        
+        // More than 24 hours
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hour = String(date.getHours()).padStart(2, '0');
+        const minute = String(date.getMinutes()).padStart(2, '0');
+        return `${month}-${day} ${hour}:${minute}`;
+      }
+      
+      // Escape HTML to prevent XSS
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+      
+      // Save call history to storage
+      function saveCallHistory() {
+        try {
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "save-call-history",
+                history: state.callHistory,
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          console.error("Error saving call history:", error);
+        }
+      }
+      
+      // Load call history from storage
+      function loadCallHistory() {
+        try {
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "get-call-history",
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          console.error("Error loading call history:", error);
+        }
+      }
+      
+      // Clear call history
+      function clearCallHistory() {
+        if (confirm('确定要清空所有调用记录吗？')) {
+          state.callHistory = [];
+          saveCallHistory();
+          renderCallHistory();
+        }
+      }
+      
+      // Check if host is remote and update Connection ID field requirement
+      function updateConnectionIdRequirement() {
+        const host = serverHostInput.value.trim();
+        const isRemote = host !== "" && host !== "localhost" && host !== "127.0.0.1" && 
+                         !host.startsWith("192.168.") && !host.startsWith("10.") && 
+                         !host.startsWith("172.");
+        
+        const label = document.getElementById("connection-id-label");
+        const hint = document.getElementById("connection-id-hint");
+        
+        if (isRemote) {
+          label.classList.add("required");
+          hint.textContent = "Required for remote server connections";
+          hint.style.color = "#ff9999";
+        } else {
+          label.classList.remove("required");
+          hint.textContent = "Optional for localhost, required for remote servers";
+          hint.style.color = "#999999";
+        }
+      }
+      
+      // Add event listener to server host input
+      serverHostInput.addEventListener("input", updateConnectionIdRequirement);
+      serverHostInput.addEventListener("change", updateConnectionIdRequirement);
+
+      // Tab switching
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          tabs.forEach((t) => t.classList.remove("active"));
+          tabContents.forEach((c) => c.classList.remove("active"));
+
+          tab.classList.add("active");
+          const contentId = "content-" + tab.id.split("-")[1];
+          document.getElementById(contentId).classList.add("active");
+        });
+      });
+
+      // Connect to server
+      connectButton.addEventListener("click", () => {
+        const host = serverHostInput.value.trim() || "localhost";
+        const port = parseInt(portInput.value, 10) || 8080;
+        const connectionId = connectionIdInput.value.trim();
+        
+        // Validate connection ID for remote hosts
+        if (host !== "localhost" && host !== "127.0.0.1" && !connectionId) {
+          updateConnectionStatus(false, "Remote connection requires a Connection ID");
+          connectionStatus.className = "status disconnected";
+          return;
+        }
+        
+        updateConnectionStatus(false, "Connecting...");
+        connectionStatus.className = "status info";
+        connectToServer(host, port, connectionId);
+      });
+
+      // Disconnect from server
+      disconnectButton.addEventListener("click", () => {
+        updateConnectionStatus(false, "Disconnecting...");
+        connectionStatus.className = "status info";
+        disconnectFromServer();
+      });
+
+      // Function to update progress UI
+      function updateProgressUI(progressData) {
+        // Show progress container if hidden
+        progressContainer.classList.remove("hidden");
+        
+        // Update progress bar
+        const progress = progressData.progress || 0;
+        progressBar.style.width = `${progress}%`;
+        progressPercentage.textContent = `${progress}%`;
+        
+        // Update message
+        progressMessage.textContent = progressData.message || "Operation in progress";
+        
+        // Update status text based on operation state
+        if (progressData.status === 'started') {
+          progressStatus.textContent = "Started";
+          progressStatus.className = "";
+        } else if (progressData.status === 'in_progress') {
+          progressStatus.textContent = "In Progress";
+          progressStatus.className = "";
+        } else if (progressData.status === 'completed') {
+          progressStatus.textContent = "Completed";
+          progressStatus.className = "operation-complete";
+          
+          // Hide progress container after 5 seconds
+          setTimeout(() => {
+            progressContainer.classList.add("hidden");
+          }, 5000);
+        } else if (progressData.status === 'error') {
+          progressStatus.textContent = "Error";
+          progressStatus.className = "operation-error";
+        }
+      }
+
+      // Send operation progress update to server
+      function sendProgressUpdateToServer(progressData) {
+        if (!state.connected || !state.socket) {
+          console.error("Cannot send progress update: socket not connected");
+          return;
+        }
+        
+        console.log("Sending progress update to server:", progressData);
+        
+        state.socket.send(
+          JSON.stringify({
+            id: progressData.commandId,
+            type: "progress_update",
+            channel: state.channel,
+            message: {
+              id: progressData.commandId,
+              type: "progress_update",
+              data: progressData
+            }
+          })
+        );
+      }
+      
+      // Reset progress UI
+      function resetProgressUI() {
+        progressContainer.classList.add("hidden");
+        progressBar.style.width = "0%";
+        progressMessage.textContent = "No operation in progress";
+        progressStatus.textContent = "Not started";
+        progressStatus.className = "";
+        progressPercentage.textContent = "0%";
+      }
+
+      // Listen for messages from the plugin code
+      window.onmessage = (event) => {
+        const message = event.data.pluginMessage;
+        if (!message) return;
+
+        console.log("Received message from plugin:", message);
+
+        switch (message.type) {
+          case "connection-status":
+            updateConnectionStatus(message.connected, message.message);
+            break;
+          case "auto-connect":
+            connectButton.click();
+            break;
+          case "auto-disconnect":
+            disconnectButton.click();
+            break;
+          case "command-result":
+            // Record success
+            if (message.command) {
+              addCallToHistory(message.command, message.params || {}, 'success');
+            }
+            // Forward the result from plugin code back to WebSocket
+            sendSuccessResponse(message.id, message.result);
+            break;
+          case "command-error":
+            // Record error
+            if (message.command) {
+              addCallToHistory(message.command, message.params || {}, 'error', message.error);
+            }
+            // Forward the error from plugin code back to WebSocket
+            sendErrorResponse(message.id, message.error);
+            break;
+          case "command_progress":
+            // Update UI with progress information
+            updateProgressUI(message);
+            // Forward progress update to server
+            sendProgressUpdateToServer(message);
+            break;
+          case "settings-loaded":
+            // Apply loaded settings to UI
+            applySettings(message.settings);
+            break;
+          case "call-history-loaded":
+            // Load call history
+            if (message.history && Array.isArray(message.history)) {
+              state.callHistory = message.history.map(call => ({
+                ...call,
+                timestamp: new Date(call.timestamp)
+              }));
+              renderCallHistory();
+            }
+            break;
+        }
+      };
+      
+      // Load settings when plugin UI is initialized
+      loadSavedSettings();
+      
+      // Load call history
+      loadCallHistory();
+      
+      // Clear history button
+      clearHistoryBtn.addEventListener("click", clearCallHistory);
+      
+      // Toggle functionality
+      const mainContainer = document.getElementById("main-container");
+      const toggleBtn = document.getElementById("toggle-btn");
+      const collapsedContent = document.getElementById("collapsed-content");
+      
+      // Toggle between expanded and collapsed states
+      function togglePanel() {
+        if (mainContainer.classList.contains("expanded")) {
+          // Collapse
+          mainContainer.classList.remove("expanded");
+          mainContainer.classList.add("collapsed");
+          // Resize plugin window to fit the ball
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "resize-window",
+                width: 80,
+                height: 80,
+              },
+            },
+            "*"
+          );
+        } else {
+          // Expand
+          mainContainer.classList.remove("collapsed");
+          mainContainer.classList.add("expanded");
+          // Resize plugin window to original size
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "resize-window",
+                width: 350,
+                height: 600,
+              },
+            },
+            "*"
+          );
+        }
+      }
+      
+      // Add click event to toggle button
+      toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePanel();
+      });
+      
+      // Add click event to collapsed ball to expand
+      collapsedContent.addEventListener("click", () => {
+        if (mainContainer.classList.contains("collapsed")) {
+          togglePanel();
+        }
+      });
+    </script>
+  </body>
+</html>

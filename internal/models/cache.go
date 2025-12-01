@@ -58,13 +58,13 @@ type FigmaFileFetchQueue struct {
 	FigmaToken   string `gorm:"size:255;not null;index:idx_figma_token;index:idx_token_status" json:"figma_token"` // 必须使用此token请求Figma API
 	FileKey      string `gorm:"size:100;not null;index:idx_file_key" json:"file_key"`
 	RootNodeID   string `gorm:"size:100;not null;uniqueIndex:idx_fetch_file_root" json:"root_node_id"`
-	NodeIDs      string `gorm:"type:text" json:"node_ids"`                                                                           // 逗号分隔的节点ID列表（请求参数）
-	Status       string `gorm:"size:20;not null;default:'waiting';index:idx_status;index:idx_token_status" json:"status"`           // waiting, loading, loaded, error
+	NodeIDs      string `gorm:"type:text" json:"node_ids"`                                                                // 逗号分隔的节点ID列表（请求参数）
+	Status       string `gorm:"size:20;not null;default:'waiting';index:idx_status;index:idx_token_status" json:"status"` // waiting, loading, loaded, error
 	ErrorMessage string `gorm:"type:text" json:"error_message"`
-	StartedAt    uint32 `gorm:"default:0" json:"started_at"`    // Unix时间戳（秒）
-	CompletedAt  uint32 `gorm:"default:0" json:"completed_at"`  // Unix时间戳（秒）
-	CreatedAt    uint32 `gorm:"not null" json:"created_at"`     // Unix时间戳（秒）
-	UpdatedAt    uint32 `gorm:"not null" json:"updated_at"`     // Unix时间戳（秒）
+	StartedAt    uint32 `gorm:"default:0" json:"started_at"`   // Unix时间戳（秒）
+	CompletedAt  uint32 `gorm:"default:0" json:"completed_at"` // Unix时间戳（秒）
+	CreatedAt    uint32 `gorm:"not null" json:"created_at"`    // Unix时间戳（秒）
+	UpdatedAt    uint32 `gorm:"not null" json:"updated_at"`    // Unix时间戳（秒）
 }
 
 // TableName 指定表名
@@ -166,10 +166,11 @@ func (r *FigmaRenderQueue) GetNodeIDs() ([]string, error) {
 // FigmaNodeImage 节点图片缓存表
 type FigmaNodeImage struct {
 	ID             uint    `gorm:"primaryKey" json:"id"`
-	FileKey        string  `gorm:"size:100;not null;uniqueIndex:idx_node_format_scale" json:"file_key"`
-	NodeID         string  `gorm:"size:100;not null;uniqueIndex:idx_node_format_scale" json:"node_id"`
-	Format         string  `gorm:"size:10;not null;uniqueIndex:idx_node_format_scale" json:"format"`
-	Scale          float64 `gorm:"type:decimal(3,1);not null;uniqueIndex:idx_node_format_scale" json:"scale"`
+	FileKey        string  `gorm:"size:100;not null;uniqueIndex:idx_node_format_scale_ignore" json:"file_key"`
+	NodeID         string  `gorm:"size:100;not null;uniqueIndex:idx_node_format_scale_ignore" json:"node_id"`
+	Format         string  `gorm:"size:10;not null;uniqueIndex:idx_node_format_scale_ignore" json:"format"`
+	Scale          float64 `gorm:"type:decimal(3,1);not null;uniqueIndex:idx_node_format_scale_ignore" json:"scale"`
+	IgnoreTexts    bool    `gorm:"not null;default:false;uniqueIndex:idx_node_format_scale_ignore" json:"ignore_texts"` // 是否忽略文本（不渲染文本）
 	FigmaCDNURL    string  `gorm:"size:1000" json:"figma_cdn_url"`
 	OBSKey         string  `gorm:"size:500;index:idx_obs_key" json:"obs_key"`             // OBS对象Key（通过它可以动态生成URL）
 	OBSExpiresAt   uint32  `gorm:"default:0;index:idx_obs_expires" json:"obs_expires_at"` // Unix时间戳（秒），1个月
@@ -484,14 +485,14 @@ func UpdateFileFetchQueueStatus(id uint, status string, errorMsg string) error {
 	if errorMsg != "" {
 		updates["error_message"] = errorMsg
 	}
-	
+
 	// 根据状态设置时间戳
 	if status == "loading" {
 		updates["started_at"] = now
 	} else if status == "loaded" || status == "error" {
 		updates["completed_at"] = now
 	}
-	
+
 	return DB.Model(&FigmaFileFetchQueue{}).Where("id = ?", id).Updates(updates).Error
 }
 
@@ -570,10 +571,10 @@ func UpdateRenderQueueProgress(id uint, processed, failed uint) error {
 // ===================== 节点图片缓存相关方法 =====================
 
 // GetNodeImage 获取节点图片缓存
-func GetNodeImage(fileKey, nodeID, format string, scale float64) (*FigmaNodeImage, error) {
+func GetNodeImage(fileKey, nodeID, format string, scale float64, ignoreTexts bool) (*FigmaNodeImage, error) {
 	var image FigmaNodeImage
-	result := DB.Where("file_key = ? AND node_id = ? AND format = ? AND scale = ?",
-		fileKey, nodeID, format, scale).First(&image)
+	result := DB.Where("file_key = ? AND node_id = ? AND format = ? AND scale = ? AND ignore_texts = ?",
+		fileKey, nodeID, format, scale, ignoreTexts).First(&image)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -581,16 +582,16 @@ func GetNodeImage(fileKey, nodeID, format string, scale float64) (*FigmaNodeImag
 }
 
 // CreateNodeImage 创建节点图片缓存
-// 如果记录已存在（根据 file_key + node_id + format + scale 唯一索引），则更新记录
+// 如果记录已存在（根据 file_key + node_id + format + scale + ignore_texts 唯一索引），则更新记录
 func CreateNodeImage(image *FigmaNodeImage) error {
 	// 使用 Clauses 实现 ON DUPLICATE KEY UPDATE
 	// 当唯一键冲突时，更新除了 ID 和 CreatedAt 之外的所有字段
 	result := DB.Exec(`
 		INSERT INTO figma_node_images (
-			file_key, node_id, format, scale, figma_cdn_url, obs_key, obs_expires_at,
+			file_key, node_id, format, scale, ignore_texts, figma_cdn_url, obs_key, obs_expires_at,
 			file_size, width, height, status, error_message, hit_count, last_accessed_at,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			figma_cdn_url = VALUES(figma_cdn_url),
 			obs_key = VALUES(obs_key),
@@ -602,7 +603,7 @@ func CreateNodeImage(image *FigmaNodeImage) error {
 			error_message = VALUES(error_message),
 			updated_at = VALUES(updated_at)
 	`,
-		image.FileKey, image.NodeID, image.Format, image.Scale, image.FigmaCDNURL,
+		image.FileKey, image.NodeID, image.Format, image.Scale, image.IgnoreTexts, image.FigmaCDNURL,
 		image.OBSKey, image.OBSExpiresAt, image.FileSize, image.Width, image.Height,
 		image.Status, image.ErrorMessage, image.HitCount, image.LastAccessedAt,
 		image.CreatedAt, image.UpdatedAt,

@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -234,48 +235,56 @@ func GetFigmaNodeTree(c *gin.Context) {
 		return
 	}
 
+	// 标准化节点ID格式：如果 RootNodeID 包含 "-"，转换为 ":"
+	// 例如：1-123 → 1:123
+	rootNodeID := project.RootNodeID
+	if strings.Contains(rootNodeID, "-") {
+		rootNodeID = strings.ReplaceAll(rootNodeID, "-", ":")
+		log.Printf("🔄 [GetFigmaNodeTree] 转换节点ID格式: %s → %s", project.RootNodeID, rootNodeID)
+	}
+
 	// 获取节点树，查找顺序：
 	// 1. 文件缓存（最快）
 	// 2. 数据库缓存
-	// 3. Figma API（兜底，需满足冷却条件）
+	// 3. WebSocket 插件（兜底，需要活跃连接）
 	var nodes []map[string]interface{}
 	var cacheSource string
-	var needAPIFallback bool = false
+	var needWebSocketFallback bool = false
 
 	// 1. 先尝试从文件缓存获取（temp/{fileKey}/documents/{nodeID}.json）
-	fileNodes, err := services.LoadCachedNodesFromFile(project.FileKey, project.RootNodeID)
+	fileNodes, err := services.LoadCachedNodesFromFile(project.FileKey, rootNodeID)
 	if err == nil && fileNodes != nil && len(fileNodes) > 0 {
 		nodes = fileNodes
 		cacheSource = "file"
 		log.Printf("✅ [GetFigmaNodeTree] 从文件缓存获取节点树 (FileKey=%s, NodeID=%s)",
-			project.FileKey, project.RootNodeID)
+			project.FileKey, rootNodeID)
 	} else {
 		// 2. 文件缓存未找到，尝试从数据库缓存获取
 		log.Printf("⚠️ [GetFigmaNodeTree] 文件缓存未找到，尝试数据库缓存 (FileKey=%s, NodeID=%s)",
-			project.FileKey, project.RootNodeID)
+			project.FileKey, rootNodeID)
 
-		cache, err := models.GetFileCache(project.FileKey, project.RootNodeID)
+		cache, err := models.GetFileCache(project.FileKey, rootNodeID)
 		if err != nil || cache == nil {
 			// 尝试查找包含该节点的父缓存树
-			cache, err = models.GetFileCacheContainingNode(project.FileKey, project.RootNodeID)
+			cache, err = models.GetFileCacheContainingNode(project.FileKey, rootNodeID)
 		}
 
 		if err != nil || cache == nil || cache.FileData == "" {
-			// 数据库缓存也未找到，标记需要API兜底
-			log.Printf("⚠️ [GetFigmaNodeTree] 数据库缓存未找到，尝试 Figma API 兜底 (FileKey=%s, NodeID=%s)",
-				project.FileKey, project.RootNodeID)
-			needAPIFallback = true
+			// 数据库缓存也未找到，标记需要 WebSocket 插件兜底
+			log.Printf("⚠️ [GetFigmaNodeTree] 数据库缓存未找到，尝试 WebSocket 插件兜底 (FileKey=%s, NodeID=%s)",
+				project.FileKey, rootNodeID)
+			needWebSocketFallback = true
 		} else {
 			// 使用与 LoadCachedNodesFromFile 相同的解析逻辑
 			var fileDataToUse string
 
 			// 如果需要提取子树
-			if cache.RootNodeID != project.RootNodeID {
+			if cache.RootNodeID != rootNodeID {
 				// 找到的是父缓存树，需要提取子树
-				subtreeData, err := models.ExtractSubtree(cache.FileData, project.RootNodeID)
+				subtreeData, err := models.ExtractSubtree(cache.FileData, rootNodeID)
 				if err != nil {
 					log.Printf("❌ [GetFigmaNodeTree] 提取子树失败: %v", err)
-					needAPIFallback = true
+					needWebSocketFallback = true
 				} else {
 					fileDataToUse = subtreeData
 				}
@@ -284,106 +293,198 @@ func GetFigmaNodeTree(c *gin.Context) {
 			}
 
 			// 只有成功获取数据才继续解析
-			if !needAPIFallback {
+			if !needWebSocketFallback {
 				// 解析 JSON 数据
 				var result map[string]interface{}
 				if err := json.Unmarshal([]byte(fileDataToUse), &result); err != nil {
 					log.Printf("❌ [GetFigmaNodeTree] 解析数据库缓存JSON失败: %v", err)
-					needAPIFallback = true
+					needWebSocketFallback = true
 				} else {
 					// 使用与 LoadCachedNodesFromFile 相同的 parseFigmaNodes 函数
-					dbNodes, err := services.ParseFigmaNodesFromData(result, project.RootNodeID)
+					dbNodes, err := services.ParseFigmaNodesFromData(result, rootNodeID)
 					if err != nil {
 						log.Printf("❌ [GetFigmaNodeTree] 解析节点数据失败: %v", err)
-						needAPIFallback = true
+						needWebSocketFallback = true
 					} else if len(dbNodes) == 0 {
 						log.Printf("⚠️ [GetFigmaNodeTree] 数据库缓存解析后无有效节点")
-						needAPIFallback = true
+						needWebSocketFallback = true
 					} else {
 						nodes = dbNodes
 						cacheSource = "database"
 						log.Printf("✅ [GetFigmaNodeTree] 从数据库缓存获取节点树 (FileKey=%s, NodeID=%s, 节点数=%d)",
-							project.FileKey, project.RootNodeID, len(nodes))
+							project.FileKey, rootNodeID, len(nodes))
 					}
 				}
 			}
 		}
 	}
 
-	// 3. 如果缓存都未找到，尝试 Figma API 兜底（需满足冷却条件）
-	if needAPIFallback {
-		// 获取用户信息
-		user, err := models.EnsureUserExists(project.UserID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "获取用户信息失败: " + err.Error(),
-			})
-			return
-		}
+	// 3. 如果缓存都未找到，尝试通过 WebSocket 请求 Figma 插件获取
+	if needWebSocketFallback {
+		// 获取 MCP 服务
+		mcpService := services.GetMCPService()
 
-		if user.FigmaToken == "" {
+		// 查找用户的 MCP 连接
+		// 需要先找到用户的 connection_id
+		connection, exists := mcpService.GetUserConnection(userID)
+
+		if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+			log.Printf("🔌 [GetFigmaNodeTree] 发现活跃 WebSocket 连接 (ConnectionID=%s)，尝试请求插件获取数据", connection.ConnectionID)
+
+			// 构造请求ID和消息（使用与 mcp_tools.go 相同的格式）
+			requestID := fmt.Sprintf("req_nodetree_%d", time.Now().UnixNano())
+
+			// 创建响应通道
+			responseChan := make(chan interface{}, 1)
+			errorChan := make(chan error, 1)
+
+			// 注册请求等待响应
+			mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
+			defer mcpService.UnregisterPendingRequest(requestID)
+
+			message := map[string]interface{}{
+				"id":      requestID,
+				"command": "read_my_design",
+				"params": map[string]interface{}{
+					"nodeId": rootNodeID,
+				},
+			}
+
+			// 获取频道
+			channel := mcpService.GetUserChannel(connection.ConnectionID)
+			if channel == "" {
+				channel = "figma-bridge"
+				_ = mcpService.JoinChannel(connection.ConnectionID, channel)
+			}
+
+			// 广播消息到频道
+			if err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message); err != nil {
+				log.Printf("❌ [GetFigmaNodeTree] 发送插件请求失败: %v", err)
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": "发送请求到 Figma 插件失败: " + err.Error(),
+				})
+				return
+			}
+
+			log.Printf("✅ [GetFigmaNodeTree] 已发送请求到频道 %s，等待响应...", channel)
+
+			// 等待响应（30秒超时）
+			var response interface{}
+			select {
+			case response = <-responseChan:
+				log.Printf("✅ [GetFigmaNodeTree] 收到响应 (ID=%s)", requestID)
+			case respErr := <-errorChan:
+				log.Printf("❌ [GetFigmaNodeTree] 收到错误响应 (ID=%s): %v", requestID, respErr)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": fmt.Sprintf("通过 Figma 插件获取数据失败: %v", respErr),
+				})
+				return
+			case <-time.After(30 * time.Second):
+				log.Printf("⏰ [GetFigmaNodeTree] 请求超时 (ID=%s)", requestID)
+				c.JSON(http.StatusRequestTimeout, gin.H{
+					"error": "请求超时，未在 30 秒内收到插件响应",
+				})
+				return
+			}
+
+			log.Printf("✅ [GetFigmaNodeTree] 收到插件响应，解析节点数据")
+
+			// 解析响应数据
+			responseData, ok := response.(map[string]interface{})
+			if !ok {
+				log.Printf("❌ [GetFigmaNodeTree] 响应数据格式错误")
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "插件响应数据格式错误",
+				})
+				return
+			}
+
+			// 将响应数据保存到本地缓存和数据库
+			responseJSON, err := json.Marshal(responseData)
+			if err != nil {
+				log.Printf("⚠️ [GetFigmaNodeTree] 序列化响应数据失败: %v", err)
+			} else {
+				// 保存到本地缓存（异步）
+				go func() {
+					if err := services.SaveCachedNodesToFile(project.FileKey, rootNodeID, responseJSON); err != nil {
+						log.Printf("⚠️ [GetFigmaNodeTree] 保存到本地缓存失败: %v", err)
+					} else {
+						log.Printf("✅ [GetFigmaNodeTree] 已保存到本地缓存")
+					}
+				}()
+
+				// 保存到数据库缓存（异步）
+				go func() {
+					// 提取所有可见节点ID（排除 visible=false 的节点）
+					nodeIDList, err := models.ExtractVisibleNodeIDs(string(responseJSON))
+					if err != nil {
+						log.Printf("⚠️ [GetFigmaNodeTree] 提取节点ID失败: %v", err)
+						nodeIDList = []string{}
+					}
+					nodeIDsStr := strings.Join(nodeIDList, ",")
+					now := uint32(time.Now().Unix())
+
+					// 先尝试获取现有缓存
+					existingCache, err := models.GetFileCache(project.FileKey, rootNodeID)
+					if err == nil && existingCache != nil {
+						// 更新现有缓存
+						existingCache.FileData = string(responseJSON)
+						existingCache.NodeIDs = nodeIDsStr
+						existingCache.UpdatedAt = now
+						if err := models.UpdateFileCache(existingCache); err != nil {
+							log.Printf("⚠️ [GetFigmaNodeTree] 更新数据库缓存失败: %v", err)
+						} else {
+							log.Printf("✅ [GetFigmaNodeTree] 已更新数据库缓存 (节点数=%d)", len(nodeIDList))
+						}
+					} else {
+						// 创建新缓存
+						newCache := &models.FigmaFileCache{
+							FileKey:    project.FileKey,
+							RootNodeID: rootNodeID,
+							FileData:   string(responseJSON),
+							NodeIDs:    nodeIDsStr,
+							CreatedAt:  now,
+							UpdatedAt:  now,
+						}
+						if err := models.CreateFileCache(newCache); err != nil {
+							log.Printf("⚠️ [GetFigmaNodeTree] 创建数据库缓存失败: %v", err)
+						} else {
+							log.Printf("✅ [GetFigmaNodeTree] 已创建数据库缓存 (节点数=%d)", len(nodeIDList))
+						}
+					}
+				}()
+			}
+
+			// 解析节点数据
+			pluginNodes, err := services.ParseFigmaNodesFromData(responseData, rootNodeID)
+			if err != nil {
+				log.Printf("❌ [GetFigmaNodeTree] 解析节点数据失败: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": fmt.Sprintf("解析节点数据失败: %v", err),
+				})
+				return
+			}
+
+			if len(pluginNodes) == 0 {
+				log.Printf("⚠️ [GetFigmaNodeTree] 插件返回的数据解析后无有效节点")
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": "未找到有效的节点数据",
+				})
+				return
+			}
+
+			nodes = pluginNodes
+			cacheSource = "plugin"
+			log.Printf("✅ [GetFigmaNodeTree] 从插件获取节点树 (FileKey=%s, NodeID=%s, 节点数=%d)",
+				project.FileKey, rootNodeID, len(nodes))
+
+		} else {
+			log.Printf("⚠️ [GetFigmaNodeTree] 未找到活跃 WebSocket 连接，无法获取数据")
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "节点树缓存不存在，请先在 Dashboard 中刷新节点树",
+				"error": "节点树缓存不存在，且未检测到活跃的 Figma 插件连接。请打开 Figma 插件并连接后重试。",
 			})
 			return
 		}
-
-		// 获取 CacheService 实例（从全局或 context）
-		cacheService, exists := c.Get("cacheService")
-		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "节点树缓存不存在，请先在 Dashboard 中刷新节点树",
-			})
-			return
-		}
-		cs := cacheService.(*services.CacheService)
-
-		// 检查 Token 冷却状态
-		canRequest, waitSeconds, err := cs.CheckFileAPICooldown(user.FigmaToken)
-		if err != nil {
-			log.Printf("❌ [GetFigmaNodeTree] 检查冷却状态失败: %v", err)
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "节点树缓存不存在，请先在 Dashboard 中刷新节点树",
-			})
-			return
-		}
-
-		if !canRequest {
-			// 仍在冷却中，无法调用 API
-			log.Printf("⏰ [GetFigmaNodeTree] Token 冷却中，需等待 %d 秒 (FileKey=%s, NodeID=%s)",
-				waitSeconds, project.FileKey, project.RootNodeID)
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error":              "节点树缓存不存在，且 API 冷却中，请稍后重试",
-				"cooldown_remaining": waitSeconds,
-			})
-			return
-		}
-
-		// Token 冷却完成，可以调用 API
-		log.Printf("🔄 [GetFigmaNodeTree] 尝试从 Figma API 获取节点树 (FileKey=%s, NodeID=%s)",
-			project.FileKey, project.RootNodeID)
-
-		// 更新冷却时间
-		if err := cs.UpdateFileRequestTime(user.FigmaToken); err != nil {
-			log.Printf("⚠️ [GetFigmaNodeTree] 更新冷却时间失败: %v", err)
-		}
-
-		// 调用 Figma API（会自动保存到数据库和文件缓存）
-		apiNodes, err := services.GetFigmaNodesNoCache(user.FigmaToken, project.FileKey, project.RootNodeID)
-		if err != nil {
-			// 立即更新冷却时间
-			_ = cs.UpdateFileRequestTime(user.FigmaToken)
-			log.Printf("❌ [GetFigmaNodeTree] Figma API 调用失败: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "获取节点树失败: " + err.Error(),
-			})
-			return
-		}
-
-		nodes = apiNodes
-		cacheSource = "api"
-		log.Printf("✅ [GetFigmaNodeTree] 从 Figma API 获取节点树成功 (FileKey=%s, NodeID=%s, 节点数=%d)",
-			project.FileKey, project.RootNodeID, len(nodes))
 	}
 
 	// 获取所有节点的修改信息
@@ -703,7 +804,7 @@ func DeleteNodeSettings(c *gin.Context) {
 		var subtreeNodeIDs []string
 		if nodeID == "" || nodeID == project.RootNodeID {
 			// 重置根节点及其子树的修改
-			subtreeNodeIDs, err = services.GetNodeSubtreeIDs(user.FigmaToken, project.FileKey, project.RootNodeID, "")
+			subtreeNodeIDs, err = services.GetNodeSubtreeIDs(user.FigmaToken, project.FileKey, project.RootNodeID, "", user.ID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": "获取根节点子树失败: " + err.Error(),
@@ -712,7 +813,7 @@ func DeleteNodeSettings(c *gin.Context) {
 			}
 		} else {
 			// 重置指定节点及其子树的修改
-			subtreeNodeIDs, err = services.GetNodeSubtreeIDs(user.FigmaToken, project.FileKey, project.RootNodeID, nodeID)
+			subtreeNodeIDs, err = services.GetNodeSubtreeIDs(user.FigmaToken, project.FileKey, project.RootNodeID, nodeID, user.ID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": "获取节点子树失败: " + err.Error(),
@@ -801,7 +902,7 @@ func DeleteProjectNodeSettings(c *gin.Context) {
 	}
 
 	// 重置根节点及其子树的修改
-	subtreeNodeIDs, err := services.GetNodeSubtreeIDs(user.FigmaToken, project.FileKey, project.RootNodeID, "")
+	subtreeNodeIDs, err := services.GetNodeSubtreeIDs(user.FigmaToken, project.FileKey, project.RootNodeID, "", user.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "获取根节点子树失败: " + err.Error(),
@@ -1161,6 +1262,135 @@ func GetFigmaImage(c *gin.Context) {
 		var imagePath string
 		var imgErr error
 
+		// 1. 优先尝试通过 WebSocket 请求 Figma 插件获取最新的实时图片
+		mcpService := services.GetMCPService()
+		if mcpService != nil {
+			connection, exists := mcpService.GetUserConnection(user.ID)
+
+			if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
+				log.Printf("🔌 [GetFigmaImage] 发现活跃 WebSocket 连接，优先请求插件获取实时图片")
+
+				// 构造请求ID和消息
+				requestID := fmt.Sprintf("req_image_%d", time.Now().UnixNano())
+
+				// 创建响应通道
+				responseChan := make(chan interface{}, 1)
+				errorChan := make(chan error, 1)
+
+				// 注册请求等待响应
+				mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
+				defer mcpService.UnregisterPendingRequest(requestID)
+
+				message := map[string]interface{}{
+					"id":      requestID,
+					"command": "export_node_as_image",
+					"params": map[string]interface{}{
+						"nodeId": nodeID,
+						"format": strings.ToUpper(format),
+						"scale":  scale,
+					},
+				}
+
+				// 获取频道
+				channel := mcpService.GetUserChannel(connection.ConnectionID)
+				if channel == "" {
+					channel = "figma-bridge"
+					_ = mcpService.JoinChannel(connection.ConnectionID, channel)
+				}
+
+				// 广播消息到频道
+				if err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message); err != nil {
+					log.Printf("❌ [GetFigmaImage] 发送插件请求失败: %v，回退到缓存", err)
+				} else {
+					log.Printf("✅ [GetFigmaImage] 已发送请求到频道 %s，等待响应...", channel)
+
+					// 等待响应（30秒超时）
+					select {
+					case response := <-responseChan:
+						log.Printf("✅ [GetFigmaImage] 收到插件响应")
+
+						// 解析响应数据
+						if responseData, ok := response.(map[string]interface{}); ok {
+							// 提取图片数据
+							if imageDataB64, hasImage := responseData["imageData"].(string); hasImage {
+								// 处理图片：保存本地并上传到 OBS
+								savedPath, handleErr := handleImageFromPlugin(project.FileKey, nodeID, format, scale, imageDataB64, responseData)
+								if handleErr == nil && savedPath != "" {
+									log.Printf("✅ [GetFigmaImage] 插件图片处理成功: %s", savedPath)
+									return savedPath, nil
+								}
+								log.Printf("⚠️ [GetFigmaImage] 插件图片处理失败: %v，回退到缓存", handleErr)
+							}
+						}
+
+					case respErr := <-errorChan:
+						log.Printf("❌ [GetFigmaImage] 收到错误响应: %v，回退到缓存", respErr)
+
+					case <-time.After(30 * time.Second):
+						log.Printf("⏰ [GetFigmaImage] 请求超时，回退到缓存")
+					}
+				}
+			}
+		}
+
+		// 2. WebSocket 不可用或失败，检查本地缓存文件
+		if useCache {
+			safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+			tempDir := filepath.Join("temp", project.FileKey, "previews")
+			ext := format
+			if ext == "jpg" {
+				ext = "png" // 文件名统一使用 png
+			}
+			localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
+
+			if _, err := os.Stat(localFilePath); err == nil {
+				log.Printf("✅ [GetFigmaImage] 从本地缓存返回图片: %s", localFilePath)
+				return localFilePath, nil
+			}
+			log.Printf("⚠️ [GetFigmaImage] 本地缓存未找到: %s", localFilePath)
+		}
+
+		// 3. 检查数据库缓存（OBS URL 或 Figma CDN URL）
+		if useCache {
+			nodeImage, err := models.GetNodeImage(project.FileKey, nodeID, format, scale, false) // 默认不忽略文本
+			if err == nil && nodeImage != nil {
+				// 3.1 优先从 OBS 下载
+				if nodeImage.OBSKey != "" && globalOBSService != nil && globalOBSService.IsEnabled() {
+					log.Printf("🔍 [GetFigmaImage] 发现数据库中的 OBS Key: %s", nodeImage.OBSKey)
+
+					// 准备本地保存路径
+					safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+					tempDir := filepath.Join("temp", project.FileKey, "previews")
+					os.MkdirAll(tempDir, 0755)
+					ext := format
+					if ext == "jpg" {
+						ext = "png"
+					}
+					localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
+
+					// 从 OBS 下载（返回字节数组）
+					imageBytes, _, downloadErr := globalOBSService.DownloadFile(nodeImage.OBSKey)
+					if downloadErr == nil && len(imageBytes) > 0 {
+						// 保存到本地
+						if saveErr := os.WriteFile(localFilePath, imageBytes, 0644); saveErr == nil {
+							log.Printf("✅ [GetFigmaImage] 从 OBS 下载成功: %s → %s", nodeImage.OBSKey, localFilePath)
+							return localFilePath, nil
+						} else {
+							log.Printf("⚠️ [GetFigmaImage] 保存OBS文件失败: %v", saveErr)
+						}
+					} else {
+						log.Printf("⚠️ [GetFigmaImage] 从 OBS 下载失败: %v", downloadErr)
+					}
+				}
+			}
+			if err != nil {
+				log.Printf("⚠️ [GetFigmaImage] 数据库缓存查询失败: %v", err)
+			} else if nodeImage == nil {
+				log.Printf("⚠️ [GetFigmaImage] 数据库缓存中未找到图片记录")
+			}
+		}
+
+		// 4. 所有缓存都失败，使用 Figma API 兜底
 		// TODO: 过滤预览功能暂时禁用，等待 DownloadFilteredPreviewFigmaImage 函数实现
 		// if excludeModified == "true" {
 		// 	// 过滤预览：排除修改的节点，保存到fpreviews文件夹
@@ -1169,9 +1399,9 @@ func GetFigmaImage(c *gin.Context) {
 		// 	imagePath, imgErr = services.DownloadFilteredPreviewFigmaImage(user.FigmaToken, project.FileKey, nodeID, format, scale, uint(projectID), useCache)
 		// } else {
 		// 普通预览：保存到previews文件夹
-		fmt.Printf("Controller: 开始获取普通Figma图片, project_id=%d, node_id=%s, format=%s, scale=%.1f, useCache=%v\n",
+		fmt.Printf("Controller: 开始获取普通Figma图片（支持 WebSocket 兜底）, project_id=%d, node_id=%s, format=%s, scale=%.1f, useCache=%v\n",
 			projectID, nodeID, format, scale, useCache)
-		imagePath, imgErr = services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, useCache)
+		imagePath, imgErr = services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, useCache, user.ID, false) // 默认不忽略文本
 		// }
 
 		return imagePath, imgErr
@@ -1197,10 +1427,122 @@ func GetFigmaImage(c *gin.Context) {
 	c.File(imagePath)
 }
 
+// handleImageFromPlugin 处理从 Figma 插件接收到的图片数据
+// 参数：fileKey, nodeID, format, scale, imageDataB64(base64编码的图片), responseData(插件响应)
+// 返回：本地保存路径, 错误
+func handleImageFromPlugin(fileKey, nodeID, format string, scale float64, imageDataB64 string, responseData map[string]interface{}) (string, error) {
+	log.Printf("🎨 [handleImageFromPlugin] 开始处理插件图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f", fileKey, nodeID, format, scale)
+
+	// 1. 解码 base64 图片数据
+	imageBytes, err := base64.StdEncoding.DecodeString(imageDataB64)
+	if err != nil {
+		return "", fmt.Errorf("解码 base64 失败: %v", err)
+	}
+
+	log.Printf("✅ [handleImageFromPlugin] 图片解码成功，大小: %d bytes", len(imageBytes))
+
+	// 2. 确定 MIME 类型
+	mimeType := "image/png"
+	if mt, ok := responseData["mimeType"].(string); ok && mt != "" {
+		mimeType = mt
+	}
+
+	// 3. 保存到本地缓存
+	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+	previewsDir := filepath.Join("temp", fileKey, "previews")
+	if err := os.MkdirAll(previewsDir, 0755); err != nil {
+		return "", fmt.Errorf("创建预览目录失败: %v", err)
+	}
+
+	// 确定文件扩展名
+	ext := strings.ToLower(format)
+	if ext == "jpg" {
+		ext = "jpeg"
+	}
+
+	localFilePath := filepath.Join(previewsDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
+
+	// 保存文件
+	if err := os.WriteFile(localFilePath, imageBytes, 0644); err != nil {
+		return "", fmt.Errorf("保存本地文件失败: %v", err)
+	}
+
+	log.Printf("✅ [handleImageFromPlugin] 图片已保存到本地: %s", localFilePath)
+
+	// 4. 异步上传到华为云 OBS
+	if globalOBSService != nil && globalOBSService.IsEnabled() {
+		go func() {
+			log.Printf("☁️ [handleImageFromPlugin] 开始上传到华为云 OBS...")
+
+			obsURL, obsKey, fileSize, err := globalOBSService.UploadImageFromBytes(
+				imageBytes,
+				fileKey,
+				nodeID,
+				format,
+				scale,
+				mimeType,
+			)
+
+			if err != nil {
+				log.Printf("❌ [handleImageFromPlugin] 上传到 OBS 失败: %v", err)
+				return
+			}
+
+			log.Printf("✅ [handleImageFromPlugin] 上传到 OBS 成功: %s (%d bytes)", obsKey, fileSize)
+
+			// 5. 保存到数据库缓存
+			now := uint32(time.Now().Unix())
+			expiresAt := now + (7 * 24 * 3600) // 7天过期
+
+			// 检查是否已存在缓存记录
+			existingImage, err := models.GetNodeImage(fileKey, nodeID, format, scale, false) // 默认不忽略文本
+			if err == nil && existingImage != nil {
+				// 更新现有记录
+				existingImage.OBSKey = obsKey
+				existingImage.OBSExpiresAt = expiresAt
+				existingImage.FileSize = uint64(fileSize)
+				existingImage.Status = "obs_synced"
+				existingImage.UpdatedAt = now
+
+				if err := models.UpdateNodeImage(existingImage); err != nil {
+					log.Printf("⚠️ [handleImageFromPlugin] 更新数据库缓存失败: %v", err)
+				} else {
+					log.Printf("✅ [handleImageFromPlugin] 已更新数据库缓存 (ID=%d)", existingImage.ID)
+				}
+			} else {
+				// 创建新记录
+				newImage := &models.FigmaNodeImage{
+					FileKey:      fileKey,
+					NodeID:       nodeID,
+					Format:       format,
+					Scale:        scale,
+					FigmaCDNURL:  obsURL, // 使用 OBS URL 作为备用
+					OBSKey:       obsKey,
+					OBSExpiresAt: expiresAt,
+					FileSize:     uint64(fileSize),
+					Status:       "obs_synced",
+					CreatedAt:    now,
+					UpdatedAt:    now,
+				}
+
+				if err := models.CreateNodeImage(newImage); err != nil {
+					log.Printf("⚠️ [handleImageFromPlugin] 创建数据库缓存失败: %v", err)
+				} else {
+					log.Printf("✅ [handleImageFromPlugin] 已创建数据库缓存 (ID=%d)", newImage.ID)
+				}
+			}
+		}()
+	} else {
+		log.Printf("⚠️ [handleImageFromPlugin] OBS 服务未启用，跳过云端上传")
+	}
+
+	return localFilePath, nil
+}
+
 // checkAndUploadToOBS 检查本地图片是否已上传到OBS，如果没有则上传
 func checkAndUploadToOBS(fileKey, nodeID, format string, scale float64, localFilePath string) {
 	// 1. 检查数据库中是否已有 OBS Key
-	image, err := models.GetNodeImage(fileKey, nodeID, format, scale)
+	image, err := models.GetNodeImage(fileKey, nodeID, format, scale, false) // 默认不忽略文本
 	if err == nil && image != nil && image.OBSKey != "" {
 		// 已有 OBS Key，无需重复上传
 		fmt.Printf("📦 OBS Key 已存在，跳过上传: fileKey=%s, nodeID=%s, obsKey=%s\n", fileKey, nodeID, image.OBSKey)
@@ -1275,7 +1617,7 @@ func checkAndUploadToOBS(fileKey, nodeID, format string, scale float64, localFil
 			// 创建失败，可能是并发创建导致的唯一键冲突
 			// 尝试重新获取记录并更新
 			fmt.Printf("⚠️ 创建数据库记录失败（可能已存在）: %v\n", err)
-			existingImage, getErr := models.GetNodeImage(fileKey, nodeID, format, scale)
+			existingImage, getErr := models.GetNodeImage(fileKey, nodeID, format, scale, false) // 默认不忽略文本
 			if getErr == nil && existingImage != nil {
 				// 成功获取到记录，更新它
 				existingImage.OBSKey = obsKey
@@ -1991,8 +2333,8 @@ func ClearProjectImageCache(c *gin.Context) {
 
 // getOptimizedProjectDataForCache 获取项目的优化数据用于缓存清理
 func getOptimizedProjectDataForCache(user *models.User, project *models.FigmaProject) (gin.H, error) {
-	// 获取节点树数据
-	nodes, err := services.GetFigmaNodes(user.FigmaToken, project.FileKey, project.RootNodeID)
+	// 获取节点树数据（支持 WebSocket 兜底，会自动等待响应）
+	nodes, err := services.GetFigmaNodesWithUser(user.FigmaToken, project.FileKey, project.RootNodeID, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点树失败: %v", err)
 	}
@@ -2478,11 +2820,12 @@ func GetRefNodeDetails(c *gin.Context) {
 			continue
 		}
 
-		// 使用指定的节点ID获取节点树数据（只获取该节点及其子节点）
-		nodeData, err := services.GetFigmaNodes(user.FigmaToken, project.FileKey, nodeID)
+		// 使用指定的节点ID获取节点树数据（只获取该节点及其子节点，支持 WebSocket 兜底，会自动等待响应）
+		nodeData, err := services.GetFigmaNodesWithUser(user.FigmaToken, project.FileKey, nodeID, user.ID)
 		if err != nil {
 			// 如果获取失败，记录错误但继续处理其他节点
 			fmt.Printf("获取节点 %s 数据失败: %v\n", nodeID, err)
+
 			nodeDetails[nodeID] = gin.H{
 				"id":           nodeID,
 				"name":         fmt.Sprintf("节点 %s", nodeID),

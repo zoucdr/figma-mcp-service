@@ -337,7 +337,16 @@ func main() {
 	dashboardGroup.GET("", controllers.Dashboard)
 
 	// MCP调用记录页面 - 需要登录
-	r.GET("/mcp-logs", middleware.RequireLogin(), controllers.MCPLogs)
+	// r.GET("/mcp-logs", middleware.RequireLogin(), controllers.MCPLogs)
+
+	// MCP WebSocket 连接 - 不需要登录（可选）
+	r.GET("/mcp-ws", controllers.MCPWebSocketHandler)
+
+	// MCP WebSocket 测试页面 - 需要登录
+	// r.GET("/mcp-ws-test", middleware.RequireLogin(), controllers.MCPWebSocketTest)
+
+	// MCP 插件下载 - 不需要登录
+	r.GET("/api/mcp/download-plugin", controllers.DownloadMCPPlugin)
 
 	// 公开的个人资料更新接口 - 用于注册
 	r.POST("/profile/update", controllers.UpdateProfile)
@@ -348,6 +357,9 @@ func main() {
 
 	// 测试代理连接接口
 	r.POST("/api/test-proxy", controllers.TestProxy)
+
+	// 用户 API
+	r.GET("/api/user/current", middleware.RequireLogin(), controllers.GetCurrentUser)
 
 	// 提示词分享页面 - 公开访问
 	shareGroup := r.Group("/share")
@@ -402,6 +414,7 @@ func main() {
 	profileGroup.POST("/generate-mcp-token", controllers.GenerateMCPToken)
 	profileGroup.POST("/revoke-mcp-token", controllers.RevokeMCPToken)
 	profileGroup.POST("/change-password", controllers.ChangePassword)
+	profileGroup.GET("/api/mcp-token", controllers.GetMCPToken) // 获取当前用户的 MCP Token
 	profileGroup.GET("", func(c *gin.Context) {
 		// 确保CSRF令牌存在
 		session := sessions.Default(c)
@@ -538,6 +551,15 @@ func main() {
 	mcpAPIGroup.GET("/logs/:project_id", controllers.MCPGetCallLogsByProject)
 	mcpAPIGroup.DELETE("/logs/:project_id/clear", controllers.MCPClearCallLogsByProject)
 	mcpAPIGroup.POST("/resend/:project_id", controllers.MCPResendCall)
+	// MCP 连接状态查询
+	mcpAPIGroup.GET("/connection-status", controllers.GetMCPConnectionStatus)
+	// MCP 模拟工具调用
+	mcpAPIGroup.POST("/tool-call", controllers.SimulateMCPToolCall)
+	// MCP 获取工具列表
+	mcpAPIGroup.GET("/tools", controllers.GetToolsList)
+	// MCP 页面
+	mcpAPIGroup.GET("/mcp-logs", controllers.MCPLogs)
+	mcpAPIGroup.GET("/mcp-ws-test", controllers.MCPWebSocketTest)
 
 	// API服务模块 - 无需认证，通过MCP token验证
 	apiGroup := r.Group("/api")

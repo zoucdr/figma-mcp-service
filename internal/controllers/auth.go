@@ -364,6 +364,59 @@ func RevokeMCPToken(c *gin.Context) {
 	})
 }
 
+// GetMCPToken 获取当前用户的 MCP Token
+func GetMCPToken(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未登录",
+		})
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	err := models.DB.First(&user, userID.(uint)).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "用户不存在",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"mcp_token": user.MCPToken,
+	})
+}
+
+// GetCurrentUser 获取当前用户信息
+func GetCurrentUser(c *gin.Context) {
+	session := sessions.Default(c)
+	userID := session.Get("user_id")
+	if userID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未登录",
+		})
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	err := models.DB.First(&user, userID.(uint)).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "用户不存在",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":       user.ID,
+		"username": user.Username,
+	})
+}
+
 // ChangePassword 修改密码
 func ChangePassword(c *gin.Context) {
 	session := sessions.Default(c)
