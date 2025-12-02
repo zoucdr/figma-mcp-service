@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -499,20 +498,6 @@ func generateRandomPassword() string {
 	}
 
 	return string(result)
-}
-
-// 生成随机MCP Token
-func generateRandomMCPToken() string {
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	tokenLength := 32
-	result := make([]byte, tokenLength)
-
-	for i := 0; i < tokenLength; i++ {
-		result[i] = chars[time.Now().UnixNano()%int64(len(chars))]
-		time.Sleep(time.Nanosecond)
-	}
-
-	return fmt.Sprintf("mcp_%s", string(result))
 }
 
 // GetTokenCooldownInfo 获取Token冷却信息

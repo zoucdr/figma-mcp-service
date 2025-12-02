@@ -3032,7 +3032,7 @@ body.resizing {
 
 .json-dialog .el-dialog__body {
     height: 60vh;
-    overflow: hidden;
+    overflow: auto;
     padding: 20px;
     background: linear-gradient(145deg, var(--dark-bg-secondary) 0%, rgba(22, 33, 62, 0.9) 100%);
     border-radius: 0 0 12px 12px;
@@ -3041,10 +3041,12 @@ body.resizing {
 /* JSON查看器内容样式 */
 .json-dialog .json-viewer-content {
     height: 100%;
+    max-height: calc(60vh - 100px);
     background: linear-gradient(145deg, var(--dark-bg-tertiary) 0%, rgba(22, 33, 62, 0.8) 100%);
     border-radius: 8px;
     border: 1px solid var(--dark-border);
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .json-dialog .json-textarea .el-textarea__inner {
@@ -3056,6 +3058,8 @@ body.resizing {
     line-height: 1.6 !important;
     border-radius: 8px !important;
     box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    min-height: 300px !important;
+    max-height: none !important;
 }
 
 .json-dialog .json-textarea .el-textarea__inner:focus {

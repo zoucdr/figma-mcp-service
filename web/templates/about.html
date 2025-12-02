@@ -69,14 +69,47 @@
             <h2 class="section-title">使用方法</h2>
             <div class="usage-tabs">
                 <el-tabs v-model="activeTab" type="border-card">
+                    <el-tab-pane label="Figma 插件" name="plugin">
+                        <div class="usage-content">
+                            <h3>通过 Figma 插件直接操作</h3>
+                            <ol class="usage-steps">
+                                <li>
+                                    <strong>安装插件</strong>
+                                    <p>在 Figma 中搜索并安装 "Figma Deliver" 插件</p>
+                                    <p>或者通过开发者模式导入插件文件</p>
+                                </li>
+                                <li>
+                                    <strong>连接服务</strong>
+                                    <p>在插件中配置 Figma Deliver 服务地址</p>
+                                    <p>输入您的用户凭证或 API Token</p>
+                                </li>
+                                <li>
+                                    <strong>选择设计元素</strong>
+                                    <p>在 Figma 画布中选择需要导出的设计元素</p>
+                                    <p>插件会自动识别元素类型和建议配置</p>
+                                </li>
+                                <li>
+                                    <strong>配置导出设置</strong>
+                                    <p>设置图片格式、缩放比例、命名规则等</p>
+                                    <p>预览导出效果并调整参数</p>
+                                </li>
+                                <li>
+                                    <strong>一键导出</strong>
+                                    <p>点击导出按钮，资源将自动上传到 Figma Deliver 服务</p>
+                                    <p>在 Web 界面中查看和管理导出的资源</p>
+                                </li>
+                            </ol>
+                        </div>
+                    </el-tab-pane>
+                    
                     <el-tab-pane label="MCP 协议" name="mcp">
                         <div class="usage-content">
                             <h3>通过 MCP 协议集成 AI 工作流</h3>
                             <ol class="usage-steps">
                                 <li>
                                     <strong>配置 MCP 服务</strong>
-                                    <p>在支持 MCP 的 AI 编辑器（如 Cursor）中配置 Figma Deliver MCP 服务</p>
-                                    <p>服务地址：<code>http://localhost:8080/mcp</code></p>
+                                    <p>在支持 MCP 的 AI 编辑器（如 Cursor）的 mcp.json 文件中配置 Figma Deliver MCP 服务</p>
+                                    <p>服务地址：<code>https://figma-deliver.wekoi.cc/mcp/mcp_your_token_here</code></p>
                                 </li>
                                 <li>
                                     <strong>获取 MCP Token</strong>
@@ -202,14 +235,11 @@
                                     <el-tab-pane label="Cursor MCP" name="cursor">
                                         <div class="code-block">
                                             <pre><code># 1. 在 Cursor 中配置 MCP 服务
-# 文件: .cursorrules 或 settings.json
+# 文件: mcp.json
 {
-  "mcp": {
-    "servers": {
-      "figma-deliver": {
-        "command": "http://localhost:8080/mcp",
-        "args": ["your_mcp_token_here"]
-      }
+  "mcpServers": {
+    "FigmaDeliver": {
+      "url": "https://figma-deliver.wekoi.cc/mcp/mcp_your_token_here"
     }
   }
 }
@@ -298,8 +328,8 @@ from mcp_client import MCPClient
 
 async def main():
     # 连接 MCP 服务
-    client = MCPClient("http://localhost:8080/mcp")
-    await client.connect(token="your_mcp_token")
+    client = MCPClient("https://figma-deliver.wekoi.cc/mcp/mcp_your_token_here")
+    await client.connect()
     
     # 获取设计预览
     preview = await client.call_tool(
@@ -396,7 +426,26 @@ cd service
 cp configs/config.example.env configs/config.env
 
 # 5. 启动服务
-go run cmd/main.go</code></pre>
+go run main.go</code></pre>
+                    </div>
+                </div>
+                
+                <div class="installation-card">
+                    <h3>Figma 插件安装</h3>
+                    <div class="code-block">
+                        <pre><code># 方法一：开发者模式安装
+# 1. 打开 Figma 桌面版或网页版
+# 2. 进入插件管理 → 开发 → 导入插件
+# 3. 选择 figma-plugin 文件夹中的 manifest.json
+
+# 方法二：插件商店安装（待发布）
+# 1. 在 Figma 插件商店搜索 "Figma Deliver"
+# 2. 点击安装并授权
+
+# 插件配置
+# 1. 运行插件后输入服务地址：http://localhost:8080
+# 2. 输入用户凭证或 MCP Token
+# 3. 开始使用插件功能</code></pre>
                     </div>
                 </div>
                 
@@ -404,17 +453,14 @@ go run cmd/main.go</code></pre>
                     <h3>MCP 服务配置</h3>
                     <div class="code-block">
                         <pre><code># 1. 启动 MCP 服务
-go run cmd/main.go
+go run main.go
 
 # 2. 配置 AI 编辑器（Cursor 示例）
-# 在 .cursorrules 或设置中添加：
+# 在 mcp.json 文件中添加：
 {
-  "mcp": {
-    "servers": {
-      "figma-deliver": {
-        "command": "http://localhost:8080/mcp",
-        "args": ["your_mcp_token"]
-      }
+  "mcpServers": {
+    "FigmaDeliver": {
+      "url": "https://figma-deliver.wekoi.cc/mcp/mcp_your_token_here"
     }
   }
 }</code></pre>
@@ -429,19 +475,29 @@ go run cmd/main.go
             <div class="architecture-content">
                 <div class="architecture-diagram">
                     <div class="arch-layer">
-                        <div class="arch-title">AI 客户端层</div>
+                        <div class="arch-title">设计工具层</div>
+                        <div class="arch-components">
+                            <span class="arch-component arch-component-highlight">Figma 插件</span>
+                            <span class="arch-component">Figma 设计文件</span>
+                            <span class="arch-component">设计师工作流</span>
+                        </div>
+                    </div>
+                    <div class="arch-arrow">↓</div>
+                    <div class="arch-layer">
+                        <div class="arch-title">客户端接入层</div>
                         <div class="arch-components">
                             <span class="arch-component">Cursor 编辑器</span>
                             <span class="arch-component">其他 MCP 客户端</span>
-                            <span class="arch-component">Web 界面</span>
+                            <span class="arch-component">Web 管理界面</span>
                         </div>
                     </div>
                     <div class="arch-arrow">↓</div>
                     <div class="arch-layer arch-layer-highlight">
-                        <div class="arch-title">MCP 协议层</div>
+                        <div class="arch-title">协议与接口层</div>
                         <div class="arch-components">
-                            <span class="arch-component">MCP 服务器</span>
-                            <span class="arch-component">功能路由</span>
+                            <span class="arch-component">MCP 协议服务</span>
+                            <span class="arch-component">REST API</span>
+                            <span class="arch-component">WebSocket 连接</span>
                             <span class="arch-component">Token 认证</span>
                         </div>
                     </div>
@@ -452,6 +508,7 @@ go run cmd/main.go
                             <span class="arch-component">Figma API 集成</span>
                             <span class="arch-component">设计处理引擎</span>
                             <span class="arch-component">AI 辅助服务</span>
+                            <span class="arch-component">导出队列管理</span>
                         </div>
                     </div>
                     <div class="arch-arrow">↓</div>
@@ -461,6 +518,7 @@ go run cmd/main.go
                             <span class="arch-component">项目数据</span>
                             <span class="arch-component">用户管理</span>
                             <span class="arch-component">资源缓存</span>
+                            <span class="arch-component">配置存储</span>
                         </div>
                     </div>
                 </div>
@@ -468,11 +526,20 @@ go run cmd/main.go
                 <div class="architecture-description">
                     <h4>技术栈与特色</h4>
                     <ul>
+                        <li><strong>Figma 插件：</strong>JavaScript + Figma Plugin API，直接在设计工具中操作</li>
                         <li><strong>MCP 协议：</strong>Model Context Protocol 支持，实现 AI 原生集成</li>
                         <li><strong>后端服务：</strong>Go + Gin 框架，高性能并发处理</li>
                         <li><strong>Web 界面：</strong>Vue.js + Element UI，响应式设计</li>
                         <li><strong>AI 集成：</strong>支持 Cursor 等 AI 编辑器直接访问</li>
                         <li><strong>智能化：</strong>AI 辅助的设计决策和配置生成</li>
+                    </ul>
+                    
+                    <h4>Figma 插件优势</h4>
+                    <ul>
+                        <li><strong>原生体验：</strong>直接在 Figma 中完成所有操作，无需切换工具</li>
+                        <li><strong>实时同步：</strong>设计变更即时反映到导出配置中</li>
+                        <li><strong>智能识别：</strong>自动识别设计元素类型并推荐最佳配置</li>
+                        <li><strong>批量处理：</strong>支持选择多个元素进行批量配置和导出</li>
                     </ul>
                     
                     <h4>MCP 协议优势</h4>

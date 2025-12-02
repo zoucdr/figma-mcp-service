@@ -188,7 +188,7 @@ func (u *User) GenerateNewMCPToken() (string, error) {
 		time.Sleep(time.Nanosecond)
 	}
 
-	newToken := fmt.Sprintf("mcp_%s", string(result))
+	newToken := string(result)
 
 	// 更新用户的MCP Token
 	if err := u.UpdateMCPToken(newToken); err != nil {

@@ -433,6 +433,12 @@ func handleMCPRequest(_ *gin.Context, userID uint, connectionID, method, path, q
 									"format":       gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg"}, "default": "png"},
 									"scale":        gin.H{"type": "number", "description": "缩放比例 (0.1-4.0)", "minimum": 0.1, "maximum": 4.0, "default": 0.1},
 									"ignore_texts": gin.H{"type": "boolean", "description": "是否忽略文本节点（不渲染文本）", "default": false},
+									"ignore_nodes": gin.H{
+										"type":        "array",
+										"description": "要忽略的节点ID列表（这些节点将在渲染时被隐藏）",
+										"items":       gin.H{"type": "string"},
+										"default":     []string{},
+									},
 								},
 								"required": []string{"project_id"},
 							},
@@ -1270,8 +1276,20 @@ func handleToolCall(userID uint, connectionID, toolName string, arguments map[st
 			}
 		}
 
+		// 处理 ignore_nodes 参数
+		var ignoreNodes []string
+		if ignoreNodesInterface := arguments["ignore_nodes"]; ignoreNodesInterface != nil {
+			if ignoreNodesArray, ok := ignoreNodesInterface.([]interface{}); ok {
+				for _, nodeInterface := range ignoreNodesArray {
+					if nodeStr, ok := nodeInterface.(string); ok {
+						ignoreNodes = append(ignoreNodes, nodeStr)
+					}
+				}
+			}
+		}
+
 		// 获取实际的预览图（优先使用 WebSocket）
-		imagePath, imageBase64, err := getMCPPreviewImageWithWebSocket(userID, projectID, nodeID, format, scale, ignoreTexts)
+		imagePath, imageBase64, err := getMCPPreviewImageWithWebSocket(userID, projectID, nodeID, format, scale, ignoreTexts, ignoreNodes)
 		if err != nil {
 			return gin.H{
 				"jsonrpc": "2.0",
@@ -1902,7 +1920,7 @@ func getProjectRefNodes(userID uint, projectIDInt uint) (map[string]interface{},
 }
 
 // getMCPPreviewImageWithWebSocket 获取MCP预览图，优先使用 WebSocket
-func getMCPPreviewImageWithWebSocket(userID uint, projectIDStr, nodeID, format string, scale float64, ignoreTexts bool) (string, string, error) {
+func getMCPPreviewImageWithWebSocket(userID uint, projectIDStr, nodeID, format string, scale float64, ignoreTexts bool, ignoreNodes []string) (string, string, error) {
 	// 解析项目ID
 	projectID, err := strconv.ParseUint(projectIDStr, 10, 64)
 	if err != nil {
@@ -1953,7 +1971,7 @@ func getMCPPreviewImageWithWebSocket(userID uint, projectIDStr, nodeID, format s
 
 			// 通过 WebSocket 获取图片
 			imagePath, err := services.TryGetImageViaWebSocket(
-				project.FileKey, nodeID, format, scale, userID, tempDir, safeNodeID, ignoreTexts)
+				project.FileKey, nodeID, format, scale, userID, tempDir, safeNodeID, ignoreTexts, ignoreNodes)
 
 			if err == nil && imagePath != "" {
 				log.Printf("✅ [MCP] 成功通过 WebSocket 获取最新图片: %s", imagePath)

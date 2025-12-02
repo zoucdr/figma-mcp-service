@@ -118,6 +118,7 @@ func ProcessExportJob(jobID uint) {
 	}
 
 	// 从优化后的节点中提取需要下载的图片列表（传入完整的figmaNodes用于检查子树）
+	// 支持父子res_mode共存机制：收集每个节点需要排除的子节点列表
 	imageDownloadList := extractImageDownloadListFromNodes(optimizedNodes, figmaNodes, nodeSettings, job.Format)
 	fmt.Printf("需要下载的图片数量: %d\n", len(imageDownloadList))
 
@@ -133,7 +134,8 @@ func ProcessExportJob(jobID uint) {
 		for _, imageInfo := range imageDownloadList {
 			// 下载图片，使用任务中指定的缩放比例
 			// 这会返回previews目录中按照hash处理后的图片路径
-			imagePath, err := downloadImageForExport(user.FigmaToken, project.FileKey, imageInfo.DownloadID, imageInfo.Format, job.Scale, imageInfo.IgnoreTexts, user.ID, jobID, processedCount, totalImages)
+			// 传入ignoreNodes参数，实现父子res_mode共存机制
+			imagePath, err := downloadImageForExport(user.FigmaToken, project.FileKey, imageInfo.DownloadID, imageInfo.Format, job.Scale, imageInfo.IgnoreTexts, imageInfo.IgnoreNodes, user.ID, jobID, processedCount, totalImages)
 			if err == nil && imagePath != "" {
 				// 检查图片文件是否存在
 				if _, err := os.Stat(imagePath); err == nil {
@@ -640,12 +642,46 @@ func processNodeResModeForExport(nodes []gin.H, childrenMap map[string][]*gin.H,
 			if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
 				switch resMode {
 				case "sprite", "slice", "texture":
-					// 图片相关模式：清除子节点中不包含图片或文字节点的部分
+					// 图片相关模式：实现父子res_mode共存机制
+					// 保留以下子节点：
+					// 1. 子节点设置了res_mode（会单独渲染）
+					// 2. 子节点为TEXT类型（保留为动态文本）
+					// 3. 子节点子树中包含设置了res_mode的节点或TEXT节点
+					// 清除其他装饰性子节点
 					if children, hasChildren := childrenMap[nodeID]; hasChildren {
 						for _, child := range children {
 							childID := (*child)["id"].(string)
-							// 检查子节点及其子树是否包含图片或文字节点，如果不包含则可以删除
-							if !hasImageNodeInSubtreeForExport(childID, childrenMap, nodeModifys) {
+							childType := ""
+							if t, ok := (*child)["type"].(string); ok {
+								childType = t
+							}
+
+							// 检查子节点是否应该保留
+							shouldKeep := false
+
+							// 1. 子节点设置了res_mode - 保留（会单独渲染）
+							if childModifys, exists := nodeModifys[childID]; exists {
+								if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
+									shouldKeep = true
+									fmt.Printf("保留子节点 %s (设置了res_mode=%s)\n", childID, childResMode)
+								}
+							}
+
+							// 2. 子节点为TEXT类型 - 保留（动态文本）
+							if childType == "TEXT" {
+								shouldKeep = true
+								fmt.Printf("保留子节点 %s (TEXT类型)\n", childID)
+							}
+
+							// 3. 子节点子树中包含图片或文字节点 - 保留
+							if !shouldKeep && hasImageNodeInSubtreeForExport(childID, childrenMap, nodeModifys) {
+								shouldKeep = true
+								fmt.Printf("保留子节点 %s (子树包含图片或文字节点)\n", childID)
+							}
+
+							// 如果不需要保留，则标记删除
+							if !shouldKeep {
+								fmt.Printf("删除装饰性子节点 %s\n", childID)
 								markNodeAndDescendantsForRemovalForExport(childID, childrenMap, nodesToRemove)
 							}
 						}
@@ -691,11 +727,21 @@ func processNodeResModeForExport(nodes []gin.H, childrenMap map[string][]*gin.H,
 }
 
 // hasImageNodeInSubtreeForExport 检查子树中是否包含图片或文字节点
+// 用于判断子节点是否需要保留（父子res_mode共存机制）
 func hasImageNodeInSubtreeForExport(nodeID string, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}) bool {
 	// 检查当前节点是否有图片
 	if modifys, exists := nodeModifys[nodeID]; exists {
 		if resMode, ok := modifys["res_mode"].(string); ok {
 			if resMode == "sprite" || resMode == "slice" || resMode == "texture" {
+				return true
+			}
+		}
+	}
+
+	// 检查当前节点是否为TEXT类型（需要保留）
+	if children, hasChildren := childrenMap[nodeID]; hasChildren {
+		for _, child := range children {
+			if childType, ok := (*child)["type"].(string); ok && childType == "TEXT" {
 				return true
 			}
 		}
@@ -745,10 +791,11 @@ func removeParentIDFromTree(node gin.H) {
 
 // ImageDownloadInfo 图片下载信息
 type ImageDownloadInfo struct {
-	NodeID      string // 节点ID（用于记录图片路径）
-	DownloadID  string // 实际下载的ID（可能是节点ID或img_id）
-	Format      string // 图片格式
-	IgnoreTexts bool   // 是否忽略文字（如果子树中有文本节点，且res_mode不为attach，则为true）
+	NodeID      string   // 节点ID（用于记录图片路径）
+	DownloadID  string   // 实际下载的ID（可能是节点ID或img_id）
+	Format      string   // 图片格式
+	IgnoreTexts bool     // 是否忽略文字（如果子树中有文本节点，且res_mode不为attach，则为true）
+	IgnoreNodes []string // 需要排除的子节点ID列表（子节点设置了res_mode或为TEXT类型时）
 }
 
 // extractImageDownloadListFromNodes 从优化后的节点中提取需要下载的图片列表
@@ -808,15 +855,25 @@ func extractImageDownloadListFromNodes(nodes []gin.H, figmaNodes []map[string]in
 			}
 		}
 
+		// 收集需要排除的子节点ID列表（父子res_mode共存机制）
+		// 当父节点设置了res_mode时，需要排除以下子节点：
+		// 1. 子节点也设置了res_mode（sprite/texture/slice）- 这些节点会单独渲染
+		// 2. 子节点为TEXT类型 - 文本节点需要保留为动态文本
+		ignoreNodes := collectIgnoreNodesForImage(downloadID, figmaNodeMap, nodeSettings)
+		if len(ignoreNodes) > 0 {
+			fmt.Printf("节点 %s 需要排除 %d 个子节点: %v\n", nodeID, len(ignoreNodes), ignoreNodes)
+		}
+
 		imageInfo := ImageDownloadInfo{
 			NodeID:      nodeID,
 			DownloadID:  downloadID,
 			Format:      format,
 			IgnoreTexts: ignoreTexts,
+			IgnoreNodes: ignoreNodes,
 		}
 
 		imageList = append(imageList, imageInfo)
-		fmt.Printf("添加图片下载任务: 节点=%s, 下载ID=%s, 格式=%s, ignoreTexts=%v\n", nodeID, downloadID, format, ignoreTexts)
+		fmt.Printf("添加图片下载任务: 节点=%s, 下载ID=%s, 格式=%s, ignoreTexts=%v, ignoreNodes=%d个\n", nodeID, downloadID, format, ignoreTexts, len(ignoreNodes))
 	}
 
 	return imageList
@@ -850,12 +907,71 @@ func hasTextNodeInSubtree(nodeID string, figmaNodeMap map[string]map[string]inte
 	return false
 }
 
-// DownloadPreviewFigmaImageForExport 专门用于导出的图片下载函数，支持 ignoreTexts 参数
-// 这是 DownloadPreviewFigmaImageWithOptions 的变体，增加了对 ignoreTexts 的支持
-func DownloadFigmaImageForExport(token, fileKey, nodeID, imageFormat string, imageScale float64, ignoreTexts bool, userID uint) (string, error) {
+// collectIgnoreNodesForImage 收集需要在渲染时排除的子节点ID列表
+// 用于实现父子res_mode共存机制：
+// 1. 子节点设置了res_mode（sprite/texture/slice）- 会单独渲染，需要从父节点渲染中排除
+// 2. 子节点为TEXT类型 - 保留为动态文本，需要从父节点渲染中排除
+func collectIgnoreNodesForImage(nodeID string, figmaNodeMap map[string]map[string]interface{}, nodeSettings map[string]map[string]interface{}) []string {
+	var ignoreNodes []string
+
+	node, exists := figmaNodeMap[nodeID]
+	if !exists {
+		return ignoreNodes
+	}
+
+	// 递归检查直接子节点
+	if children, ok := node["children"].([]interface{}); ok {
+		for _, child := range children {
+			if childMap, ok := child.(map[string]interface{}); ok {
+				if childID, ok := childMap["id"].(string); ok {
+					shouldIgnore := false
+
+					// 1. 检查子节点是否设置了res_mode
+					if modifys, hasModifys := nodeSettings[childID]; hasModifys {
+						if resMode, hasResMode := modifys["res_mode"].(string); hasResMode {
+							if resMode == "sprite" || resMode == "texture" || resMode == "slice" {
+								shouldIgnore = true
+								fmt.Printf("  子节点 %s 设置了res_mode=%s，需要排除\n", childID, resMode)
+							}
+						}
+					}
+
+					// 2. 检查子节点是否为TEXT类型，且未设置modify.res_mode为attach时才ignore
+					nodeModifys, hasModifys := nodeSettings[childID]
+					resMode := ""
+					if hasModifys {
+						if rms, hasResMode := nodeModifys["res_mode"].(string); hasResMode {
+							resMode = rms
+						}
+					}
+					if nodeType, ok := childMap["type"].(string); ok && nodeType == "TEXT" {
+						if !hasModifys || (resMode != "attach") {
+							shouldIgnore = true
+							fmt.Printf("  子节点 %s 是TEXT类型，需要排除 (无modify或res_mode!=attach)\n", childID)
+						}
+					}
+
+					if shouldIgnore {
+						ignoreNodes = append(ignoreNodes, childID)
+					}
+
+					// 递归收集子节点的需要排除的节点
+					childIgnoreNodes := collectIgnoreNodesForImage(childID, figmaNodeMap, nodeSettings)
+					ignoreNodes = append(ignoreNodes, childIgnoreNodes...)
+				}
+			}
+		}
+	}
+
+	return ignoreNodes
+}
+
+// DownloadFigmaImageForExport 专门用于导出的图片下载函数，支持 ignoreTexts 和 ignoreNodes 参数
+// 实现父子res_mode共存机制：通过ignoreNodes排除子节点
+func DownloadFigmaImageForExport(token, fileKey, nodeID, imageFormat string, imageScale float64, ignoreTexts bool, ignoreNodes []string, userID uint) (string, error) {
 	// 打印调试信息
-	fmt.Printf("📖 获取Figma图片(导出): fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v, userID=%d\n",
-		fileKey, nodeID, imageFormat, imageScale, ignoreTexts, userID)
+	fmt.Printf("📖 获取Figma图片(导出): fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v, ignoreNodes=%d个, userID=%d\n",
+		fileKey, nodeID, imageFormat, imageScale, ignoreTexts, len(ignoreNodes), userID)
 
 	// 准备目录和文件名
 	tempDir := filepath.Join("temp", fileKey, "previews")
@@ -879,8 +995,8 @@ func DownloadFigmaImageForExport(token, fileKey, nodeID, imageFormat string, ima
 		if mcpService != nil {
 			_, exists := mcpService.GetUserConnection(userID)
 			if exists {
-				fmt.Printf("✅ WebSocket 连接存在，优先使用 WebSocket 获取最新数据 (ignoreTexts=%v)\n", ignoreTexts)
-				localPath, err := TryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID, ignoreTexts)
+				fmt.Printf("✅ WebSocket 连接存在，优先使用 WebSocket 获取最新数据 (ignoreTexts=%v, ignoreNodes=%d个)\n", ignoreTexts, len(ignoreNodes))
+				localPath, err := TryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID, ignoreTexts, ignoreNodes)
 				if err == nil && localPath != "" {
 					fmt.Printf("✅ 成功通过 WebSocket 获取最新图片: %s\n", localPath)
 					// WebSocket 成功获取，handleImageDataFromPlugin 已经自动更新了 OBS、数据库和本地文件
@@ -952,7 +1068,7 @@ func findLatestNodeImageWithIgnoreTexts(dir, safeNodeID string, imageScale float
 	}
 
 	// 查找匹配的文件
-	pattern := fmt.Sprintf("%s-%s%s-", safeNodeID, scaleStr, suffix)
+	pattern := fmt.Sprintf("%s-%s%s", safeNodeID, scaleStr, suffix)
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -983,9 +1099,9 @@ func findLatestNodeImageWithIgnoreTexts(dir, safeNodeID string, imageScale float
 }
 
 // downloadImageForExport 专门用于导出时下载图片，会在使用缓存时也更新进度
-func downloadImageForExport(token, fileKey, nodeID, format string, scale float64, ignoreTexts bool, userID uint, jobID uint, processedCount, totalNodes int) (string, error) {
-	// 调用支持 ignoreTexts 的下载方法
-	imagePath, err := DownloadFigmaImageForExport(token, fileKey, nodeID, format, scale, ignoreTexts, userID)
+func downloadImageForExport(token, fileKey, nodeID, format string, scale float64, ignoreTexts bool, ignoreNodes []string, userID uint, jobID uint, processedCount, totalNodes int) (string, error) {
+	// 调用支持 ignoreTexts 和 ignoreNodes 的下载方法
+	imagePath, err := DownloadFigmaImageForExport(token, fileKey, nodeID, format, scale, ignoreTexts, ignoreNodes, userID)
 
 	// 无论是否使用缓存，都更新进度
 	progress := 20 + int(float64(processedCount+1)/float64(totalNodes)*60)

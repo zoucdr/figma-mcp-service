@@ -32,6 +32,8 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
       }
       .container.collapsed {
         padding: 0;
@@ -104,6 +106,7 @@
         flex: 1;
         overflow: hidden;
         width: 100%;
+        min-height: 0; /* Important for flex children to shrink */
       }
       .container.collapsed .main-content {
         display: none;
@@ -240,6 +243,7 @@
         display: flex;
         align-items: center;
         margin-bottom: 16px;
+        flex-shrink: 0; /* Prevent header from shrinking */
       }
       .header-text {
         margin-left: 12px;
@@ -257,6 +261,7 @@
         display: flex;
         border-bottom: 1px solid #444444;
         margin-bottom: 16px;
+        flex-shrink: 0; /* Prevent tabs from shrinking */
       }
       .tab {
         padding: 8px 16px;
@@ -294,9 +299,15 @@
         min-height: 0;
         width: 100%;
         padding-bottom: 12px; /* Add some bottom padding for scroll */
+        overflow-y: auto; /* Enable scrolling for all tab contents */
       }
       #content-history {
         overflow-y: auto;
+      }
+      #content-download {
+        overflow-y: auto;
+        max-height: calc(100% - 20px); /* Use container height instead of viewport */
+        padding-right: 4px; /* Add padding for scrollbar */
       }
       .tab-content.active {
         display: block;
@@ -330,6 +341,7 @@
       .call-history {
         /* max-height: 400px; Removed to allow container scrolling */
         /* overflow-y: auto; Removed to allow container scrolling */
+        width: 100%;
       }
       .call-item {
         background-color: #2d2d2d;
@@ -400,6 +412,138 @@
       .clear-history-btn:hover {
         background-color: #4d4d4d;
       }
+      
+      /* Download functionality styles */
+      .download-section {
+        background-color: #2d2d2d;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+        border: 1px solid #444444;
+        flex-shrink: 0; /* Prevent sections from shrinking */
+      }
+      
+      .download-section h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 12px 0;
+        color: #ffffff;
+        border-bottom: 1px solid #444444;
+        padding-bottom: 8px;
+      }
+      
+      .form-row {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      
+      .form-col {
+        flex: 1;
+      }
+      
+      .checkbox-group {
+        margin: 12px 0;
+      }
+      
+      .checkbox-label {
+        display: flex;
+        align-items: center;
+        margin-bottom: 8px;
+        cursor: pointer;
+        font-size: 12px;
+        color: #cccccc;
+      }
+      
+      .checkbox-label input[type="checkbox"] {
+        width: auto;
+        margin-right: 8px;
+        margin-bottom: 0;
+        accent-color: #18a0fb;
+      }
+      
+      .checkbox-text {
+        user-select: none;
+      }
+      
+      select {
+        border: 1px solid #444444;
+        border-radius: 4px;
+        padding: 8px;
+        font-size: 14px;
+        background-color: #2d2d2d;
+        color: #e0e0e0;
+        cursor: pointer;
+      }
+      
+      select:focus {
+        outline: none;
+        border-color: #18a0fb;
+      }
+      
+      .download-progress {
+        margin-top: 12px;
+        padding: 12px;
+        background-color: #1e1e1e;
+        border-radius: 6px;
+        border-left: 3px solid #18a0fb;
+      }
+      
+      .download-progress.success {
+        border-left-color: #22c55e;
+      }
+      
+      .download-progress.error {
+        border-left-color: #ff6b6b;
+      }
+      
+      .download-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid #333;
+      }
+      
+      .download-item:last-child {
+        border-bottom: none;
+      }
+      
+      .download-info {
+        flex: 1;
+      }
+      
+      .download-name {
+        font-weight: 600;
+        color: #ffffff;
+        font-size: 13px;
+      }
+      
+      .download-details {
+        font-size: 11px;
+        color: #999999;
+        margin-top: 2px;
+      }
+      
+      .download-action {
+        margin-left: 12px;
+      }
+      
+      .download-link {
+        color: #18a0fb;
+        text-decoration: none;
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid #18a0fb;
+        transition: all 0.2s;
+      }
+      
+      .download-link:hover {
+        background-color: #18a0fb;
+        color: white;
+        text-decoration: none;
+      }
     </style>
   </head>
   <body>
@@ -431,6 +575,7 @@
       <div class="tabs">
         <div id="tab-connection" class="tab active">连接</div>
         <div id="tab-history" class="tab">调用记录</div>
+        <div id="tab-download" class="tab">节点下载</div>
       </div>
 
       <div id="content-connection" class="tab-content active">
@@ -512,6 +657,176 @@
           </div>
         </div>
       </div>
+
+      <div id="content-download" class="tab-content">
+        <div class="section" style="padding-bottom: 20px;">
+          <!-- Node Selection & Download -->
+          <div class="download-section">
+            <h3>选中节点操作</h3>
+            <div id="current-node-info" style="margin-bottom: 16px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <label for="node-id">节点 ID</label>
+                <button id="btn-refresh-selection" class="secondary" style="padding: 4px 8px; font-size: 11px;">
+                  刷新
+                </button>
+              </div>
+              <input
+                type="text"
+                id="node-id"
+                placeholder="请在 Figma 中选择一个节点"
+                readonly
+                style="width: 100%; margin-bottom: 8px; background-color: #1e1e1e; cursor: default;"
+              />
+              <div id="node-details" style="font-size: 11px; color: #999999; margin-bottom: 12px;">
+                <div id="node-name">节点名称: 未选择</div>
+                <div id="node-type">节点类型: 未知</div>
+              </div>
+              
+              <!-- Node Preview -->
+              <div id="node-preview-container" style="margin-bottom: 16px;">
+                <label style="margin-bottom: 8px; display: block;">节点预览</label>
+                <div id="node-preview-area" style="
+                  width: 100%; 
+                  height: 100px; 
+                  background-color: #1e1e1e; 
+                  border: 2px dashed #444444; 
+                  border-radius: 8px; 
+                  display: flex; 
+                  align-items: center; 
+                  justify-content: center;
+                  position: relative;
+                  overflow: hidden;
+                ">
+                  <div id="preview-placeholder" style="
+                    text-align: center; 
+                    color: #666666; 
+                    font-size: 11px;
+                  ">
+                    <div style="font-size: 20px; margin-bottom: 4px;">🖼️</div>
+                    <div>选择节点后显示预览</div>
+                  </div>
+                  <img id="node-preview-image" style="
+                    max-width: 100%; 
+                    max-height: 100%; 
+                    object-fit: contain;
+                    display: none;
+                  " />
+                  <div id="preview-loading" style="
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    color: #18a0fb;
+                    font-size: 11px;
+                    display: none;
+                  ">
+                    <div style="margin-bottom: 4px;">⏳</div>
+                    <div>生成预览中...</div>
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                  <div style="font-size: 10px; color: #999999;">
+                    预览图片 (PNG, 1x)
+                  </div>
+                  <button id="btn-refresh-preview" class="secondary" style="padding: 2px 6px; font-size: 10px;" disabled>
+                    更新预览
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Compact Options -->
+              <div style="margin-bottom: 16px;">
+                <div class="form-row" style="margin-bottom: 8px;">
+                  <div class="form-col">
+                    <label for="image-format" style="font-size: 11px;">图片格式</label>
+                    <select id="image-format" style="width: 100%; padding: 6px; font-size: 12px; background-color: #2d2d2d; color: #e0e0e0; border: 1px solid #444444; border-radius: 4px;">
+                      <option value="PNG">PNG</option>
+                      <option value="JPG">JPG</option>
+                      <option value="SVG">SVG</option>
+                      <option value="PDF">PDF</option>
+                    </select>
+                  </div>
+                  <div class="form-col">
+                    <label for="image-scale" style="font-size: 11px;">缩放倍数</label>
+                    <select id="image-scale" style="width: 100%; padding: 6px; font-size: 12px; background-color: #2d2d2d; color: #e0e0e0; border: 1px solid #444444; border-radius: 4px;">
+                      <option value="1">1x</option>
+                      <option value="2" selected>2x</option>
+                      <option value="3">3x</option>
+                      <option value="4">4x</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <!-- Compact Checkboxes -->
+                <div class="checkbox-group" style="margin-bottom: 8px;">
+                  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <label class="checkbox-label" style="margin-bottom: 4px; font-size: 11px;">
+                      <input type="checkbox" id="preview-ignore-text">
+                      <span class="checkbox-text">忽略文本</span>
+                    </label>
+                  </div>
+                </div>
+                
+                <!-- Ignore Nodes -->
+                <div style="margin-bottom: 12px;">
+                  <label for="preview-ignore-nodes" style="font-size: 11px; margin-bottom: 4px; display: block;">忽略节点ID (每行一个)</label>
+                  <textarea
+                    id="preview-ignore-nodes"
+                    placeholder="123:456&#10;789:012"
+                    style="
+                      width: 100%; 
+                      height: 40px; 
+                      padding: 6px; 
+                      margin-bottom: 4px; 
+                      background-color: #1e1e1e; 
+                      color: #e0e0e0; 
+                      border: 1px solid #444444; 
+                      border-radius: 4px; 
+                      resize: vertical;
+                      font-family: 'Courier New', monospace;
+                      font-size: 10px;
+                    "
+                  ></textarea>
+                </div>
+              </div>
+              
+              <!-- Action Buttons -->
+              <div style="display: flex; gap: 8px;">
+                <button id="btn-download-tree" class="secondary" style="flex: 1; font-size: 12px; padding: 8px 4px;">
+                  节点数据
+                </button>
+                <button id="btn-download-image" class="primary" style="flex: 1; font-size: 12px; padding: 8px 4px;">
+                  下载图片
+                </button>
+              </div>
+              
+              <!-- Emergency Restore Button -->
+              <div style="margin-top: 12px; padding: 12px; background-color: #471a1a; border-radius: 6px; border: 1px solid #ff6b6b;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                  <div style="font-size: 12px; color: #ff9999; font-weight: 600;">
+                    ⚠️ 紧急修复工具
+                  </div>
+                </div>
+                <div style="font-size: 10px; color: #cccccc; margin-bottom: 8px; line-height: 1.4;">
+                  如果节点透明度无法恢复（文本消失），点击下方按钮强制恢复所有节点状态。
+                </div>
+                <button id="btn-force-restore" class="secondary" style="width: 100%; font-size: 11px; padding: 6px; background-color: #ff6b6b; color: white;">
+                  🔧 强制恢复所有节点
+                </button>
+              </div>
+            </div>
+            
+            <div class="input-hint" style="font-size: 10px;">
+              在 Figma 中选择节点后，会自动生成预览图。下载数据包含节点树结构，下载图片为渲染后的图像文件。
+            </div>
+          </div>
+          
+          <!-- Download Status -->
+          <div id="download-status" class="status info hidden" style="margin-top: 16px;">
+            准备下载...
+          </div>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -534,6 +849,23 @@
       const connectButton = document.getElementById("btn-connect");
       const disconnectButton = document.getElementById("btn-disconnect");
       const connectionStatus = document.getElementById("connection-status");
+      
+      // Download UI Elements
+      const nodeIdInput = document.getElementById("node-id");
+      const refreshSelectionBtn = document.getElementById("btn-refresh-selection");
+      const nodeNameDiv = document.getElementById("node-name");
+      const nodeTypeDiv = document.getElementById("node-type");
+      const downloadTreeBtn = document.getElementById("btn-download-tree");
+      const downloadImageBtn = document.getElementById("btn-download-image");
+      const downloadStatus = document.getElementById("download-status");
+      
+      // Preview UI Elements
+      const previewPlaceholder = document.getElementById("preview-placeholder");
+      const previewImage = document.getElementById("node-preview-image");
+      const previewLoading = document.getElementById("preview-loading");
+      const refreshPreviewBtn = document.getElementById("btn-refresh-preview");
+      const previewIgnoreText = document.getElementById("preview-ignore-text");
+      const previewIgnoreNodes = document.getElementById("preview-ignore-nodes");
 
       // Tabs
       const tabs = document.querySelectorAll(".tab");
@@ -1121,6 +1453,11 @@
           tab.classList.add("active");
           const contentId = "content-" + tab.id.split("-")[1];
           document.getElementById(contentId).classList.add("active");
+          
+          // Auto-refresh selection when switching to download tab
+          if (tab.id === "tab-download") {
+            setTimeout(refreshSelectionIfNeeded, 100);
+          }
         });
       });
 
@@ -1269,6 +1606,79 @@
               renderCallHistory();
             }
             break;
+          case "current-selection":
+            // Update node ID input with current selection
+            if (message.nodeId) {
+              nodeIdInput.value = message.nodeId;
+              nodeNameDiv.textContent = `节点名称: ${message.nodeName || '未知'}`;
+              nodeTypeDiv.textContent = `节点类型: ${message.nodeType || '未知'}`;
+              updateDownloadStatus("connected", `已获取选中节点: ${message.nodeName || message.nodeId}`);
+              
+              // Auto-generate preview for selected node
+              generateNodePreview(message.nodeId);
+            } else {
+              nodeIdInput.value = "";
+              nodeNameDiv.textContent = "节点名称: 未选择";
+              nodeTypeDiv.textContent = "节点类型: 未知";
+              updateDownloadStatus("error", "未选中任何节点，请在 Figma 中选择一个节点");
+              
+              // Show placeholder when no node selected
+              showPreviewPlaceholder();
+            }
+            break;
+          case "node-tree-downloaded":
+            // Handle successful node tree download
+            downloadTreeBtn.disabled = false;
+            if (message.data) {
+              const filename = `node-tree-${message.nodeId || 'unknown'}-${Date.now()}.json`;
+              downloadAsFile(JSON.stringify(message.data, null, 2), filename);
+              updateDownloadStatus("connected", `节点树数据已下载: ${filename}`);
+            } else {
+              updateDownloadStatus("error", "节点树数据为空");
+            }
+            break;
+          case "node-tree-error":
+            // Handle node tree download error
+            downloadTreeBtn.disabled = false;
+            updateDownloadStatus("error", `节点树下载失败: ${message.error}`);
+            break;
+          case "node-image-downloaded":
+            // Handle successful node image download
+            downloadImageBtn.disabled = false;
+            if (message.imageUrl) {
+              const format = document.getElementById("image-format").value.toLowerCase();
+              const filename = `node-image-${message.nodeId || 'unknown'}-${Date.now()}.${format}`;
+              downloadImageFromUrl(message.imageUrl, filename);
+              updateDownloadStatus("connected", `节点图片已下载: ${filename}`);
+            } else {
+              updateDownloadStatus("error", "图片 URL 为空");
+            }
+            break;
+          case "node-image-error":
+            // Handle node image download error
+            downloadImageBtn.disabled = false;
+            updateDownloadStatus("error", `节点图片下载失败: ${message.error}`);
+            break;
+          case "node-preview-generated":
+            // Handle successful node preview generation
+            if (message.imageUrl) {
+              showPreviewImage(message.imageUrl);
+            } else {
+              showPreviewError("预览图片为空");
+            }
+            break;
+          case "node-preview-error":
+            // Handle node preview generation error
+            showPreviewError(message.error || "预览生成失败");
+            break;
+          case "force-restore-success":
+            // Handle successful force restore
+            updateDownloadStatus("connected", `✅ 成功恢复 ${message.count || 0} 个节点状态`);
+            break;
+          case "force-restore-error":
+            // Handle force restore error
+            updateDownloadStatus("error", `恢复失败: ${message.error}`);
+            break;
         }
       };
       
@@ -1280,6 +1690,272 @@
       
       // Clear history button
       clearHistoryBtn.addEventListener("click", clearCallHistory);
+      
+      // Download functionality
+      
+      // Refresh current selection
+      refreshSelectionBtn.addEventListener("click", () => {
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "get-current-selection",
+            },
+          },
+          "*"
+        );
+      });
+      
+      // Refresh preview
+      refreshPreviewBtn.addEventListener("click", () => {
+        const nodeId = nodeIdInput.value.trim();
+        if (nodeId) {
+          generateNodePreview(nodeId);
+        }
+      });
+      
+      // Auto-refresh preview when ignore options change
+      if (previewIgnoreText) {
+        previewIgnoreText.addEventListener("change", () => {
+          const nodeId = nodeIdInput.value.trim();
+          if (nodeId) {
+            generateNodePreview(nodeId);
+          }
+        });
+      }
+      
+      if (previewIgnoreNodes) {
+        let ignoreNodesTimeout;
+        previewIgnoreNodes.addEventListener("input", () => {
+          // Debounce the input to avoid too many preview updates
+          clearTimeout(ignoreNodesTimeout);
+          ignoreNodesTimeout = setTimeout(() => {
+            const nodeId = nodeIdInput.value.trim();
+            if (nodeId) {
+              generateNodePreview(nodeId);
+            }
+          }, 1000); // Wait 1 second after user stops typing
+        });
+      }
+      
+      // Auto-refresh selection when download tab is activated
+      function refreshSelectionIfNeeded() {
+        const downloadTab = document.getElementById("tab-download");
+        if (downloadTab && downloadTab.classList.contains("active")) {
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "get-current-selection",
+              },
+            },
+            "*"
+          );
+        }
+      }
+      
+      // Download node tree data
+      downloadTreeBtn.addEventListener("click", async () => {
+        const nodeId = nodeIdInput.value.trim();
+        
+        if (!nodeId) {
+          updateDownloadStatus("error", "请先在 Figma 中选择一个节点，然后点击刷新按钮");
+          return;
+        }
+        
+        updateDownloadStatus("info", "正在获取选中节点子树数据...");
+        downloadTreeBtn.disabled = true;
+        
+        try {
+          const params = {
+            nodeId: nodeId,
+            includeChildren: true,
+            includeStyles: true,
+            includeFills: true
+          };
+          
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "download-node-tree",
+                params: params,
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          updateDownloadStatus("error", `下载失败: ${error.message}`);
+          downloadTreeBtn.disabled = false;
+        }
+      });
+      
+      // Download node render image
+      downloadImageBtn.addEventListener("click", async () => {
+        const nodeId = nodeIdInput.value.trim();
+        const format = document.getElementById("image-format").value;
+        const scale = parseFloat(document.getElementById("image-scale").value);
+        const ignoreText = previewIgnoreText ? previewIgnoreText.checked : false;
+        const ignoreNodesText = previewIgnoreNodes ? previewIgnoreNodes.value.trim() : '';
+        
+        if (!nodeId) {
+          updateDownloadStatus("error", "请先在 Figma 中选择一个节点，然后点击刷新按钮");
+          return;
+        }
+        
+        updateDownloadStatus("info", "正在渲染选中节点图片...");
+        downloadImageBtn.disabled = true;
+        
+        try {
+          // Parse ignore nodes from textarea
+          const ignoreNodes = ignoreNodesText
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+          
+          const params = {
+            nodeId: nodeId,
+            format: format,
+            scale: scale,
+            ignore_text: ignoreText,
+            ignore_nodes: ignoreNodes
+          };
+          
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "download-node-image",
+                params: params,
+              },
+            },
+            "*"
+          );
+        } catch (error) {
+          updateDownloadStatus("error", `下载失败: ${error.message}`);
+          downloadImageBtn.disabled = false;
+        }
+      });
+      
+      // Force restore all nodes (Emergency fix)
+      const forceRestoreBtn = document.getElementById("btn-force-restore");
+      if (forceRestoreBtn) {
+        forceRestoreBtn.addEventListener("click", () => {
+          if (confirm('确定要强制恢复所有节点的透明度吗？\n\n这将清除所有节点状态缓存，并尝试恢复到默认状态。')) {
+            updateDownloadStatus("info", "正在强制恢复节点状态...");
+            
+            parent.postMessage(
+              {
+                pluginMessage: {
+                  type: "force-restore-nodes",
+                },
+              },
+              "*"
+            );
+          }
+        });
+      }
+      
+      // Update download status
+      function updateDownloadStatus(type, message) {
+        downloadStatus.className = `status ${type}`;
+        downloadStatus.innerHTML = message;
+        downloadStatus.classList.remove("hidden");
+        
+        // Auto-hide success/error messages after 5 seconds
+        if (type === "connected" || type === "disconnected") {
+          setTimeout(() => {
+            downloadStatus.classList.add("hidden");
+          }, 5000);
+        }
+      }
+      
+      // Helper function to download data as file
+      function downloadAsFile(data, filename, mimeType = 'application/json') {
+        const blob = new Blob([data], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+      
+      // Helper function to download image from URL
+      function downloadImageFromUrl(url, filename) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      
+      // Generate node preview
+      function generateNodePreview(nodeId) {
+        if (!nodeId) return;
+        
+        // Show loading state
+        showPreviewLoading();
+        
+        // Get ignore options from preview area
+        const ignoreText = previewIgnoreText ? previewIgnoreText.checked : false;
+        const ignoreNodesText = previewIgnoreNodes ? previewIgnoreNodes.value.trim() : '';
+        const ignoreNodes = ignoreNodesText
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
+        
+        // Request preview from plugin
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "generate-node-preview",
+              nodeId: nodeId,
+              ignore_text: ignoreText,
+              ignore_nodes: ignoreNodes,
+            },
+          },
+          "*"
+        );
+      }
+      
+      // Show preview loading state
+      function showPreviewLoading() {
+        previewPlaceholder.style.display = "none";
+        previewImage.style.display = "none";
+        previewLoading.style.display = "block";
+        refreshPreviewBtn.disabled = true;
+      }
+      
+      // Show preview image
+      function showPreviewImage(imageUrl) {
+        previewPlaceholder.style.display = "none";
+        previewLoading.style.display = "none";
+        previewImage.src = imageUrl;
+        previewImage.style.display = "block";
+        refreshPreviewBtn.disabled = false;
+      }
+      
+      // Show preview placeholder
+      function showPreviewPlaceholder() {
+        previewImage.style.display = "none";
+        previewLoading.style.display = "none";
+        previewPlaceholder.style.display = "block";
+        refreshPreviewBtn.disabled = true;
+      }
+      
+      // Show preview error
+      function showPreviewError(error) {
+        previewImage.style.display = "none";
+        previewLoading.style.display = "none";
+        previewPlaceholder.innerHTML = `
+          <div style="font-size: 24px; margin-bottom: 8px;">❌</div>
+          <div>预览生成失败</div>
+          <div style="font-size: 10px; margin-top: 4px; color: #ff9999;">${error}</div>
+        `;
+        previewPlaceholder.style.display = "block";
+        refreshPreviewBtn.disabled = false;
+      }
       
       // Toggle functionality
       const mainContainer = document.getElementById("main-container");

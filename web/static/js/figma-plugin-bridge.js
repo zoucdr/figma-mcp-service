@@ -90,7 +90,7 @@ class FigmaPluginBridge {
   }
 
   // 预览单个节点
-  async previewNode(nodeId, scale = 1.0, format = 'PNG') {
+  async previewNode(nodeId, scale = 1.0, format = 'PNG', ignoreNodes = []) {
     if (!this.isPluginAvailable) {
       throw new Error('Figma Plugin不可用');
     }
@@ -109,11 +109,17 @@ class FigmaPluginBridge {
 
       this.messageHandlers.set(requestId, handler);
 
+      // 构建请求数据
+      const requestData = { nodeId, scale, format };
+      if (ignoreNodes && ignoreNodes.length > 0) {
+        requestData.ignoreNodes = ignoreNodes;
+      }
+
       // 发送预览请求
       this.postMessage({
         type: 'previewNode',
         requestId: requestId,
-        data: { nodeId, scale, format }
+        data: requestData
       });
 
       // 设置超时

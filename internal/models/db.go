@@ -96,27 +96,20 @@ func InitDB() {
 	})
 
 	if err != nil {
-		log.Printf("连接MySQL失败: %v", err)
-		log.Printf("请检查数据库配置和MySQL服务是否正常运行")
-		log.Printf("尝试使用SQLite内存数据库作为备选...")
-
-		// 尝试使用SQLite内存数据库
-		// 注意：在生产环境中，应该使用文件数据库而不是内存数据库
-		DB, err = gorm.Open(mysql.New(mysql.Config{
-			DriverName: "mysql",
-			DSN:        ":memory:",
-		}), &gorm.Config{
-			Logger: newLogger,
-		})
-
-		if err != nil {
-			log.Fatalf("创建内存数据库失败: %v", err)
-			log.Fatalf("请确保MySQL服务正常运行，并检查配置文件中的数据库连接信息")
-		} else {
-			log.Printf("成功切换到内存数据库模式，注意：数据将在程序关闭后丢失")
-		}
+		log.Printf("❌ 连接MySQL失败: %v", err)
+		log.Printf("📋 数据库配置信息:")
+		log.Printf("   - 主机: %s", dbHost)
+		log.Printf("   - 端口: %s", dbPort)
+		log.Printf("   - 用户: %s", dbUser)
+		log.Printf("   - 数据库: %s", dbName)
+		log.Printf("💡 请检查:")
+		log.Printf("   1. MySQL服务是否正在运行")
+		log.Printf("   2. 网络连接是否正常")
+		log.Printf("   3. 数据库用户权限是否正确")
+		log.Printf("   4. 防火墙是否阻止了连接")
+		log.Fatalf("💥 MySQL数据库连接失败，程序无法继续运行")
 	} else {
-		log.Printf("成功连接到MySQL数据库")
+		log.Printf("✅ 成功连接到MySQL数据库")
 	}
 
 	// 自动迁移数据库表结构
@@ -135,9 +128,6 @@ func InitDB() {
 		&FigmaFileFetchQueue{}, // 新增：文件获取队列表
 		&FigmaRenderQueue{},
 		&FigmaNodeImage{},
-		// 渲染批次相关表
-		&FigmaRenderBatch{},
-		&QueueBatchRelation{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)

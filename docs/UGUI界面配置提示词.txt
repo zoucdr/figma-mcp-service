@@ -1,0 +1,262 @@
+# 🚀 Figma节点修饰AI提示词
+
+## 🎯 任务目标
+
+智能修饰Figma项目节点，实现：命名规范化、层级优化、锚点布局配置、组件识别、图片资源节点指派。
+
+---
+
+## ⚙️ 核心规则（违反必重做）
+
+### 1️⃣ 父子res_mode共存机制（核心技术特性）
+
+**技术原理**：父节点和子节点可以同时设置res_mode，子节点设置后会自动从父节点渲染中剔除。
+
+**关键规则**：
+- TEXT节点本身不能设置res_mode，但其父节点可以设置
+- 父节点设置res_mode不影响子节点，子节点可独立决定是否设置
+- 子节点设置res_mode后，会自动从父节点渲染中剔除
+- **父容器有视觉内容（背景、边框、阴影）时，必须为父容器设置res_mode**
+- 不要因为包含TEXT/Button就放弃为父容器设置res_mode
+
+**应用示例**：
+```
+容器Frame (有背景色、圆角)
+  ├─ titleText (TEXT)
+  └─ closeBtn (Button)
+
+配置策略：
+- 容器Frame: res_mode="texture" → 导出背景
+- titleText: 不设置 (TEXT节点)
+- closeBtn: res_mode="sprite" → 从容器中剔除，单独导出
+
+结果：
+- Frame.png: 背景（不包含按钮）
+- closeBtn.png: 按钮
+```
+
+### 2️⃣ 完整性规则
+
+- 未设置res_mode的节点，其子树所有节点都必须修饰
+- 必须递归处理到叶子节点
+- INSTANCE的子节点必须处理（使用完整ID格式：`I父节点ID;子节点ID`）
+- 不确定的节点必须预览后再处理
+
+### 3️⃣ 最小可用规则
+
+在满足UI需求时，尽量减少图片数量：
+- 装饰性子节点不单独设置res_mode（被包含在父节点中）
+- 需要交互、复用、换色的节点单独设置res_mode
+
+---
+
+## 📋 执行流程
+
+### 步骤1：获取整体原型图
+```python
+get_preview(project_id, scale=0.1)
+```
+
+### 步骤2：获取节点树
+```python
+get_node_tree(project_id, node_id?)
+```
+分析节点ID、名称、类型、层级关系、已有配置、尺寸位置。
+
+### 步骤3：预览不确定节点
+对于名称不明确、结构复杂、包含TEXT的容器节点，必须预览验证：
+```python
+get_preview(project_id, node_id=uncertain_node_id, scale=0.3)
+```
+**重点检查**：父容器是否有视觉内容（背景、装饰）。
+
+### 步骤4：容器整合分析
+
+**父容器图片信息检查（关键）**：
+1. 预览父容器，查看是否有背景色、渐变、装饰、边框、阴影
+2. 配置策略：
+   - 父容器有视觉内容 → 设置res_mode（即使包含TEXT/Button）
+   - 子节点需要单独导出 → 也设置res_mode（会自动剔除）
+   - 父容器纯逻辑分组 → 不设置res_mode
+
+**错误示例**：
+```json
+// ❌ 父容器有背景但未设置res_mode
+{"id": "container", "rename": "panel"}  // 有背景色但没设置res_mode，背景丢失！
+{"id": "btn", "res_mode": "sprite"}
+```
+
+**正确示例**：
+```json
+// ✅ 利用父子res_mode共存
+{"id": "container", "rename": "panel", "res_mode": "texture"}  // 导出背景
+{"id": "btn", "res_mode": "sprite", "components": ["Button"]}  // 从container中剔除
+```
+
+### 步骤5：节点修饰
+```python
+set_nodes_modify(project_id, modifys)
+```
+配置项：`rename`、`components`、`res_mode`、`horizontal`、`vertical`、`img_ext`、`ignore`
+
+### 步骤6：完整性验证
+- 所有节点都已处理（修饰或备注原因）
+- 父容器视觉内容检查：有背景/装饰的父容器必须设置res_mode
+- INSTANCE的所有子节点已修饰（使用完整ID格式）
+- 说明修饰覆盖率："共处理 X 个节点，节点树总数 Y，覆盖率 Z%"
+
+---
+
+## 📋 节点类型说明
+
+### 容器组（FRAME/GROUP/INSTANCE）
+- 可设置布局约束、UI组件、资源模式
+- **检查容器是否有视觉内容，有则必须设置res_mode**
+- INSTANCE子节点ID格式：`I父节点ID;子节点ID`
+
+### 图形节点（RECTANGLE/ELLIPSE/VECTOR等）
+- 装饰性 → 整合到父级（不单独设置res_mode）
+- 需要单独导出 → 设置资源模式
+
+### TEXT节点
+- TEXT节点本身不能设置res_mode
+- 但TEXT的父容器可以设置res_mode
+
+### 特殊节点
+- `SECTION` - 分区节点，通常不处理
+- 名称以`#`开头的节点 - 注释节点，跳过
+
+---
+
+## 🧠 配置规则
+
+### 命名规范
+- 小写开头的驼峰命名法
+- 允许：字母、数字（不能以数字开头）
+- 禁止：中文、空格、连字符、特殊符号
+- 后缀：`Btn`(Button)、`Tog`(Toggle)、`Img`(Image)、`Text`、`Input`、`Scroll`、`Mask`
+
+### 组件识别
+| 组件 | 识别条件 | 示例 |
+| --- | --- | --- |
+| Button | 名称含"button/btn" | backBtn |
+| Toggle | 名称含"toggle/check" | soundTog |
+| ScrollRect | 名称含"scroll/list" | listScroll |
+| InputField | 名称含"input" | nameInput |
+
+### 资源模式（res_mode）
+
+**设置触发条件**：
+- 节点有`extra_img:true`标记
+- 节点有视觉内容（背景、边框、装饰、图形）
+- 节点需要单独导出为图片资源
+
+**模式选择**：
+| 模式 | 场景 | 尺寸建议 |
+| --- | --- | --- |
+| sprite | 小图标、按钮 | <512×512 |
+| texture | 大背景 | >512×512 |
+| slice | 可拉伸面板 | 任意 |
+
+**判定流程**：
+1. TEXT节点 → 跳过
+2. **视觉内容检查（关键）**：节点有背景色、渐变、边框、阴影 → 必须设置res_mode
+3. 节点有`extra_img:true` → 必须设置
+4. 语义判断：`bg/background`→texture，`icon/btn`→sprite，`panel/dialog`→slice
+5. 尺寸判断：>512×512→texture，其他→sprite
+
+### 布局约束
+
+**水平约束（horizontal）**：
+- `LEFT` - 左对齐 | `RIGHT` - 右对齐 | `CENTER` - 居中
+- `LEFT_RIGHT` - 左右拉伸 | `SCALE` - 缩放
+
+**垂直约束（vertical）**：
+- `TOP` - 顶部对齐 | `BOTTOM` - 底部对齐 | `CENTER` - 居中
+- `TOP_BOTTOM` - 上下拉伸 | `SCALE` - 缩放
+
+**常见组合**：
+- 全屏背景：`LEFT_RIGHT` + `TOP_BOTTOM`
+- 顶部栏：`LEFT_RIGHT` + `TOP`
+- 底部栏：`LEFT_RIGHT` + `BOTTOM`
+- 居中弹窗：`CENTER` + `CENTER`
+
+### 图片导出
+- `img_ext`: 有透明度→PNG，无透明度大图→JPG
+- `img_name`: 自定义导出名
+- `img_id`: 关联相同的图片节点ID
+
+### 其他配置
+- `ignore`: 移除不导入节点
+- `parent_id`: 移动层级位置
+
+---
+
+## ✅ 检查清单
+
+### 节点类型处理
+- [ ] TEXT节点未设置资源模式
+- [ ] 容器组节点统一按容器策略处理
+- [ ] INSTANCE的子节点已处理（使用完整ID格式）
+
+### 资源配置（重要）
+- [ ] **父容器视觉内容检查：有背景/装饰的父容器必须设置res_mode**
+- [ ] 父子res_mode共存：父子节点可同时设置res_mode
+- [ ] 图片资源配置无冲突
+- [ ] 无冗余或重复res_mode
+
+### 命名与组件
+- [ ] 命名符合规则且唯一
+- [ ] 组件识别正确
+
+### 布局约束
+- [ ] 水平和垂直约束与布局匹配
+- [ ] 容器节点约束合理
+
+### 完整性检查
+- [ ] 所有节点都已处理
+- [ ] 未设置res_mode的节点，其子树已完整处理
+- [ ] 深层嵌套节点未遗漏
+- [ ] 对不确定的节点已进行预览验证
+
+---
+
+## 🧾 输出格式
+
+```json
+{
+  "project_id": 507,
+  "modifys": [
+    {"id": "1:101", "rename": "mainBg", "res_mode": "texture", "img_ext": "jpg", "horizontal": "LEFT_RIGHT", "vertical": "TOP_BOTTOM"},
+    {"id": "1:102", "rename": "topBar", "horizontal": "LEFT_RIGHT", "vertical": "TOP"},
+    {"id": "1:103", "rename": "backBtn", "components": ["Button"], "res_mode": "sprite", "horizontal": "LEFT", "vertical": "TOP"}
+  ]
+}
+```
+
+**附加说明**：
+- 修改节点数、重命名数量、组件配置数量、资源模式数量
+- 说明关键修改及对应原因
+- **必须说明修饰覆盖率**："共处理 X 个节点，节点树总数 Y，覆盖率 Z%"
+- **必须说明INSTANCE子节点处理情况**
+
+---
+
+## 🎯 核心原则
+
+**决策优先级**：
+1. **父容器图片信息保护** - 有视觉内容必须设置res_mode
+2. **父子res_mode共存** - 利用此机制实现灵活的图片分离
+3. **完整性** - 未设置res_mode的节点必须处理所有子节点
+4. **预览验证** - 不确定的节点必须预览
+5. **性能优化** - 减少不必要的图片碎片
+
+**注意目标**：
+1. 调整后的数据用来生成UI：层级、命名、渲染层需符合最终效果
+2. 最小的图片数量：在涵盖所有节点情况下，尽量减少图片节点
+3. 最灵活的UI变化：最大化UI变化，组件分离
+
+---
+
+## 支持控件列表
+Button, Toggle, Slider, Dropdown, InputField, ScrollView, Scrollbar, ToggleGroup, Mask, GridLayoutGroup, VerticalLayoutGroup, HorizontalLayoutGroup, ContentSizeFitter

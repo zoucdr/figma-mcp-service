@@ -334,8 +334,13 @@ const ProjectEditorApp = {
                 return currentImage.src;
             }
             
-            // 如果没有找到，构建图片URL
-            return `/figma/image/${this.project.id}/${this.currentNode.id}?scale=${scale}&format=${this.defaultImageFormat}`;
+            // 如果没有找到，构建图片URL（添加ignoreNodes参数）
+            const ignoredNodeIds = this.collectIgnoredNodeIds(this.currentNode);
+            let imageUrl = `/figma/image/${this.project.id}/${this.currentNode.id}?scale=${scale}&format=${this.defaultImageFormat}`;
+            if (ignoredNodeIds.length > 0) {
+                imageUrl += `&ignoreNodes=${ignoredNodeIds.join(',')}`;
+            }
+            return imageUrl;
         },
         
         // 获取过滤后的节点图片URL（计算属性，自动缓存）
@@ -4288,6 +4293,50 @@ const ProjectEditorApp = {
         this.contextMenuSource = null;
     },
     
+    // 检测节点的子树中是否包含文本节点（不包括自己）
+    hasTextInSubtree(nodeId) {
+        if (!nodeId) return false;
+        
+        // 递归检查子节点
+        const checkChildren = (nodes) => {
+            for (const node of nodes) {
+                // 检查当前节点是否为文本节点
+                if (node.type === 'TEXT') {
+                    return true;
+                }
+                // 递归检查子节点
+                if (node.children && node.children.length > 0) {
+                    if (checkChildren(node.children)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        
+        // 查找目标节点
+        const findNode = (nodes) => {
+            for (const node of nodes) {
+                if (node.id === nodeId) {
+                    return node;
+                }
+                if (node.children && node.children.length > 0) {
+                    const found = findNode(node.children);
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+        
+        const targetNode = findNode(this.treeData);
+        if (!targetNode || !targetNode.children || targetNode.children.length === 0) {
+            return false;
+        }
+        
+        // 检查子树中是否有文本节点
+        return checkChildren(targetNode.children);
+    },
+    
     // 保存缩略图图片
     saveMinimapImage() {
         let imageSrc = null;
@@ -4355,6 +4404,83 @@ const ProjectEditorApp = {
         // 提示用户
         this.$message({
             message: '缩略图已开始下载',
+            type: 'success',
+            duration: 1500
+        });
+        
+        // 关闭菜单
+        this.layerMenuVisible = false;
+        this.contextMenuSource = null;
+        this.contextMenuMinimapType = null;
+    },
+    
+    // 保存缩略图无文本图片
+    saveMinimapImageNoText() {
+        let imageSrc = null;
+        let nodeName = '';
+        let imageFormat = this.defaultImageFormat || 'png'; // 优先使用控制栏指定的格式
+        let nodeId = null;
+        
+        if (this.contextMenuMinimapType === 'current') {
+            // 当前预览
+            if (!this.currentNode) {
+                this.$message.warning('当前没有选中的节点');
+                return;
+            }
+            
+            nodeId = this.currentNode.id;
+            nodeName = this.currentNode.name || this.currentNode.id;
+            
+            // 优先使用节点特定的格式，否则使用控制栏指定的格式
+            if (this.nodeModifys[this.currentNode.id] && this.nodeModifys[this.currentNode.id].img_ext) {
+                imageFormat = this.nodeModifys[this.currentNode.id].img_ext;
+            }
+            
+            // 构建包含格式和缩放参数的URL（添加ignoreTexts参数来忽略文本节点）
+            const scale = this.defaultImageScale || 1.0;
+            imageSrc = `/figma/image/${this.project.id}/${nodeId}?scale=${scale}&format=${imageFormat}&ignoreTexts=true&useCache=false`;
+        } else if (this.contextMenuMinimapType === 'filtered') {
+            // 过滤预览
+            if (this.filteredImagesList.length === 0) {
+                this.$message.warning('没有可用的过滤预览图片');
+                return;
+            }
+            
+            const currentImage = this.filteredImagesList[this.currentFilteredImageIndex];
+            nodeId = currentImage.nodeId;
+            nodeName = currentImage.nodeName || currentImage.nodeId;
+            
+            // 优先使用节点特定的格式，否则使用控制栏指定的格式
+            if (this.nodeModifys[nodeId] && this.nodeModifys[nodeId].img_ext) {
+                imageFormat = this.nodeModifys[nodeId].img_ext;
+            }
+            
+            // 构建包含格式和缩放参数的URL（添加ignoreTexts参数来忽略文本节点）
+            const scale = this.defaultImageScale || 1.0;
+            imageSrc = `/figma/image/${this.project.id}/${nodeId}?scale=${scale}&excludeModified=true&format=${imageFormat}&ignoreTexts=true&useCache=false`;
+        }
+        
+        if (!imageSrc) {
+            this.$message.error('无法获取图片');
+            return;
+        }
+        
+        // 创建下载链接
+        const link = document.createElement('a');
+        link.href = imageSrc;
+        link.download = `${nodeName}_minimap_no_text.${imageFormat}`;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        
+        // 触发下载
+        link.click();
+        
+        // 清理
+        document.body.removeChild(link);
+        
+        // 提示用户
+        this.$message({
+            message: '无文本缩略图已开始下载',
             type: 'success',
             duration: 1500
         });
@@ -5062,12 +5188,19 @@ const ProjectEditorApp = {
             // 如果没有指定previewNodeId，使用节点自身的ID
             const nodeIdToPreview = previewNodeId || node.id;
             
+            // 收集子树中被忽略的节点ID
+            const ignoredNodeIds = this.collectIgnoredNodeIds(node);
+            if (ignoredNodeIds.length > 0) {
+                console.log('Plugin API过滤忽略节点:', ignoredNodeIds);
+            }
+            
             try {
-                // 调用Figma Plugin API获取节点预览
+                // 调用Figma Plugin API获取节点预览，传递忽略节点列表
                 const result = await window.figmaPluginBridge.previewNode(
                     nodeIdToPreview, 
                     scale, 
-                    this.defaultImageFormat.toUpperCase()
+                    this.defaultImageFormat.toUpperCase(),
+                    ignoredNodeIds
                 );
                 
                 if (!result || !result.imageUrl) {
@@ -5097,6 +5230,25 @@ const ProjectEditorApp = {
             }
         },
 
+        // 递归收集子树中被忽略的节点ID
+        collectIgnoredNodeIds(node, ignoredNodeIds = []) {
+            if (!node) return ignoredNodeIds;
+            
+            // 检查当前节点是否被忽略
+            if (this.nodeModifys[node.id] && this.nodeModifys[node.id].ignore === true) {
+                ignoredNodeIds.push(node.id);
+            }
+            
+            // 递归处理子节点
+            if (node.children && Array.isArray(node.children)) {
+                for (const child of node.children) {
+                    this.collectIgnoredNodeIds(child, ignoredNodeIds);
+                }
+            }
+            
+            return ignoredNodeIds;
+        },
+        
         // 使用后端API添加预览图片（原始逻辑）
         addPreviewImageFromBackend(node, forceRefresh = false, scale = 1.0, previewNodeId = null) {
             if (!node) return;
@@ -5104,8 +5256,15 @@ const ProjectEditorApp = {
             // 如果没有指定previewNodeId，使用节点自身的ID
             const nodeIdToPreview = previewNodeId || node.id;
             
-            // 构建图片URL
-            const imageUrl = `/figma/image/${this.project.id}/${nodeIdToPreview}?scale=${scale}`;
+            // 收集子树中被忽略的节点ID
+            const ignoredNodeIds = this.collectIgnoredNodeIds(node);
+            
+            // 构建图片URL，添加ignoreNodes参数
+            let imageUrl = `/figma/image/${this.project.id}/${nodeIdToPreview}?scale=${scale}`;
+            if (ignoredNodeIds.length > 0) {
+                imageUrl += `&ignoreNodes=${ignoredNodeIds.join(',')}`;
+                console.log('过滤忽略节点:', ignoredNodeIds);
+            }
             console.log('后端API图片URL:', imageUrl);
             
             // 处理节点边界框信息

@@ -219,6 +219,20 @@
             min-height: 50px;
         }
 
+        /* 特殊样式：ignore_nodes 输入框 */
+        textarea[data-type="ignore_nodes"] {
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            background-color: #f8f9fa;
+            border: 2px dashed #ced4da;
+        }
+
+        textarea[data-type="ignore_nodes"]:focus {
+            border-color: #667eea;
+            border-style: solid;
+            background-color: white;
+        }
+
         button {
             padding: 8px 16px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -603,8 +617,13 @@
                         const placeholder = desc;
                         const inputId = `input_${tool.name}_${key}`;
                         
+                        // 为 ignore_nodes 添加特殊的帮助文本
+                        const helpText = key === 'ignore_nodes' ? 
+                            '<div style="font-size: 0.75rem; color: #666; margin-bottom: 4px;">💡 每行输入一个节点ID，这些节点将在渲染时被隐藏</div>' : '';
+                        
                         inputsHtml += `<div class="input-group">
-                            <label title="${desc}">${key} ${isRequired ? '<span style="color:red">*</span>' : ''}</label>`;
+                            <label title="${desc}">${key} ${isRequired ? '<span style="color:red">*</span>' : ''}</label>
+                            ${helpText}`;
                         
                         if (prop.enum) {
                             inputsHtml += `<select id="${inputId}" class="tool-input" data-type="${prop.type}" data-prop="${key}">`;
@@ -630,7 +649,10 @@
                             const type = prop.type === 'number' || prop.type === 'integer' ? 'number' : 'text';
                             let defaultValue = prop.default !== undefined ? prop.default : '';
                             
-                            if (prop.type === 'object' || prop.type === 'array') {
+                            if (prop.type === 'array' && key === 'ignore_nodes') {
+                                // 特殊处理 ignore_nodes 数组参数
+                                inputsHtml += `<textarea id="${inputId}" class="tool-input" data-type="ignore_nodes" data-prop="${key}" placeholder="每行输入一个节点ID，例如：&#10;123:456&#10;789:012" rows="3"></textarea>`;
+                            } else if (prop.type === 'object' || prop.type === 'array') {
                                 inputsHtml += `<textarea id="${inputId}" class="tool-input" data-type="${prop.type}" data-prop="${key}" placeholder='JSON format: ${placeholder}' rows="3"></textarea>`;
                             } else {
                                 inputsHtml += `<input type="${type}" id="${inputId}" class="tool-input" data-type="${prop.type}" data-prop="${key}" placeholder="${placeholder}" value="${defaultValue}">`;
@@ -676,6 +698,15 @@
                 } else if (type === 'boolean') {
                     // boolean 类型：'true' 转为 true，其他都转为 false
                     value = value === 'true';
+                } else if (type === 'ignore_nodes') {
+                    // 特殊处理 ignore_nodes：每行一个节点ID
+                    if (value.trim() === '') {
+                        value = []; // 空值转为空数组
+                    } else {
+                        value = value.split('\n')
+                            .map(line => line.trim())
+                            .filter(line => line.length > 0);
+                    }
                 } else if (type === 'object' || type === 'array') {
                     try {
                         value = JSON.parse(value);
@@ -696,6 +727,9 @@
         // 发送 MCP 调用
         async function sendMcpCall(command, params) {
             addMessage('📤 [请求] ' + command + '\n' + JSON.stringify(params, null, 2), 'request');
+            
+            // 保存当前请求参数，用于响应处理
+            window.lastRequestParams = params;
 
             try {
                 const response = await fetch('/mcp-api/tool-call', {
@@ -755,6 +789,16 @@
                                                 images: `&${imageCount} 张图片`,
                                             };
                                             
+                                            // 添加忽略节点信息（如果有的话）
+                                            if (window.lastRequestParams) {
+                                                if (window.lastRequestParams.ignore_nodes && window.lastRequestParams.ignore_nodes.length > 0) {
+                                                    displayContent.ignored_nodes = window.lastRequestParams.ignore_nodes;
+                                                }
+                                                if (window.lastRequestParams.ignore_text) {
+                                                    displayContent.ignored_text = window.lastRequestParams.ignore_text;
+                                                }
+                                            }
+                                            
                                             // 添加 OBS 上传信息
                                             if (jsonContent.obs_enabled !== undefined) {
                                                 displayContent.obs_enabled = jsonContent.obs_enabled;
@@ -784,6 +828,16 @@
                                             // 显示用的 JSON，替换掉过长的 imageData
                                             const displayContent = { ...jsonContent };
                                             displayContent.imageData = "&图片";
+                                            
+                                            // 添加忽略节点信息（如果有的话）
+                                            if (window.lastRequestParams) {
+                                                if (window.lastRequestParams.ignore_nodes && window.lastRequestParams.ignore_nodes.length > 0) {
+                                                    displayContent.ignored_nodes = window.lastRequestParams.ignore_nodes;
+                                                }
+                                                if (window.lastRequestParams.ignore_text) {
+                                                    displayContent.ignored_text = window.lastRequestParams.ignore_text;
+                                                }
+                                            }
                                             
                                             addMessage('📨 [响应] <br>' + JSON.stringify(displayContent, null, 2) + imgHtml, 'response');
                                         } else {

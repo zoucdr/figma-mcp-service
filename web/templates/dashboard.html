@@ -197,33 +197,6 @@
                                 <i v-if="data.type === 'TEXT' && (!data.modifys || !data.modifys.res_mode || data.modifys.res_mode === 'attach')" class="el-icon-document" style="color: #409EFF;" title="文本节点"></i>
                         </span>
                     </el-tree>
-                    <!-- 重置按钮 - 固定在右下角 -->
-                    <div class="tree-reset-button-container">
-                        <el-tooltip content="重置所有节点修改" placement="left">
-                            <el-button 
-                                icon="el-icon-refresh-left" 
-                                size="small" 
-                                circle 
-                                type="warning"
-                                @click="showResetConfirmDialog"
-                                @contextmenu.prevent.native="showResetModeMenu($event)"
-                                class="tree-reset-button">
-                            </el-button>
-                        </el-tooltip>
-                    </div>
-                    
-                    <!-- 重置模式菜单 -->
-                    <div v-if="resetModeMenuVisible" class="reset-mode-menu" :style="resetModeMenuStyle" @click.stop>
-                        <div class="layer-menu-title">重置模式</div>
-                        <div class="layer-menu-function-item" @click.stop="showResetConfirmDialog('smart')">
-                            <i class="el-icon-magic-stick"></i>
-                            <span>智能重置 (基于节点树)</span>
-                        </div>
-                        <div class="layer-menu-function-item" @click.stop="showResetConfirmDialog('full')">
-                            <i class="el-icon-refresh-left"></i>
-                            <span>完全重置 (数据库清理)</span>
-                        </div>
-                    </div>
                 </div>
             </div>
             
@@ -564,6 +537,11 @@
                             <div class="layer-menu-function-item" @click.stop="saveMinimapImage">
                                 <i class="el-icon-download"></i>
                                 <span>下载图片</span>
+                            </div>
+                            <!-- 下载无文本图片选项 - 仅当节点有子树且子树中包含文本时显示 -->
+                            <div v-if="currentNode && hasTextInSubtree(currentNode.id)" class="layer-menu-function-item" @click.stop="saveMinimapImageNoText">
+                                <i class="el-icon-document"></i>
+                                <span>下载无文本图片</span>
                             </div>
                         </template>
                         
@@ -1116,16 +1094,16 @@
                     </el-button>
                 </div>
             </div>
-            <div class="json-viewer-content">
-                <el-input
-                    type="textarea"
-                    v-model="nodeJsonString"
-                    :autosize="{ minRows: 10, maxRows: 30 }"
-                    readonly
-                    class="json-textarea"
-                    ref="jsonTextarea">
-                </el-input>
-            </div>
+        <div class="json-viewer-content">
+            <el-input
+                type="textarea"
+                v-model="nodeJsonString"
+                :autosize="{ minRows: 10 }"
+                readonly
+                class="json-textarea"
+                ref="jsonTextarea">
+            </el-input>
+        </div>
         </div>
         <div slot="footer" class="dialog-footer">
             <el-button @click="jsonPreviewDialogVisible = false">关闭</el-button>

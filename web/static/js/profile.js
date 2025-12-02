@@ -424,10 +424,21 @@ new Vue({
         // 获取Cursor配置示例
         getCursorConfig() {
             if (!this.mcpToken) return '';
+            // 获取当前页面的协议和主机名
+            const protocol = window.location.protocol;
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+            
+            // 构建基础URL
+            let baseUrl = `${protocol}//${hostname}`;
+            if (port && port !== '80' && port !== '443') {
+                baseUrl += `:${port}`;
+            }
+            
             return JSON.stringify({
                 "mcpServers": {
                     "FigmaDeliver": {
-                        "url": `http://127.0.0.1:8080/mcp/${this.mcpToken}`
+                        "url": `${baseUrl}/mcp/${this.mcpToken}`
                     }
                 }
             }, null, 2);

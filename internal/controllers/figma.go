@@ -50,8 +50,8 @@ func SetGlobalOBSService(obs *services.OBSService) {
 }
 
 // generateRequestKey 生成请求的唯一标识
-func generateRequestKey(fileKey, nodeID, format string, scale float64, excludeModified string, projectID uint64) string {
-	key := fmt.Sprintf("%s:%s:%s:%.1f:%s:%d", fileKey, nodeID, format, scale, excludeModified, projectID)
+func generateRequestKey(fileKey, nodeID, format string, scale float64, excludeModified string, ignoreTexts bool, projectID uint64) string {
+	key := fmt.Sprintf("%s:%s:%s:%.1f:%s:%v:%d", fileKey, nodeID, format, scale, excludeModified, ignoreTexts, projectID)
 	hash := md5.Sum([]byte(key))
 	return hex.EncodeToString(hash[:])
 }
@@ -1214,10 +1214,12 @@ func GetFigmaImage(c *gin.Context) {
 	}
 
 	// 获取查询参数
-	format := c.DefaultQuery("format", "png")         // 默认png格式
-	scaleStr := c.DefaultQuery("scale", "1.0")        // 默认1.0标准清晰度
-	excludeModified := c.Query("excludeModified")     // 是否排除修改的节点（过滤预览）
-	useCacheStr := c.DefaultQuery("useCache", "true") // 是否使用缓存，默认为true
+	format := c.DefaultQuery("format", "png")                // 默认png格式
+	scaleStr := c.DefaultQuery("scale", "1.0")               // 默认1.0标准清晰度
+	excludeModified := c.Query("excludeModified")            // 是否排除修改的节点（过滤预览）
+	useCacheStr := c.DefaultQuery("useCache", "true")        // 是否使用缓存，默认为true
+	ignoreTextsStr := c.DefaultQuery("ignoreTexts", "false") // 是否忽略文本节点
+	ignoreNodesStr := c.Query("ignoreNodes")                 // 要忽略的节点ID列表（逗号分隔）
 
 	// 解析缩放比例
 	scale, err := strconv.ParseFloat(scaleStr, 64)
@@ -1236,7 +1238,22 @@ func GetFigmaImage(c *gin.Context) {
 	// 解析是否使用缓存
 	useCache := useCacheStr == "true" || useCacheStr == "1"
 
-	fmt.Printf("Controller: 图片参数 - 格式: %s, 缩放比例: %.1f, 排除修改: %s, 使用缓存: %v\n", format, scale, excludeModified, useCache)
+	// 解析是否忽略文本节点
+	ignoreTexts := ignoreTextsStr == "true" || ignoreTextsStr == "1"
+
+	// 解析要忽略的节点ID列表
+	var ignoreNodes []string
+	if ignoreNodesStr != "" {
+		// 按逗号分隔字符串，并去除空格
+		for _, nodeID := range strings.Split(ignoreNodesStr, ",") {
+			nodeID = strings.TrimSpace(nodeID)
+			if nodeID != "" {
+				ignoreNodes = append(ignoreNodes, nodeID)
+			}
+		}
+	}
+
+	fmt.Printf("Controller: 图片参数 - 格式: %s, 缩放比例: %.1f, 排除修改: %s, 使用缓存: %v, 忽略文本: %v, 忽略节点: %v\n", format, scale, excludeModified, useCache, ignoreTexts, ignoreNodes)
 
 	// 获取项目信息
 	project, err := models.GetProjectByID(uint(projectID))
@@ -1248,7 +1265,7 @@ func GetFigmaImage(c *gin.Context) {
 	}
 
 	// ⚡ 立即生成请求唯一标识并检查队列（在任何耗时操作之前）
-	requestKey := generateRequestKey(project.FileKey, nodeID, format, scale, excludeModified, projectID)
+	requestKey := generateRequestKey(project.FileKey, nodeID, format, scale, excludeModified, ignoreTexts, projectID)
 
 	// 使用队列管理器获取图片，防止重复请求
 	// 将所有耗时操作（包括数据库查询和API调用）都放在队列的 fetchFunc 中
@@ -1281,14 +1298,23 @@ func GetFigmaImage(c *gin.Context) {
 				mcpService.RegisterPendingRequest(requestID, responseChan, errorChan)
 				defer mcpService.UnregisterPendingRequest(requestID)
 
+				// 构造参数
+				params := map[string]interface{}{
+					"nodeId":      nodeID,
+					"format":      strings.ToUpper(format),
+					"scale":       scale,
+					"ignore_text": ignoreTexts,
+				}
+
+				// 如果有忽略节点列表，添加到参数中
+				if len(ignoreNodes) > 0 {
+					params["ignore_nodes"] = ignoreNodes
+				}
+
 				message := map[string]interface{}{
 					"id":      requestID,
 					"command": "export_node_as_image",
-					"params": map[string]interface{}{
-						"nodeId": nodeID,
-						"format": strings.ToUpper(format),
-						"scale":  scale,
-					},
+					"params":  params,
 				}
 
 				// 获取频道
@@ -1352,7 +1378,7 @@ func GetFigmaImage(c *gin.Context) {
 
 		// 3. 检查数据库缓存（OBS URL 或 Figma CDN URL）
 		if useCache {
-			nodeImage, err := models.GetNodeImage(project.FileKey, nodeID, format, scale, false) // 默认不忽略文本
+			nodeImage, err := models.GetNodeImage(project.FileKey, nodeID, format, scale, ignoreTexts)
 			if err == nil && nodeImage != nil {
 				// 3.1 优先从 OBS 下载
 				if nodeImage.OBSKey != "" && globalOBSService != nil && globalOBSService.IsEnabled() {
@@ -1401,7 +1427,7 @@ func GetFigmaImage(c *gin.Context) {
 		// 普通预览：保存到previews文件夹
 		fmt.Printf("Controller: 开始获取普通Figma图片（支持 WebSocket 兜底）, project_id=%d, node_id=%s, format=%s, scale=%.1f, useCache=%v\n",
 			projectID, nodeID, format, scale, useCache)
-		imagePath, imgErr = services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, useCache, user.ID, false) // 默认不忽略文本
+		imagePath, imgErr = services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, useCache, user.ID, ignoreTexts)
 		// }
 
 		return imagePath, imgErr

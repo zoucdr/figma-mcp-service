@@ -179,11 +179,6 @@ func main() {
 		uint(appConfig.FigmaAPI.MaxNodesPerRequest),
 		cacheService,
 	)
-	// 初始化渲染批次服务
-	batchService := services.NewRenderBatchService(queueService)
-
-	// 设置队列服务的批次服务引用（用于队列状态变化时更新批次）
-	queueService.SetBatchService(batchService)
 
 	log.Printf("✅ 缓存和队列服务初始化完成")
 
@@ -502,7 +497,7 @@ func main() {
 	figmaGroup.POST("/project/:project_id/clear-cache", controllers.ClearProjectImageCache)
 
 	// 缓存和队列管理（新增）
-	cacheController := controllers.NewCacheController(cacheService, queueService, batchService, obsService)
+	cacheController := controllers.NewCacheController(cacheService, queueService, obsService)
 	figmaGroup.GET("/project/:project_id/node-tree/refresh", cacheController.RefreshProjectNodeTree) // 节点树刷新（带冷却检查）
 	figmaGroup.POST("/file/refresh", cacheController.RefreshFile)                                    // 节点树刷新
 	figmaGroup.POST("/batch-refresh-node-tree", cacheController.BatchRefreshNodeTree)                // 批量刷新节点树（支持多个root节点）
@@ -513,7 +508,6 @@ func main() {
 	figmaGroup.GET("/render/queue/stats", cacheController.GetQueueStatistics)                        // 获取队列统计
 	figmaGroup.GET("/project/:project_id/render/progress", cacheController.GetProjectRenderProgress) // 获取项目渲染进度（批次）
 	figmaGroup.POST("/project/:project_id/render/cancel", cacheController.CancelProjectRender)       // 取消项目渲染
-	figmaGroup.GET("/node/image", cacheController.GetNodeImage)                                      // 获取节点图片
 
 	// 导出功能
 	figmaGroup.POST("/project/:project_id/export", controllers.ExportFigmaDesign)
@@ -583,9 +577,9 @@ func main() {
 
 // loadConfig 加载YAML配置文件
 func loadConfig() error {
-	// 尝试多个可能的配置文件路径
+	// 尝试多个可能的配置文件路径（优先本地开发配置）
 	configPaths := []string{
-		"configs/config.yaml",
+		"configs/config.yaml", // 生产配置
 		"./configs/config.yaml",
 		"config.yaml",
 	}

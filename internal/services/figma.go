@@ -1191,11 +1191,11 @@ func DownloadPreviewFigmaImageWithOptions(token, fileKey, nodeID, imageFormat st
 
 // tryGetImageViaWebSocket 尝试通过 WebSocket 从 Figma 插件获取图片
 func tryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale float64, userID uint, tempDir, safeNodeID string) (string, error) {
-	return TryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID, false)
+	return TryGetImageViaWebSocket(fileKey, nodeID, imageFormat, imageScale, userID, tempDir, safeNodeID, false, []string{})
 }
 
-// TryGetImageViaWebSocket 尝试通过 WebSocket 从 Figma 插件获取图片（公共函数，支持ignoreTexts参数）
-func TryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale float64, userID uint, tempDir, safeNodeID string, ignoreTexts bool) (string, error) {
+// TryGetImageViaWebSocket 尝试通过 WebSocket 从 Figma 插件获取图片（公共函数，支持ignoreTexts和ignoreNodes参数）
+func TryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale float64, userID uint, tempDir, safeNodeID string, ignoreTexts bool, ignoreNodes []string) (string, error) {
 	mcpService := GetMCPService()
 	if mcpService == nil {
 		return "", fmt.Errorf("MCP 服务未初始化")
@@ -1221,15 +1221,22 @@ func TryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale flo
 	defer mcpService.UnregisterPendingRequest(requestID)
 
 	// 构建发送到 Figma 插件的消息
+	params := map[string]interface{}{
+		"nodeId":      nodeID,
+		"format":      strings.ToUpper(imageFormat), // PNG, JPG, SVG
+		"scale":       imageScale,
+		"ignore_text": ignoreTexts, // 是否忽略文字
+	}
+
+	// 添加 ignore_nodes 参数（如果提供）
+	if len(ignoreNodes) > 0 {
+		params["ignore_nodes"] = ignoreNodes
+	}
+
 	message := map[string]interface{}{
 		"id":      requestID,
 		"command": "export_node_as_image",
-		"params": map[string]interface{}{
-			"nodeId":      nodeID,
-			"format":      strings.ToUpper(imageFormat), // PNG, JPG, SVG
-			"scale":       imageScale,
-			"ignore_text": ignoreTexts, // 是否忽略文字
-		},
+		"params":  params,
 	}
 
 	// 获取当前用户的频道
@@ -1275,13 +1282,13 @@ func TryGetImageViaWebSocket(fileKey, nodeID, imageFormat string, imageScale flo
 	fmt.Printf("✅ [TryGetImageViaWebSocket] 收到 base64 图片数据，大小: %d bytes\n", len(imageDataB64))
 
 	// 调用处理函数保存图片
-	return handleImageDataFromPlugin(fileKey, nodeID, imageFormat, imageScale, imageDataB64, responseData, tempDir, safeNodeID, ignoreTexts)
+	return handleImageDataFromPlugin(fileKey, nodeID, imageFormat, imageScale, imageDataB64, responseData, tempDir, safeNodeID, ignoreTexts, ignoreNodes)
 }
 
 // handleImageDataFromPlugin 处理从 Figma 插件接收到的图片数据
-func handleImageDataFromPlugin(fileKey, nodeID, imageFormat string, imageScale float64, imageDataB64 string, responseData map[string]interface{}, tempDir, safeNodeID string, ignoreTexts bool) (string, error) {
-	fmt.Printf("🎨 [handleImageDataFromPlugin] 开始处理插件图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v\n",
-		fileKey, nodeID, imageFormat, imageScale, ignoreTexts)
+func handleImageDataFromPlugin(fileKey, nodeID, imageFormat string, imageScale float64, imageDataB64 string, responseData map[string]interface{}, tempDir, safeNodeID string, ignoreTexts bool, ignoreNodes []string) (string, error) {
+	fmt.Printf("🎨 [handleImageDataFromPlugin] 开始处理插件图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v, ignoreNodes=%v\n",
+		fileKey, nodeID, imageFormat, imageScale, ignoreTexts, ignoreNodes)
 
 	// 1. 解码 base64 图片数据
 	decodedBytes, err := base64.StdEncoding.DecodeString(imageDataB64)
@@ -1311,15 +1318,23 @@ func handleImageDataFromPlugin(fileKey, nodeID, imageFormat string, imageScale f
 		suffix = "p"
 	}
 
-	// 不添加hash，有单独的清理逻辑
+	// 如果有忽略节点，添加到后缀中
+	if len(ignoreNodes) > 0 {
+		// 对忽略节点列表进行排序以确保一致性
+		sortedIgnoreNodes := make([]string, len(ignoreNodes))
+		copy(sortedIgnoreNodes, ignoreNodes)
+		sort.Strings(sortedIgnoreNodes)
+
+		// 生成忽略节点的哈希值作为文件名的一部分
+		ignoreNodesStr := strings.Join(sortedIgnoreNodes, ",")
+		hash := md5.Sum([]byte(ignoreNodesStr))
+		ignoreNodesHash := fmt.Sprintf("%x", hash)[:8] // 使用前8位哈希值
+		suffix = suffix + "i" + ignoreNodesHash
+	}
+
+	// 使用固定的文件名格式，如果文件已存在则直接替换
 	fileName := fmt.Sprintf("%s-%s%s%s", safeNodeID, scaleStr, suffix, fileExt)
 	localPath := filepath.Join(tempDir, fileName)
-
-	// 检查文件是否已存在
-	if _, err := os.Stat(localPath); err == nil {
-		fmt.Printf("✅ [handleImageDataFromPlugin] 文件已存在，直接返回: %s\n", localPath)
-		return localPath, nil
-	}
 
 	// 写入文件
 	err = os.WriteFile(localPath, decodedBytes, 0644)
@@ -1433,19 +1448,9 @@ func DownloadImageFromOBS(obsKey, tempDir, safeNodeID, imageFormat string, image
 		suffix = "p" // 不带文字
 	}
 
-	// 计算哈希值（用于文件名）
-	hasher := md5.New()
-	hasher.Write(imageData)
-	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
-
-	fileName := fmt.Sprintf("%s-%s%s-%s%s", safeNodeID, scaleStr, suffix, hash, fileExt)
+	// 使用固定的文件名格式，如果文件已存在则直接替换
+	fileName := fmt.Sprintf("%s-%s%s%s", safeNodeID, scaleStr, suffix, fileExt)
 	localPath := filepath.Join(tempDir, fileName)
-
-	// 检查文件是否已存在
-	if _, err := os.Stat(localPath); err == nil {
-		fmt.Printf("✅ [OBS] 文件已存在，直接返回: %s\n", localPath)
-		return localPath, nil
-	}
 
 	// 写入本地文件
 	err = os.WriteFile(localPath, imageData, 0644)
@@ -1493,23 +1498,20 @@ func downloadImageFromURL(imageURL, tempDir, safeNodeID, imageFormat string, ima
 		fileExt = ".png"
 	}
 
-	// 生成临时文件路径
+	// 生成文件路径
 	scaleStr := formatScaleForFilename(imageScale)
-	tempFileName := fmt.Sprintf("%s-%s-temp%s", safeNodeID, scaleStr, fileExt)
-	tempFilePath := filepath.Join(tempDir, tempFileName)
+	fileName := fmt.Sprintf("%s-%s%s", safeNodeID, scaleStr, fileExt)
+	filePath := filepath.Join(tempDir, fileName)
 
-	// 创建临时文件
-	downloadTempPath := tempFilePath + ".tmp"
+	// 创建临时文件用于下载
+	downloadTempPath := filePath + ".tmp"
 	file, err := os.Create(downloadTempPath)
 	if err != nil {
 		return "", fmt.Errorf("创建临时文件失败: %v", err)
 	}
 
-	// 创建 TeeReader，同时写入文件和计算哈希值
-	hasher := md5.New()
-	reader := io.TeeReader(resp.Body, hasher)
-
-	bytes, err := io.Copy(file, reader)
+	// 直接写入文件
+	bytes, err := io.Copy(file, resp.Body)
 	if err != nil {
 		file.Close()
 		os.Remove(downloadTempPath)
@@ -1528,28 +1530,14 @@ func downloadImageFromURL(imageURL, tempDir, safeNodeID, imageFormat string, ima
 		return "", errors.New("下载的图片大小为0字节")
 	}
 
-	// 获取文件哈希值
-	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
-
-	// 构建最终文件名
-	finalFileName := fmt.Sprintf("%s-%s-%s%s", safeNodeID, scaleStr, hash, fileExt)
-	finalFilePath := filepath.Join(tempDir, finalFileName)
-
-	// 检查同名文件是否已存在
-	if _, err := os.Stat(finalFilePath); err == nil {
-		os.Remove(downloadTempPath)
-		fmt.Printf("文件已存在（相同内容），直接使用: %s\n", finalFilePath)
-		return finalFilePath, nil
-	}
-
-	// 重命名为最终文件
-	if err := os.Rename(downloadTempPath, finalFilePath); err != nil {
+	// 移动到最终位置（如果目标文件已存在则替换）
+	if err := os.Rename(downloadTempPath, filePath); err != nil {
 		os.Remove(downloadTempPath)
 		return "", fmt.Errorf("重命名临时文件失败: %v", err)
 	}
 
-	fmt.Printf("图片下载完成: %s (%d 字节)\n", finalFilePath, bytes)
-	return finalFilePath, nil
+	fmt.Printf("图片下载完成: %s (%d 字节)\n", filePath, bytes)
+	return filePath, nil
 }
 
 // 查找节点的最新图片文件（根据缩放等级）
@@ -1916,15 +1904,6 @@ func downloadPreviewImageFile(url, fileKey, nodeID string, imageScale float64) (
 	// 生成文件名 - 替换特殊字符为下划线
 	safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
 
-	// 临时文件名（不带哈希值）
-	tempFileName := fmt.Sprintf("%s-temp.png", safeNodeID)
-	tempFilePath := filepath.Join(tempDir, tempFileName)
-	fmt.Printf("临时文件路径: %s (原节点ID: %s)\n", tempFilePath, nodeID)
-
-	// 我们现在使用文件内容的哈希值作为文件名的一部分
-	// 这样相同内容的文件会有相同的名称，避免重复下载
-	// 但我们仍需要清理过多的旧文件，避免占用过多磁盘空间
-
 	// 清理同一节点和缩放等级的过多旧文件
 	cleanupOldNodeImages(tempDir, safeNodeID, imageScale, 10)
 
@@ -1969,8 +1948,13 @@ func downloadPreviewImageFile(url, fileKey, nodeID string, imageScale float64) (
 		fmt.Printf("警告：响应Content-Type不是图片类型: %s\n", contentType)
 	}
 
+	// 生成文件名
+	scaleStr := formatScaleForFilename(imageScale)
+	fileName := fmt.Sprintf("%s-%s.png", safeNodeID, scaleStr)
+	filePath := filepath.Join(tempDir, fileName)
+
 	// 创建临时文件，避免直接写入目标文件可能导致的损坏
-	downloadTempPath := tempFilePath + ".tmp"
+	downloadTempPath := filePath + ".tmp"
 	fmt.Printf("创建临时文件: %s\n", downloadTempPath)
 	file, err := os.Create(downloadTempPath)
 	if err != nil {
@@ -1978,12 +1962,9 @@ func downloadPreviewImageFile(url, fileKey, nodeID string, imageScale float64) (
 		return "", fmt.Errorf("创建临时文件失败: %v", err)
 	}
 
-	// 创建一个TeeReader，同时写入文件和计算哈希值
-	fmt.Printf("将响应内容写入临时文件并计算哈希值...\n")
-	hasher := md5.New()
-	reader := io.TeeReader(resp.Body, hasher)
-
-	bytes, err := io.Copy(file, reader)
+	// 将响应内容写入临时文件
+	fmt.Printf("将响应内容写入临时文件...\n")
+	bytes, err := io.Copy(file, resp.Body)
 	if err != nil {
 		file.Close()
 		os.Remove(downloadTempPath) // 清理临时文件
@@ -2007,26 +1988,7 @@ func downloadPreviewImageFile(url, fileKey, nodeID string, imageScale float64) (
 
 	fmt.Printf("成功写入 %d 字节到临时文件\n", bytes)
 
-	// 获取文件数据的哈希值
-	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
-	fmt.Printf("文件数据哈希值: %s\n", hash)
-
-	// 使用哈希值构建最终文件名（包含缩放等级）
-	// 格式：节点-缩放等级-hash.png，例如：节点-1-hash.png 或 节点-0.5-hash.png
-	scaleStr := formatScaleForFilename(imageScale)
-	fileName := fmt.Sprintf("%s-%s-%s.png", safeNodeID, scaleStr, hash)
-	filePath := filepath.Join(tempDir, fileName)
-	fmt.Printf("最终文件路径: %s\n", filePath)
-
-	// 检查同名文件是否已存在（相同内容的文件）
-	if _, err := os.Stat(filePath); err == nil {
-		// 文件已存在，删除临时文件
-		os.Remove(tempFilePath)
-		fmt.Printf("文件已存在（相同内容），直接使用: %s\n", filePath)
-		return filePath, nil
-	}
-
-	// 将临时文件重命名为最终文件
+	// 将临时文件重命名为最终文件（如果目标文件已存在则替换）
 	if err := os.Rename(downloadTempPath, filePath); err != nil {
 		os.Remove(downloadTempPath) // 清理临时文件
 		fmt.Printf("重命名临时文件失败: %v\n", err)
@@ -2068,15 +2030,6 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 		fmt.Printf("创建临时文件夹失败: %v\n", err)
 		return "", fmt.Errorf("创建临时文件夹失败: %v", err)
 	}
-
-	// 临时文件名（不带哈希值），使用默认png格式
-	// 注意：此函数没有imageFormat参数，所以我们使用默认扩展名
-	// 最终文件名会根据Content-Type调整
-	fileExt := ".png" // 默认为png
-
-	tempFileName := fmt.Sprintf("%s-temp%s", safeFileName, fileExt)
-	tempFilePath := filepath.Join(tempDir, tempFileName)
-	fmt.Printf("临时文件路径: %s\n", tempFilePath)
 
 	// 清理同一类型和缩放等级的过多旧文件
 	cleanupOldNodeImages(tempDir, safeFileName, imageScale, 10)
@@ -2122,8 +2075,27 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 		fmt.Printf("警告：响应Content-Type不是图片类型: %s\n", contentType)
 	}
 
+	// 根据Content-Type确定文件扩展名
+	fileExt := ".png" // 默认为png
+	if strings.HasPrefix(contentType, "image/") {
+		switch contentType {
+		case "image/svg+xml":
+			fileExt = ".svg"
+		case "image/jpeg":
+			fileExt = ".jpg"
+		case "image/png":
+			fileExt = ".png"
+		}
+	}
+
+	// 构建文件名（包含缩放等级）
+	scaleStr := formatScaleForFilename(imageScale)
+	fileName := fmt.Sprintf("%s-%s%s", safeFileName, scaleStr, fileExt)
+	filePath := filepath.Join(tempDir, fileName)
+	fmt.Printf("文件路径: %s (Content-Type: %s)\n", filePath, contentType)
+
 	// 创建临时文件，避免直接写入目标文件可能导致的损坏
-	downloadTempPath := tempFilePath + ".tmp"
+	downloadTempPath := filePath + ".tmp"
 	fmt.Printf("创建临时文件: %s\n", downloadTempPath)
 	file, err := os.Create(downloadTempPath)
 	if err != nil {
@@ -2131,12 +2103,9 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 		return "", fmt.Errorf("创建临时文件失败: %v", err)
 	}
 
-	// 创建一个TeeReader，同时写入文件和计算哈希值
-	fmt.Printf("将响应内容写入临时文件并计算哈希值...\n")
-	hasher := md5.New()
-	reader := io.TeeReader(resp.Body, hasher)
-
-	bytes, err := io.Copy(file, reader)
+	// 将响应内容写入临时文件
+	fmt.Printf("将响应内容写入临时文件...\n")
+	bytes, err := io.Copy(file, resp.Body)
 	if err != nil {
 		file.Close()
 		os.Remove(downloadTempPath) // 清理临时文件
@@ -2160,39 +2129,7 @@ func downloadFilteredPreviewImageFileByNodeIDs(url, fileKey, safeFileName string
 
 	fmt.Printf("成功写入 %d 字节到临时文件\n", bytes)
 
-	// 获取文件数据的哈希值
-	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
-	fmt.Printf("文件数据哈希值: %s\n", hash)
-
-	// 根据Content-Type确定文件扩展名
-	finalFileExt := ".png" // 默认为png
-	if strings.HasPrefix(contentType, "image/") {
-		switch contentType {
-		case "image/svg+xml":
-			finalFileExt = ".svg"
-		case "image/jpeg":
-			finalFileExt = ".jpg"
-		case "image/png":
-			finalFileExt = ".png"
-		}
-	}
-
-	// 使用哈希值和正确的扩展名构建最终文件名（包含缩放等级）
-	// 格式：文件名-缩放等级-hash.ext
-	scaleStr := formatScaleForFilename(imageScale)
-	fileName := fmt.Sprintf("%s-%s-%s%s", safeFileName, scaleStr, hash, finalFileExt)
-	filePath := filepath.Join(tempDir, fileName)
-	fmt.Printf("最终文件路径: %s (Content-Type: %s)\n", filePath, contentType)
-
-	// 检查同名文件是否已存在（相同内容的文件）
-	if _, err := os.Stat(filePath); err == nil {
-		// 文件已存在，删除临时文件
-		os.Remove(downloadTempPath)
-		fmt.Printf("文件已存在（相同内容），直接使用: %s\n", filePath)
-		return filePath, nil
-	}
-
-	// 将临时文件重命名为最终文件
+	// 将临时文件重命名为最终文件（如果目标文件已存在则替换）
 	if err := os.Rename(downloadTempPath, filePath); err != nil {
 		os.Remove(downloadTempPath) // 清理临时文件
 		fmt.Printf("重命名临时文件失败: %v\n", err)
@@ -2281,26 +2218,27 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 		fmt.Printf("警告：响应Content-Type不是图片类型: %s\n", contentType)
 	}
 
-	// 临时文件名（不带哈希值），根据请求的格式确定扩展名
-	tempFileExt := ".png" // 默认为png
-	// 这里不能直接使用imageFormat参数，因为这个函数没有该参数
-	// 但我们可以从Content-Type推断
+	// 根据Content-Type确定文件扩展名
+	fileExt := ".png" // 默认为png
 	if strings.HasPrefix(contentType, "image/") {
 		switch contentType {
 		case "image/svg+xml":
-			tempFileExt = ".svg"
+			fileExt = ".svg"
 		case "image/jpeg":
-			tempFileExt = ".jpg"
+			fileExt = ".jpg"
 		case "image/png":
-			tempFileExt = ".png"
+			fileExt = ".png"
 		}
 	}
 
-	tempFileName := fmt.Sprintf("%s-temp%s", fileName, tempFileExt)
-	tempFilePath := filepath.Join(tempDir, tempFileName)
+	// 构建文件名（包含缩放等级）
+	scaleStr := formatScaleForFilename(imageScale)
+	finalFileName := fmt.Sprintf("%s-%s%s", fileName, scaleStr, fileExt)
+	filePath := filepath.Join(tempDir, finalFileName)
+	fmt.Printf("文件路径: %s (Content-Type: %s)\n", filePath, contentType)
 
 	// 创建临时文件，避免直接写入目标文件可能导致的损坏
-	downloadTempPath := tempFilePath + ".tmp"
+	downloadTempPath := filePath + ".tmp"
 	fmt.Printf("创建临时文件: %s\n", downloadTempPath)
 	file, err := os.Create(downloadTempPath)
 	if err != nil {
@@ -2308,12 +2246,9 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 		return "", fmt.Errorf("创建临时文件失败: %v", err)
 	}
 
-	// 创建一个TeeReader，同时写入文件和计算哈希值
-	fmt.Printf("将响应内容写入临时文件并计算哈希值...\n")
-	hasher := md5.New()
-	reader := io.TeeReader(resp.Body, hasher)
-
-	bytes, err := io.Copy(file, reader)
+	// 将响应内容写入临时文件
+	fmt.Printf("将响应内容写入临时文件...\n")
+	bytes, err := io.Copy(file, resp.Body)
 	if err != nil {
 		file.Close()
 		os.Remove(downloadTempPath) // 清理临时文件
@@ -2337,39 +2272,7 @@ func downloadSingleFilteredPreviewImage(imageURL, _ /*fileKey*/, nodeID, fileNam
 
 	fmt.Printf("成功写入 %d 字节到临时文件\n", bytes)
 
-	// 获取文件数据的哈希值
-	hash := hex.EncodeToString(hasher.Sum(nil))[0:6]
-	fmt.Printf("文件数据哈希值: %s\n", hash)
-
-	// 根据Content-Type确定文件扩展名
-	resultFileExt := ".png" // 默认为png
-	if strings.HasPrefix(contentType, "image/") {
-		switch contentType {
-		case "image/svg+xml":
-			resultFileExt = ".svg"
-		case "image/jpeg":
-			resultFileExt = ".jpg"
-		case "image/png":
-			resultFileExt = ".png"
-		}
-	}
-
-	// 使用哈希值和正确的扩展名构建最终文件名（包含缩放等级）
-	// 格式：文件名-缩放等级-hash.ext
-	scaleStr := formatScaleForFilename(imageScale)
-	finalFileName := fmt.Sprintf("%s-%s-%s%s", fileName, scaleStr, hash, resultFileExt)
-	filePath := filepath.Join(tempDir, finalFileName)
-	fmt.Printf("最终文件路径: %s (Content-Type: %s)\n", filePath, contentType)
-
-	// 检查同名文件是否已存在（相同内容的文件）
-	if _, err := os.Stat(filePath); err == nil {
-		// 文件已存在，删除临时文件
-		os.Remove(downloadTempPath)
-		fmt.Printf("文件已存在（相同内容），直接使用: %s\n", filePath)
-		return filePath, nil
-	}
-
-	// 将临时文件重命名为最终文件
+	// 将临时文件重命名为最终文件（如果目标文件已存在则替换）
 	if err := os.Rename(downloadTempPath, filePath); err != nil {
 		os.Remove(downloadTempPath) // 清理临时文件
 		fmt.Printf("重命名临时文件失败: %v\n", err)

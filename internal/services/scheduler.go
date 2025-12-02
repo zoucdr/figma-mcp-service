@@ -33,6 +33,16 @@ func NewSchedulerService(
 	renderQueueInterval int,
 	queueCleanupInterval int,
 ) *SchedulerService {
+	// 确保间隔值为正数
+	if renderQueueInterval <= 0 {
+		log.Printf("⚠️ [调度器] 渲染队列间隔无效 (%d)，使用默认值 5 秒", renderQueueInterval)
+		renderQueueInterval = 5
+	}
+	if queueCleanupInterval <= 0 {
+		log.Printf("⚠️ [调度器] 队列清理间隔无效 (%d)，使用默认值 1 小时", queueCleanupInterval)
+		queueCleanupInterval = 1
+	}
+
 	s := &SchedulerService{
 		cacheService:         cacheService,
 		queueService:         queueService,

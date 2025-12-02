@@ -20,16 +20,14 @@ import (
 type CacheController struct {
 	cacheService *services.CacheService
 	queueService *services.QueueService
-	batchService *services.RenderBatchService
 	obsService   *services.OBSService
 }
 
 // NewCacheController 创建缓存控制器
-func NewCacheController(cacheService *services.CacheService, queueService *services.QueueService, batchService *services.RenderBatchService, obsService *services.OBSService) *CacheController {
+func NewCacheController(cacheService *services.CacheService, queueService *services.QueueService, obsService *services.OBSService) *CacheController {
 	return &CacheController{
 		cacheService: cacheService,
 		queueService: queueService,
-		batchService: batchService,
 		obsService:   obsService,
 	}
 }
@@ -599,7 +597,7 @@ func (cc *CacheController) GetRenderQueue(c *gin.Context) {
 	})
 }
 
-// GetProjectRenderProgress 获取项目渲染进度（使用批次）
+// GetProjectRenderProgress 获取项目渲染进度（简化版本）
 // GET /api/figma/project/:project_id/render/progress
 func (cc *CacheController) GetProjectRenderProgress(c *gin.Context) {
 	session := sessions.Default(c)
@@ -630,82 +628,22 @@ func (cc *CacheController) GetProjectRenderProgress(c *gin.Context) {
 		return
 	}
 
-	// 如果没有活跃的渲染批次，返回空进度
-	if project.RenderID == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"code":    0,
-			"message": "success",
-			"data": gin.H{
-				"has_render":      false,
-				"status":          "idle",
-				"progress":        0,
-				"total_nodes":     0,
-				"processed_nodes": 0,
-				"failed_nodes":    0,
-			},
-		})
-		return
-	}
-
-	// 获取批次进度
-	batch, err := cc.batchService.GetBatchProgress(project.RenderID)
-	if err != nil {
-		log.Printf("❌ [GetProjectRenderProgress] 获取批次进度失败: %v", err)
-		c.JSON(http.StatusOK, gin.H{
-			"code":    0,
-			"message": "success",
-			"data": gin.H{
-				"has_render": false,
-			},
-		})
-		return
-	}
-
-	// 如果状态是 waiting，查询冷却时间
-	cooldownSeconds := 0
-	if batch.Status == "waiting" {
-		// 查询第一个队列的冷却时间
-		queueIDs, _ := models.GetQueuesByBatch(batch.ID)
-		if len(queueIDs) > 0 {
-			queue, err := models.GetRenderQueue(queueIDs[0])
-			if err == nil && queue.FigmaToken != "" {
-				cooldownRemaining, err := cc.cacheService.GetTokenCooldownRemaining(queue.FigmaToken)
-				if err == nil {
-					cooldownSeconds = int(cooldownRemaining)
-					log.Printf("✅ [GetProjectRenderProgress] 冷却剩余时间: %d 秒", cooldownSeconds)
-				}
-			}
-		}
-	}
-
-	// 准备响应数据
-	responseData := gin.H{
-		"has_render":         true,
-		"batch_id":           batch.ID,
-		"status":             batch.Status,
-		"progress":           batch.Progress,
-		"total_nodes":        batch.TotalNodes,
-		"processed_nodes":    batch.ProcessedNodes,
-		"failed_nodes":       batch.FailedNodes,
-		"total_queues":       batch.TotalQueues,
-		"completed_queues":   batch.CompletedQueues,
-		"cooldown_remaining": cooldownSeconds,
-		"error_message":      batch.ErrorMessage,
-		"started_at":         batch.StartedAt,
-		"completed_at":       batch.CompletedAt,
-		"created_at":         batch.CreatedAt,
-		"updated_at":         batch.UpdatedAt,
-	}
-
-	// 返回渲染进度
+	// 由于批量渲染功能已移除，始终返回空进度
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "success",
-		"data":    responseData,
+		"data": gin.H{
+			"has_render":      false,
+			"status":          "idle",
+			"progress":        0,
+			"total_nodes":     0,
+			"processed_nodes": 0,
+			"failed_nodes":    0,
+		},
 	})
 }
 
-// CancelProjectRender 取消项目渲染
+// CancelProjectRender 取消项目渲染（简化版本）
 // POST /api/figma/project/:project_id/render/cancel
 func (cc *CacheController) CancelProjectRender(c *gin.Context) {
 	session := sessions.Default(c)
@@ -736,26 +674,10 @@ func (cc *CacheController) CancelProjectRender(c *gin.Context) {
 		return
 	}
 
-	// 如果没有活跃的渲染批次
-	if project.RenderID == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"code":    0,
-			"message": "没有活跃的渲染任务",
-		})
-		return
-	}
-
-	// 取消渲染批次
-	err = cc.batchService.CancelBatchForProject(uint(projectID))
-	if err != nil {
-		log.Printf("❌ [CancelProjectRender] 取消渲染批次失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "取消渲染失败"})
-		return
-	}
-
+	// 由于批量渲染功能已移除，始终返回没有活跃任务
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
-		"message": "渲染任务已取消",
+		"message": "没有活跃的渲染任务",
 	})
 }
 
@@ -861,7 +783,7 @@ func (cc *CacheController) GetNodeImage(c *gin.Context) {
 
 			// 通过 WebSocket 获取图片（30秒超时）
 			imagePath, wsErr := services.TryGetImageViaWebSocket(
-				fileKey, nodeID, format, scale, userID.(uint), tempDir, safeNodeID, ignoreTexts)
+				fileKey, nodeID, format, scale, userID.(uint), tempDir, safeNodeID, ignoreTexts, []string{})
 
 			if wsErr == nil && imagePath != "" {
 				log.Printf("✅ [GetNodeImage] 成功通过 WebSocket 获取实时图片: %s", imagePath)
@@ -964,34 +886,32 @@ func (cc *CacheController) ManualRender(c *gin.Context) {
 	log.Printf("📋 [ManualRender] 接收到的请求参数: FileKey=%s, NodeIDs数量=%d, ProjectIDs=%v, Format=%s, Scale=%.1f",
 		req.FileKey, len(req.NodeIDs), req.ProjectIDs, req.Format, req.Scale)
 
-	// 使用渲染批次服务创建批次
-	batch, err := cc.batchService.CreateRenderBatch(
-		user.ID,
-		req.ProjectIDs,
+	// 直接创建渲染队列（不使用批次）
+	queueIDs, err := cc.queueService.CreateRenderQueue(
+		user.FigmaToken,
 		req.FileKey,
 		req.NodeIDs,
 		req.Format,
 		req.Scale,
-		user.FigmaToken,
+		0, // 不关联项目ID
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
-			"message": "创建渲染批次失败: " + err.Error(),
+			"message": "创建渲染队列失败: " + err.Error(),
 		})
 		return
 	}
 
-	log.Printf("✅ [ManualRender] 渲染批次已创建: BatchID=%d, TotalQueues=%d, TotalNodes=%d",
-		batch.ID, batch.TotalQueues, batch.TotalNodes)
+	log.Printf("✅ [ManualRender] 渲染队列已创建: QueueIDs=%v, TotalNodes=%d",
+		queueIDs, len(req.NodeIDs))
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
-		"message": "渲染批次已创建",
+		"message": "渲染队列已创建",
 		"data": gin.H{
-			"batch_id":     batch.ID,
-			"total_queues": batch.TotalQueues,
-			"total_nodes":  batch.TotalNodes,
+			"queue_ids":   queueIDs,
+			"total_nodes": len(req.NodeIDs),
 		},
 	})
 }

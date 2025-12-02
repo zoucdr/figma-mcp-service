@@ -590,6 +590,7 @@ func APIDownloadFigmaImage(c *gin.Context) {
 	format := c.DefaultQuery("format", "png")
 	scaleStr := c.DefaultQuery("scale", "1.0")
 	ignoreTextsStr := c.DefaultQuery("ignore_texts", "false")
+	ignoreNodesStr := c.DefaultQuery("ignore_nodes", "")
 
 	// 解析缩放比例
 	scale, err := strconv.ParseFloat(scaleStr, 64)
@@ -603,6 +604,25 @@ func APIDownloadFigmaImage(c *gin.Context) {
 		ignoreTexts = true
 	}
 
+	// 解析要忽略的节点列表
+	var ignoreNodes []string
+	if ignoreNodesStr != "" {
+		// 支持逗号分隔的节点ID列表
+		ignoreNodes = strings.Split(ignoreNodesStr, ",")
+		// 去除空白字符
+		for i, nodeID := range ignoreNodes {
+			ignoreNodes[i] = strings.TrimSpace(nodeID)
+		}
+		// 过滤掉空字符串
+		var validIgnoreNodes []string
+		for _, nodeID := range ignoreNodes {
+			if nodeID != "" {
+				validIgnoreNodes = append(validIgnoreNodes, nodeID)
+			}
+		}
+		ignoreNodes = validIgnoreNodes
+	}
+
 	// 验证格式
 	validFormats := map[string]bool{"png": true, "jpg": true, "svg": true}
 	if !validFormats[format] {
@@ -610,7 +630,7 @@ func APIDownloadFigmaImage(c *gin.Context) {
 	}
 
 	// 使用缓存机制下载图片
-	imagePath, err := downloadFigmaImageWithCache(user.ID, user.FigmaToken, fileKey, nodeIDs, format, scale, ignoreTexts)
+	imagePath, err := downloadFigmaImageWithCache(user.ID, user.FigmaToken, fileKey, nodeIDs, format, scale, ignoreTexts, ignoreNodes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "下载图片失败: " + err.Error(),
@@ -725,9 +745,9 @@ func APIClearNodeCache(c *gin.Context) {
 }
 
 // downloadFigmaImageWithCache 使用缓存机制下载Figma图片
-func downloadFigmaImageWithCache(userID uint, _ /*token*/, fileKey, nodeIDs, format string, scale float64, ignoreTexts bool) (string, error) {
-	fmt.Printf("开始下载Figma图片（带缓存）: fileKey=%s, nodeIDs=%s, format=%s, scale=%.1f, ignoreTexts=%v\n",
-		fileKey, nodeIDs, format, scale, ignoreTexts)
+func downloadFigmaImageWithCache(userID uint, _ /*token*/, fileKey, nodeIDs, format string, scale float64, ignoreTexts bool, ignoreNodes []string) (string, error) {
+	fmt.Printf("开始下载Figma图片（带缓存）: fileKey=%s, nodeIDs=%s, format=%s, scale=%.1f, ignoreTexts=%v, ignoreNodes=%v\n",
+		fileKey, nodeIDs, format, scale, ignoreTexts, ignoreNodes)
 
 	// 创建临时文件夹
 	tempDir := filepath.Join("temp", fileKey, "previews")
@@ -749,7 +769,7 @@ func downloadFigmaImageWithCache(userID uint, _ /*token*/, fileKey, nodeIDs, for
 			fmt.Printf("✅ WebSocket 连接存在，优先使用 WebSocket 获取最新图片数据 (ignoreTexts=%v)\n", ignoreTexts)
 
 			// 通过WebSocket调用Figma插件导出图片
-			imagePath, err := services.TryGetImageViaWebSocket(fileKey, nodeIDs, format, scale, userID, tempDir, safeNodeIDs, ignoreTexts)
+			imagePath, err := services.TryGetImageViaWebSocket(fileKey, nodeIDs, format, scale, userID, tempDir, safeNodeIDs, ignoreTexts, ignoreNodes)
 			if err == nil {
 				fmt.Printf("✅ 成功通过 WebSocket 获取最新图片: %s\n", imagePath)
 				// WebSocket 成功获取，handleImageDataFromPlugin 已经自动更新了 OBS、数据库和本地文件
@@ -762,7 +782,7 @@ func downloadFigmaImageWithCache(userID uint, _ /*token*/, fileKey, nodeIDs, for
 	}
 
 	// 步骤2：WebSocket 不可用或失败，检查本地缓存文件
-	existingFile := findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeIDs, scale, ignoreTexts)
+	existingFile := findLatestNodeImageWithIgnoreTextsAndNodes(tempDir, safeNodeIDs, scale, ignoreTexts, ignoreNodes)
 	if existingFile != "" {
 		fmt.Printf("✅ 找到节点 %s 的本地缓存图片: %s\n", nodeIDs, existingFile)
 		return existingFile, nil
@@ -770,10 +790,17 @@ func downloadFigmaImageWithCache(userID uint, _ /*token*/, fileKey, nodeIDs, for
 	fmt.Printf("⚠️ 本地缓存未找到\n")
 
 	// 步骤3：从数据库查找华为云OBS URL
+	// 注意：当前数据库模型不支持ignore_nodes字段，所以如果有ignore_nodes参数，跳过数据库缓存
 	fmt.Printf("步骤3：从数据库查找华为云OBS URL\n")
 	var nodeImage models.FigmaNodeImage
-	err = models.DB.Where("file_key = ? AND node_id = ? AND format = ? AND scale = ? AND ignore_texts = ? AND status IN ('obs_synced', 'figma_cdn')",
-		fileKey, nodeIDs, format, scale, ignoreTexts).First(&nodeImage).Error
+	if len(ignoreNodes) > 0 {
+		// 如果有忽略节点参数，跳过数据库缓存查询，因为数据库模型暂不支持ignore_nodes
+		fmt.Printf("⚠️ 检测到ignore_nodes参数，跳过数据库缓存查询\n")
+		err = fmt.Errorf("ignore_nodes参数不支持数据库缓存")
+	} else {
+		err = models.DB.Where("file_key = ? AND node_id = ? AND format = ? AND scale = ? AND ignore_texts = ? AND status IN ('obs_synced', 'figma_cdn')",
+			fileKey, nodeIDs, format, scale, ignoreTexts).First(&nodeImage).Error
+	}
 
 	if err == nil && nodeImage.OBSKey != "" {
 		// 找到了OBS记录，尝试从OBS下载
@@ -956,6 +983,11 @@ func findLatestNodeImage(tempDir, safeNodeID string, scale float64) string {
 
 // findLatestNodeImageWithIgnoreTexts 查找节点的最新图片文件（根据缩放等级和忽略文字标志）
 func findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeID string, scale float64, ignoreTexts bool) string {
+	return findLatestNodeImageWithIgnoreTextsAndNodes(tempDir, safeNodeID, scale, ignoreTexts, []string{})
+}
+
+// findLatestNodeImageWithIgnoreTextsAndNodes 查找节点的最新图片文件（根据缩放等级、忽略文字标志和忽略节点列表）
+func findLatestNodeImageWithIgnoreTextsAndNodes(tempDir, safeNodeID string, scale float64, ignoreTexts bool, ignoreNodes []string) string {
 	// 构建缩放等级字符串
 	scaleStr := formatScaleForFilename(scale)
 
@@ -965,13 +997,27 @@ func findLatestNodeImageWithIgnoreTexts(tempDir, safeNodeID string, scale float6
 		suffix = "p"
 	}
 
+	// 如果有忽略节点，添加到后缀中
+	if len(ignoreNodes) > 0 {
+		// 对忽略节点列表进行排序以确保一致性
+		sortedIgnoreNodes := make([]string, len(ignoreNodes))
+		copy(sortedIgnoreNodes, ignoreNodes)
+		sort.Strings(sortedIgnoreNodes)
+
+		// 生成忽略节点的哈希值作为文件名的一部分
+		ignoreNodesStr := strings.Join(sortedIgnoreNodes, ",")
+		hash := md5.Sum([]byte(ignoreNodesStr))
+		ignoreNodesHash := fmt.Sprintf("%x", hash)[:8] // 使用前8位哈希值
+		suffix = suffix + "i" + ignoreNodesHash
+	}
+
 	// 查找同一节点和缩放等级的所有图片文件（支持多种格式，不包括临时文件）
 	supportedExts := []string{".png", ".svg", ".jpg", ".jpeg"}
 	var allFiles []string
 
 	for _, ext := range supportedExts {
-		// 匹配格式：节点-缩放等级x/p-*.*
-		// 例如：1_1223-1.0x-abc123.png 或 1_1223-1.0p-abc123.png
+		// 匹配格式：节点-缩放等级x/p[i哈希值]-*.*
+		// 例如：1_1223-1.0x-abc123.png 或 1_1223-1.0pi12345678-abc123.png
 		pattern := filepath.Join(tempDir, safeNodeID+"-"+scaleStr+suffix+"-*"+ext)
 		files, err := filepath.Glob(pattern)
 		if err == nil && len(files) > 0 {
@@ -1684,12 +1730,46 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 			if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
 				switch resMode {
 				case "sprite", "slice", "texture":
-					// 图片相关模式：清除子节点中不包含图片或文字节点的部分
+					// 图片相关模式：实现父子res_mode共存机制
+					// 保留以下子节点：
+					// 1. 子节点设置了res_mode（会单独渲染）
+					// 2. 子节点为TEXT类型（保留为动态文本）
+					// 3. 子节点子树中包含设置了res_mode的节点或TEXT节点
+					// 清除其他装饰性子节点
 					if children, hasChildren := childrenMap[nodeID]; hasChildren {
 						for _, child := range children {
 							childID := (*child)["id"].(string)
-							// 检查子节点及其子树是否包含图片或文字节点，如果不包含则可以删除
-							if !hasImageNodeInSubtree(childID, childrenMap, nodeModifys) {
+							childType := ""
+							if t, ok := (*child)["type"].(string); ok {
+								childType = t
+							}
+
+							// 检查子节点是否应该保留
+							shouldKeep := false
+
+							// 1. 子节点设置了res_mode - 保留（会单独渲染）
+							if childModifys, exists := nodeModifys[childID]; exists {
+								if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
+									shouldKeep = true
+									fmt.Printf("保留子节点 %s (设置了res_mode=%s)\n", childID, childResMode)
+								}
+							}
+
+							// 2. 子节点为TEXT类型 - 保留（动态文本）
+							if childType == "TEXT" {
+								shouldKeep = true
+								fmt.Printf("保留子节点 %s (TEXT类型)\n", childID)
+							}
+
+							// 3. 子节点子树中包含图片或文字节点 - 保留
+							if !shouldKeep && hasImageNodeInSubtree(childID, childrenMap, nodeModifys) {
+								shouldKeep = true
+								fmt.Printf("保留子节点 %s (子树包含图片或文字节点)\n", childID)
+							}
+
+							// 如果不需要保留，则标记删除
+							if !shouldKeep {
+								fmt.Printf("删除装饰性子节点 %s\n", childID)
 								markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
 							}
 						}
@@ -1769,17 +1849,45 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 		if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
 			switch resMode {
 			case "sprite", "slice", "texture":
-				// 图片相关模式：清除子节点中不符合保留条件的部分
+				// 图片相关模式：实现父子res_mode共存机制
+				// 保留以下子节点：
+				// 1. 子节点设置了res_mode（会单独渲染）
+				// 2. 子节点为TEXT类型（保留为动态文本）
+				// 3. 子节点子树中包含设置了res_mode的节点或TEXT节点
 				if children, hasChildren := childrenMap[nodeID]; hasChildren {
 					for _, child := range children {
 						childID := (*child)["id"].(string)
-						// 检查子节点是否符合保留条件
-						if !shouldKeepChildNode(childID, nodeModifys) {
+						childType := ""
+						if t, ok := (*child)["type"].(string); ok {
+							childType = t
+						}
+
+						// 检查子节点是否应该保留
+						shouldKeep := false
+
+						// 1. 子节点设置了res_mode - 保留
+						if childModifys, exists := nodeModifys[childID]; exists {
+							if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
+								shouldKeep = true
+							}
+						}
+
+						// 2. 子节点为TEXT类型 - 保留
+						if childType == "TEXT" {
+							shouldKeep = true
+						}
+
+						// 3. 子节点子树中包含图片或文字节点 - 保留
+						if !shouldKeep && hasImageNodeInSubtree(childID, childrenMap, nodeModifys) {
+							shouldKeep = true
+						}
+
+						// 如果不需要保留，则标记删除
+						if !shouldKeep {
 							markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
 						}
 					}
 				}
-				// 注意：没有子节点的图片/文字节点应该被保留，因为它们本身就是有用的内容
 			case "cutout":
 				// 层级剔除模式：移除当前节点，子节点上移
 				nodesToRemove[nodeID] = true
@@ -1818,6 +1926,7 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 }
 
 // hasImageNodeInSubtree 检查子树中是否包含符合保留条件的节点
+// 用于判断子节点是否需要保留（父子res_mode共存机制）
 func hasImageNodeInSubtree(nodeID string, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}) bool {
 	// 检查当前节点是否符合保留条件
 	if modifys, exists := nodeModifys[nodeID]; exists {
@@ -1828,6 +1937,15 @@ func hasImageNodeInSubtree(nodeID string, childrenMap map[string][]*gin.H, nodeM
 			}
 			// 其他res_mode（sprite, slice, texture等）都保留
 			return true
+		}
+	}
+
+	// 检查当前节点是否为TEXT类型（需要保留）
+	if children, hasChildren := childrenMap[nodeID]; hasChildren {
+		for _, child := range children {
+			if childType, ok := (*child)["type"].(string); ok && childType == "TEXT" {
+				return true
+			}
 		}
 	}
 
