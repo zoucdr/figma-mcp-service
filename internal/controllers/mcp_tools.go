@@ -129,6 +129,28 @@ func GetBasicTools() []gin.H {
 				"required": []string{"project_id"},
 			},
 		},
+		{
+			"name":        "get_code_prompts",
+			"description": "获取当前用户的代码生成提示词配置信息",
+			"inputSchema": gin.H{
+				"type":       "object",
+				"properties": gin.H{},
+				"required":   []string{},
+			},
+		},
+		{
+			"name":        "get_optimaze_document",
+			"description": "获取优化后的JSON数据，包含完整的节点树结构和图片名称信息（类似导出功能生成的metadata.json）",
+			"inputSchema": gin.H{
+				"type": "object",
+				"properties": gin.H{
+					"project_id": gin.H{"type": "number", "description": "项目ID"},
+					"format":     gin.H{"type": "string", "description": "图片格式", "enum": []string{"png", "jpg", "svg"}, "default": "png"},
+					"scale":      gin.H{"type": "number", "description": "图片缩放比例 (0.1-4.0)", "minimum": 0.1, "maximum": 4.0, "default": 1.0},
+				},
+				"required": []string{"project_id"},
+			},
+		},
 	}
 }
 
@@ -320,12 +342,14 @@ func SimulateMCPToolCall(c *gin.Context) {
 
 	// 定义基础工具列表（不需要 Figma 插件连接，直接调用后端处理）
 	basicTools := map[string]bool{
-		"get_preview":         true,
-		"get_node_tree":       true,
-		"set_nodes_modify":    true,
-		"get_modify_prompt":   true,
-		"clear_nodes_modifys": true,
-		"get_ref_nodes":       true,
+		"get_preview":           true,
+		"get_node_tree":         true,
+		"set_nodes_modify":      true,
+		"get_modify_prompt":     true,
+		"clear_nodes_modifys":   true,
+		"get_ref_nodes":         true,
+		"get_code_prompts":      true,
+		"get_optimaze_document": true,
 	}
 
 	// Create a request ID

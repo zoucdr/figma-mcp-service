@@ -11,9 +11,7 @@ new Vue({
             androidDialogVisible: false,
             iosDialogVisible: false,
             shareDialogVisible: false,
-            shareCodeDialogVisible: false,
             sharing: false,
-            sharingCode: false,
             mcpToken: window.profileData?.mcpToken || '',
             cooldownResetLoading: false,
             cooldownInfo: {
@@ -27,8 +25,10 @@ new Vue({
                 figmaToken: window.profileData?.figmaToken || '',
                 compTypes: window.profileData?.compTypes || '',
                 prompts: window.profileData?.prompts || '',
-                codePrompts: window.profileData?.codePrompts || ''
+                codePrompts: window.profileData?.codePrompts || '',
+                uiCreater: window.profileData?.uiCreater || ''
             },
+            testingScript: false,
             passwordForm: {
                 oldPassword: '',
                 newPassword: '',
@@ -39,21 +39,7 @@ new Vue({
                 description: '',
                 prompt: ''
             },
-            shareCodeForm: {
-                title: '',
-                description: '',
-                prompt: ''
-            },
             shareRules: {
-                title: [
-                    { required: true, message: '请输入标题', trigger: 'blur' },
-                    { min: 2, max: 100, message: '长度在 2 到 100 个字符', trigger: 'blur' }
-                ],
-                prompt: [
-                    { required: true, message: '提示词内容不能为空', trigger: 'blur' }
-                ]
-            },
-            shareCodeRules: {
                 title: [
                     { required: true, message: '请输入标题', trigger: 'blur' },
                     { min: 2, max: 100, message: '长度在 2 到 100 个字符', trigger: 'blur' }
@@ -135,7 +121,7 @@ new Vue({
                 proxyConfig: true,
                 controlConfig: true,
                 aiPrompt: true,
-                codePrompt: true
+                uiCreater: true
             }
         };
     },
@@ -256,6 +242,128 @@ new Vue({
             this.iosDialogVisible = false;
             this.$message.success('已应用iOS控件列表');
         },
+        
+        // 使用示例脚本
+        // 使用Android示例脚本
+        async useAndroidExample() {
+            try {
+                const response = await fetch('/static/examples/android_example.js');
+                if (!response.ok) {
+                    throw new Error('加载示例脚本失败');
+                }
+                const exampleScript = await response.text();
+                this.profileForm.uiCreater = exampleScript;
+                this.$message.success('Android示例脚本已应用');
+            } catch (error) {
+                console.error('加载Android示例脚本失败:', error);
+                this.$message.error('加载示例脚本失败，请重试');
+            }
+        },
+        
+        // 使用iOS示例脚本
+        async useIOSExample() {
+            try {
+                const response = await fetch('/static/examples/ios_example.js');
+                if (!response.ok) {
+                    throw new Error('加载示例脚本失败');
+                }
+                const exampleScript = await response.text();
+                this.profileForm.uiCreater = exampleScript;
+                this.$message.success('iOS示例脚本已应用');
+            } catch (error) {
+                console.error('加载iOS示例脚本失败:', error);
+                this.$message.error('加载示例脚本失败，请重试');
+            }
+        },
+        
+        // 使用Unity-AppUI示例脚本
+        async useUnityExample() {
+            try {
+                const response = await fetch('/static/examples/unity_example.js');
+                if (!response.ok) {
+                    throw new Error('加载示例脚本失败');
+                }
+                const exampleScript = await response.text();
+                this.profileForm.uiCreater = exampleScript;
+                this.$message.success('Unity-AppUI示例脚本已应用');
+            } catch (error) {
+                console.error('加载Unity示例脚本失败:', error);
+                this.$message.error('加载示例脚本失败，请重试');
+            }
+        },
+        
+        // 测试脚本
+        async testScript() {
+            if (!this.profileForm.uiCreater) {
+                this.$message.warning('请先输入脚本');
+                return;
+            }
+            
+            this.testingScript = true;
+            try {
+                // 创建测试上下文
+                const testContext = {
+                    nodeTree: {
+                        id: "0:1",
+                        name: "测试根节点",
+                        type: "FRAME",
+                        children: [
+                            {
+                                id: "0:2",
+                                name: "测试子节点1",
+                                type: "TEXT",
+                                children: []
+                            },
+                            {
+                                id: "0:3",
+                                name: "测试子节点2",
+                                type: "RECTANGLE",
+                                children: []
+                            }
+                        ]
+                    },
+                    imageDict: {
+                        "0:3": "images/0_3.png"  // 现在直接是文件名字符串
+                    },
+                    config: {
+                        imageFormat: "png",
+                        imageScale: 2.0
+                    },
+                    projectId: 1,
+                    project: {
+                        name: "测试项目"
+                    }
+                };
+                
+                // 执行脚本
+                const scriptFunc = new Function('context', `
+                    ${this.profileForm.uiCreater}
+                    return generatePreview(context);
+                `);
+                
+                const result = scriptFunc(testContext);
+                
+                if (typeof result !== 'object' || result === null) {
+                    this.$message.error('脚本返回值格式错误，应该返回对象 { "文件名": "文件内容" }');
+                    return;
+                }
+                
+                const fileCount = Object.keys(result).length;
+                this.$message.success(`脚本测试成功！生成了 ${fileCount} 个文件`);
+                
+                // 显示生成的文件列表
+                const fileList = Object.keys(result).join(', ');
+                this.$alert(`生成的文件: ${fileList}`, '测试结果', {
+                    confirmButtonText: '确定'
+                });
+            } catch (error) {
+                console.error('脚本测试失败:', error);
+                this.$message.error('脚本测试失败: ' + error.message);
+            } finally {
+                this.testingScript = false;
+            }
+        },
+        
         updateProfile() {
             this.$refs.profileForm.validate(valid => {
                 if (valid) {
@@ -266,6 +374,7 @@ new Vue({
                     formData.append('comp_types', this.profileForm.compTypes);
                     formData.append('prompts', this.profileForm.prompts);
                     formData.append('code_prompts', this.profileForm.codePrompts);
+                    formData.append('ui_creater', this.profileForm.uiCreater);
                     // 添加代理配置
                     formData.append('proxy_enabled', this.proxyForm.proxyEnabled);
                     formData.append('proxy_url', this.proxyForm.proxyUrl);
@@ -492,51 +601,6 @@ new Vue({
         // 跳转到分享广场
         goToSharePage() {
             window.location.href = '/share';
-        },
-        
-        // 显示分享代码生成提示词对话框
-        showShareCodePromptDialog() {
-            if (!this.profileForm.codePrompts || this.profileForm.codePrompts.trim() === '') {
-                this.$message.warning('请先设置代码生成提示词内容');
-                return;
-            }
-            
-            this.shareCodeForm = {
-                title: '',
-                description: '',
-                prompt: this.profileForm.codePrompts
-            };
-            this.shareCodeDialogVisible = true;
-        },
-        
-        // 提交分享代码生成提示词
-        async submitShareCodePrompt() {
-            this.$refs.shareCodeForm.validate(async (valid) => {
-                if (!valid) {
-                    return false;
-                }
-                
-                this.sharingCode = true;
-                try {
-                    const response = await axios.post('/share/api/shares', this.shareCodeForm);
-                    
-                    if (response.data.success) {
-                        this.$message.success('分享成功');
-                        this.shareCodeDialogVisible = false;
-                        this.shareCodeForm = {
-                            title: '',
-                            description: '',
-                            prompt: ''
-                        };
-                        this.$refs.shareCodeForm.resetFields();
-                    }
-                } catch (error) {
-                    console.error('分享失败:', error);
-                    this.$message.error(error.response?.data?.error || '分享失败');
-                } finally {
-                    this.sharingCode = false;
-                }
-            });
         },
         
         // 切换密码表单显示/隐藏

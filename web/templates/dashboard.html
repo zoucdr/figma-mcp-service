@@ -137,7 +137,11 @@
                         }" 
                         node-key="id"
                         :expand-on-click-node="false"
-                        :default-expanded-keys="expandedKeys">
+                        :default-expanded-keys="expandedKeys"
+                        draggable
+                        :allow-drop="handleAllowDrop"
+                        :allow-drag="handleAllowDrag"
+                        @node-drop="handleNodeDrop">
                         <span class="custom-tree-node" slot-scope="{ node, data }" @click="handleTreeNodeClick(data.id, $event)" @contextmenu.prevent="showTreeNodeContextMenu($event, data.id)" :class="{ 'selected-node': isNodeSelected(data.id) }">
                             <!-- 根据节点类型显示不同图标 -->
                             <!-- 依赖节点分组图标 -->
@@ -186,8 +190,8 @@
                             
                             <!-- 图标容器，支持多个图标排列 -->
                             <span class="node-icons-container">
-                                <!-- 如果节点有修改信息且配置了父级ID，显示链接图标 -->
-                                <i v-if="data.modifys && data.modifys.parent_id" class="el-icon-link" style="color: #E6A23C; margin-right: 4px;" title="已配置父级ID"></i>
+                                <!-- 如果节点的parent_id真的被修改了（与原始parent_id不同），显示链接图标 -->
+                                <i v-if="data.isParentIdChanged" class="el-icon-link" style="color: #E6A23C; margin-right: 4px;" title="已重新指定父级节点"></i>
                                 
                                 <!-- 如果节点存在修改且资源模式是sprite/slice/texture，根据是否有img_id显示不同图标 -->
                                 <i v-if="data.modifys && ['sprite', 'slice', 'texture'].includes(data.modifys.res_mode) && data.modifys.img_id" class="el-icon-picture" style="color: #67C23A; margin-right: 4px;" title="图片资源 (已配置图片ID)"></i>
@@ -831,7 +835,7 @@
                             <div class="property-section-content" v-show="sectionExpanded.layoutSettings">
                                 <div v-if="hasNodeModifications || showLayoutSettings">
                                     <el-form-item label="水平约束：" label-width="80px" class="inline-form-item">
-                                        <el-select v-model="propertyForm.horizontal" placeholder="选择水平约束" :disabled="propertyForm.ignore" size="small">
+                                        <el-select v-model="propertyForm.horizontal" placeholder="选择水平约束" :disabled="propertyForm.ignore" size="small" @change="onHorizontalChange">
                                             <el-option label="左对齐" value="LEFT"></el-option>
                                             <el-option label="右对齐" value="RIGHT"></el-option>
                                             <el-option label="水平居中" value="CENTER"></el-option>
@@ -841,7 +845,7 @@
                                     </el-form-item>
                                     
                                     <el-form-item label="垂直约束：" label-width="80px" class="inline-form-item">
-                                        <el-select v-model="propertyForm.vertical" placeholder="选择垂直约束" :disabled="propertyForm.ignore" size="small">
+                                        <el-select v-model="propertyForm.vertical" placeholder="选择垂直约束" :disabled="propertyForm.ignore" size="small" @change="onVerticalChange">
                                             <el-option label="顶部对齐" value="TOP"></el-option>
                                             <el-option label="底部对齐" value="BOTTOM"></el-option>
                                             <el-option label="垂直居中" value="CENTER"></el-option>
@@ -1019,30 +1023,15 @@
                 API访问
             </el-button>
             
-            <!-- 模板代码导出按钮 -->
-            <el-dropdown @command="handleTemplateExport" trigger="click" placement="top">
-                <el-button 
-                    class="template-export-btn" 
-                    type="primary" 
-                    size="small"
-                    title="模板代码导出">
-                    模板代码 <i class="el-icon-arrow-up el-icon--right"></i>
-                </el-button>
-                <el-dropdown-menu slot="dropdown">
-                    <el-dropdown-item command="unity-appui">
-                        <i class="el-icon-mobile-phone"></i> Unity-AppUI
-                    </el-dropdown-item>
-                    <el-dropdown-item command="android-kt">
-                        <i class="el-icon-phone"></i> Android-Kotlin
-                    </el-dropdown-item>
-                    <el-dropdown-item command="ios-swift">
-                        <i class="el-icon-mobile"></i> iOS-Swift
-                    </el-dropdown-item>
-                    <el-dropdown-item command="web-vue">
-                        <i class="el-icon-monitor"></i> Web-Vue
-                    </el-dropdown-item>
-                </el-dropdown-menu>
-            </el-dropdown>
+            <!-- 自定义代码导出按钮 -->
+            <el-button 
+                class="template-export-btn" 
+                type="primary" 
+                size="small"
+                @click="showCustomCodePreview"
+                title="自定义代码导出">
+                代码预览
+            </el-button>
             
         </div>
         

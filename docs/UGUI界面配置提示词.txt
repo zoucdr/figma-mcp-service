@@ -10,7 +10,7 @@
 
 ### 1️⃣ 父子res_mode共存机制（核心技术特性）
 
-**技术原理**：父节点和子节点可以同时设置res_mode，子节点设置后会自动从父节点渲染中剔除。
+**技术原理**：父节点和子节点可以同时设置res_mode，子节点设置后会自动从父节点渲染效果中剔除。
 
 **关键规则**：
 - TEXT节点本身不能设置res_mode，但其父节点可以设置
@@ -18,6 +18,7 @@
 - 子节点设置res_mode后，会自动从父节点渲染中剔除
 - **父容器有视觉内容（背景、边框、阴影）时，必须为父容器设置res_mode**
 - 不要因为包含TEXT/Button就放弃为父容器设置res_mode
+- 优先在交互控件上标记res_mode为图
 
 **应用示例**：
 ```
@@ -28,7 +29,7 @@
 配置策略：
 - 容器Frame: res_mode="texture" → 导出背景
 - titleText: 不设置 (TEXT节点)
-- closeBtn: res_mode="sprite" → 从容器中剔除，单独导出
+- closeBtn: res_mode="sprite" → 从容器中标记为图渲染剔除，单独导出
 
 结果：
 - Frame.png: 背景（不包含按钮）
@@ -187,7 +188,7 @@ set_nodes_modify(project_id, modifys)
 - `img_id`: 关联相同的图片节点ID
 
 ### 其他配置
-- `ignore`: 移除不导入节点
+- `ignore`: 移除不导入节点 (必须是确定不显示的节点，如果忽略了将完全不会渲染到任何图中）
 - `parent_id`: 移动层级位置
 
 ---
@@ -257,6 +258,3 @@ set_nodes_modify(project_id, modifys)
 3. 最灵活的UI变化：最大化UI变化，组件分离
 
 ---
-
-## 支持控件列表
-Button, Toggle, Slider, Dropdown, InputField, ScrollView, Scrollbar, ToggleGroup, Mask, GridLayoutGroup, VerticalLayoutGroup, HorizontalLayoutGroup, ContentSizeFitter

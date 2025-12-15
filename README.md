@@ -692,6 +692,39 @@ MCP_MAX_CONNECTIONS=100
 - **数据库优化**: 索引优化和连接池配置
 - **CDN 集成**: 静态资源 CDN 分发
 
+## 🔄 WebSocket 后台重连机制
+
+### 新特性 (v2.0+)
+
+Figma 插件现在支持强大的后台重连机制，确保在各种场景下都能维持稳定的 WebSocket 连接。
+
+#### 三层防护机制
+
+1. **可见性检测**: 前台恢复时立即检查连接状态
+2. **心跳异常检测**: 自动发现定时器被后台挂起
+3. **定期健康检查**: 独立验证连接真实状态（每 10 秒）
+
+#### 支持场景
+
+- ✅ 短时间后台切换（< 1 分钟）
+- ✅ 长时间后台挂起（> 5 分钟）
+- ✅ 网络波动自动恢复
+- ✅ 服务器重启自动重连
+- ✅ 指数退避重连策略
+
+#### 使用说明
+
+插件会自动处理所有重连逻辑，无需手动干预。如遇到问题:
+
+1. 查看插件控制台日志
+2. 点击"取消自动重连"停止重连
+3. 手动点击"连接"重新建立连接
+
+详细文档:
+- **技术实现**: `figma-plugin/WEBSOCKET_RECONNECT.md`
+- **测试指南**: `demo/test_background_reconnect.md`
+- **测试脚本**: `demo/test_background_reconnect.ps1`
+
 ## 🔍 故障排除
 
 ### 常见问题
@@ -711,6 +744,24 @@ mysql -h localhost -u figma_user -p figma_deliver
 console.log('Server URL:', localStorage.getItem('serverUrl'));
 console.log('Auth Token:', localStorage.getItem('authToken'));
 ```
+
+**WebSocket 连接无法建立**:
+1. 确认服务器正在运行: `netstat -an | grep :8080`
+2. 检查防火墙设置
+3. 对于远程连接，确保使用了正确的 Connection ID (MCP Token)
+4. 查看浏览器控制台是否有错误信息
+
+**后台重连失效**:
+1. 打开浏览器开发者工具查看日志
+2. 确认没有点击"断开连接"（手动断开不会自动重连）
+3. 检查日志中是否有心跳和健康检查信息
+4. 运行测试脚本: `.\demo\test_background_reconnect.ps1`
+
+**重连次数过多**:
+1. 点击"取消自动重连"停止重连
+2. 检查服务器状态和日志
+3. 确认网络连接稳定
+4. 修复问题后手动重新连接
 
 #### MCP 连接异常
 ```bash

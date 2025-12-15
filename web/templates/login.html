@@ -50,13 +50,6 @@
                             </template>
                         </el-input>
                     </el-form-item>
-                    <el-form-item prop="figmaToken">
-                        <el-input v-model="registerForm.figmaToken" placeholder="Figma Private Token">
-                            <template slot="prefix">
-                                <i class="el-icon-tickets"></i>
-                            </template>
-                        </el-input>
-                    </el-form-item>
                     <el-form-item>
                         <el-button type="primary" @click="handleRegister" :loading="loading" class="login-button">注册</el-button>
                     </el-form-item>

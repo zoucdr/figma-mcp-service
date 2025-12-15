@@ -623,6 +623,9 @@
           <button id="btn-disconnect" class="secondary" disabled>
             Disconnect
           </button>
+          <button id="btn-cancel-reconnect" class="secondary hidden" style="margin-top: 8px;">
+            取消自动重连
+          </button>
         </div>
         
         <!-- Add Progress Bar Section -->
@@ -840,6 +843,18 @@
         pendingRequests: new Map(),
         channel: null,
         callHistory: [], // 存储调用记录
+        // 重连相关状态
+        reconnecting: false,
+        reconnectAttempts: 0,
+        reconnectTimer: null,
+        heartbeatTimer: null,
+        manualDisconnect: false, // 是否是手动断开
+        maxReconnectDelay: 5000, // 最大重连延迟5秒
+        minReconnectDelay: 1000, // 最小重连延迟1秒
+        heartbeatInterval: 3000, // 心跳间隔3秒
+        lastHeartbeatTime: 0, // 最后心跳时间戳
+        healthCheckTimer: null, // 健康检查定时器
+        healthCheckInterval: 10000, // 健康检查间隔10秒
       };
 
       // UI Elements
@@ -848,6 +863,7 @@
       const connectionIdInput = document.getElementById("connection-id");
       const connectButton = document.getElementById("btn-connect");
       const disconnectButton = document.getElementById("btn-disconnect");
+      const cancelReconnectButton = document.getElementById("btn-cancel-reconnect");
       const connectionStatus = document.getElementById("connection-status");
       
       // Download UI Elements
@@ -960,20 +976,35 @@
       // Initialize UI
       function updateConnectionStatus(isConnected, message) {
         state.connected = isConnected;
-        connectionStatus.innerHTML =
-          message ||
-          (isConnected
+        
+        // 如果正在重连，显示重连状态
+        let displayMessage = message;
+        if (state.reconnecting && !isConnected) {
+          const delay = calculateReconnectDelay(state.reconnectAttempts);
+          displayMessage = `🔄 重连中 (第 ${state.reconnectAttempts + 1} 次尝试，${Math.round(delay/1000)}秒后重试)`;
+        } else {
+          displayMessage = message || (isConnected
             ? "Connected to Cursor MCP server"
             : "Not connected to Cursor MCP server");
+        }
+        
+        connectionStatus.innerHTML = displayMessage;
         connectionStatus.className = `status ${
-          isConnected ? "connected" : "disconnected"
+          isConnected ? "connected" : (state.reconnecting ? "info" : "disconnected")
         }`;
 
-        connectButton.disabled = isConnected;
-        disconnectButton.disabled = !isConnected;
-        serverHostInput.disabled = isConnected;
-        portInput.disabled = isConnected;
-        connectionIdInput.disabled = isConnected;
+        connectButton.disabled = isConnected || state.reconnecting;
+        disconnectButton.disabled = !isConnected && !state.reconnecting;
+        serverHostInput.disabled = isConnected || state.reconnecting;
+        portInput.disabled = isConnected || state.reconnecting;
+        connectionIdInput.disabled = isConnected || state.reconnecting;
+        
+        // 显示/隐藏取消重连按钮
+        if (state.reconnecting && cancelReconnectButton) {
+          cancelReconnectButton.classList.remove("hidden");
+        } else if (cancelReconnectButton) {
+          cancelReconnectButton.classList.add("hidden");
+        }
         
         // Update collapsed ball appearance based on connection status
         const mainContainer = document.getElementById("main-container");
@@ -983,11 +1014,189 @@
           mainContainer.classList.remove("connected-ball");
         }
       }
+      
+      // 计算重连延迟（指数退避策略）
+      function calculateReconnectDelay(attemptNumber) {
+        // 指数退避: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
+        const delay = Math.min(
+          state.minReconnectDelay * Math.pow(2, attemptNumber),
+          state.maxReconnectDelay
+        );
+        return delay;
+      }
+      
+      // 清理重连定时器
+      function clearReconnectTimer() {
+        if (state.reconnectTimer) {
+          clearTimeout(state.reconnectTimer);
+          state.reconnectTimer = null;
+        }
+      }
+      
+      // 清理心跳定时器
+      function clearHeartbeatTimer() {
+        if (state.heartbeatTimer) {
+          clearInterval(state.heartbeatTimer);
+          state.heartbeatTimer = null;
+        }
+      }
+      
+      // 清理健康检查定时器
+      function clearHealthCheckTimer() {
+        if (state.healthCheckTimer) {
+          clearInterval(state.healthCheckTimer);
+          state.healthCheckTimer = null;
+        }
+      }
+      
+      // 启动健康检查（定期检查连接真实状态）
+      function startHealthCheck() {
+        clearHealthCheckTimer();
+        
+        state.healthCheckTimer = setInterval(() => {
+          // 只在认为已连接时才检查
+          if (state.connected && !state.manualDisconnect) {
+            const socketActuallyConnected = state.socket && state.socket.readyState === WebSocket.OPEN;
+            
+            if (!socketActuallyConnected) {
+              console.warn("🔍 健康检查: 发现连接已断开，但状态未更新");
+              state.connected = false;
+              handleConnectionLost();
+            } else {
+              console.log("🔍 健康检查: 连接正常");
+            }
+          }
+        }, state.healthCheckInterval);
+      }
+      
+      // 启动心跳
+      function startHeartbeat() {
+        clearHeartbeatTimer();
+        
+        // 添加最后心跳时间戳，用于检测后台挂起
+        state.lastHeartbeatTime = Date.now();
+        
+        state.heartbeatTimer = setInterval(() => {
+          if (state.connected && state.socket && state.socket.readyState === WebSocket.OPEN) {
+            try {
+              // 检查距离上次心跳的时间
+              const now = Date.now();
+              const timeSinceLastHeartbeat = now - state.lastHeartbeatTime;
+              
+              // 如果距离上次心跳超过 10 秒（说明定时器被挂起过）
+              if (timeSinceLastHeartbeat > 10000) {
+                console.warn(`⚠️ 检测到心跳间隔异常: ${timeSinceLastHeartbeat}ms，可能从后台恢复`);
+                
+                // 检查连接是否真的还活着
+                if (state.socket.readyState !== WebSocket.OPEN) {
+                  console.error("连接已断开，触发重连");
+                  handleConnectionLost();
+                  return;
+                }
+              }
+              
+              state.lastHeartbeatTime = now;
+              
+              // 发送心跳 ping
+              state.socket.send(JSON.stringify({
+                type: "ping",
+                timestamp: now
+              }));
+              console.log("💓 发送心跳 ping");
+            } catch (error) {
+              console.error("心跳发送失败:", error);
+              // 心跳失败，可能连接已断开，触发重连
+              handleConnectionLost();
+            }
+          }
+        }, state.heartbeatInterval);
+      }
+      
+      // 处理连接丢失
+      function handleConnectionLost() {
+        if (state.manualDisconnect) {
+          console.log("手动断开，不自动重连");
+          return;
+        }
+        
+        if (state.reconnecting) {
+          console.log("已在重连中，跳过");
+          return;
+        }
+        
+        console.log("检测到连接丢失，准备重连...");
+        scheduleReconnect();
+      }
+      
+      // 调度重连
+      function scheduleReconnect() {
+        if (state.manualDisconnect) {
+          console.log("手动断开，不自动重连");
+          return;
+        }
+        
+        state.reconnecting = true;
+        const delay = calculateReconnectDelay(state.reconnectAttempts);
+        
+        console.log(`⏰ 计划 ${Math.round(delay/1000)} 秒后进行第 ${state.reconnectAttempts + 1} 次重连...`);
+        updateConnectionStatus(false, `🔄 ${Math.round(delay/1000)}秒后重连 (第${state.reconnectAttempts + 1}次)`);
+        
+        clearReconnectTimer();
+        state.reconnectTimer = setTimeout(() => {
+          attemptReconnect();
+        }, delay);
+      }
+      
+      // 尝试重连
+      async function attemptReconnect() {
+        if (state.manualDisconnect) {
+          console.log("手动断开，停止重连");
+          state.reconnecting = false;
+          return;
+        }
+        
+        console.log(`🔄 尝试重连... (第 ${state.reconnectAttempts + 1} 次)`);
+        updateConnectionStatus(false, `🔄 正在重连... (第 ${state.reconnectAttempts + 1} 次)`);
+        
+        try {
+          // 关闭旧的 socket
+          if (state.socket) {
+            try {
+              state.socket.close();
+            } catch (e) {
+              console.warn("关闭旧socket失败:", e);
+            }
+            state.socket = null;
+          }
+          
+          // 尝试重新连接
+          await connectToServer(state.serverHost, state.serverPort, state.connectionId);
+          
+          // 注意：连接成功会在 onopen 中处理，这里不需要额外操作
+        } catch (error) {
+          console.error(`重连失败 (第 ${state.reconnectAttempts + 1} 次):`, error);
+          
+          // 增加重连次数
+          state.reconnectAttempts++;
+          
+          // 继续调度下次重连
+          scheduleReconnect();
+        }
+      }
+      
+      // 重置重连状态
+      function resetReconnectState() {
+        state.reconnecting = false;
+        state.reconnectAttempts = 0;
+        clearReconnectTimer();
+      }
 
       // Connect to WebSocket server
       async function connectToServer(host, port, connectionId) {
         try {
-          if (state.connected && state.socket) {
+          // 如果已经连接，不重复连接
+          if (state.connected && state.socket && state.socket.readyState === WebSocket.OPEN) {
+            console.log("已经连接，跳过重复连接");
             updateConnectionStatus(true, "Already connected to server");
             return;
           }
@@ -1024,6 +1233,11 @@
           state.socket = new WebSocket(wsUrl);
 
           state.socket.onopen = () => {
+            console.log("✅ WebSocket 连接已打开");
+            
+            // 重置重连状态
+            resetReconnectState();
+            
             // Generate random channel name
             const channelName = generateChannelName();
             console.log("Joining channel:", channelName);
@@ -1036,11 +1250,24 @@
                 channel: channelName.trim(),
               })
             );
+            
+            // 启动心跳
+            startHeartbeat();
+            
+            // 启动健康检查
+            startHealthCheck();
           };
 
           state.socket.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
+              
+              // 处理心跳 pong 响应
+              if (data.type === "pong") {
+                console.log("💓 收到心跳 pong");
+                return;
+              }
+              
               console.log("Received message:", data);
 
               if (data.type === "system") {
@@ -1070,7 +1297,11 @@
               } else if (data.type === "error") {
                 console.error("Error:", data.message);
                 updateConnectionStatus(false, `Error: ${data.message}`);
-                state.socket.close();
+                
+                // 服务器错误，尝试重连
+                if (!state.manualDisconnect) {
+                  scheduleReconnect();
+                }
               }
 
               handleSocketMessage(data);
@@ -1079,17 +1310,37 @@
             }
           };
 
-          state.socket.onclose = () => {
+          state.socket.onclose = (event) => {
+            console.log(`🔌 WebSocket 连接已关闭 (code: ${event.code}, reason: ${event.reason})`);
+            
+            const wasConnected = state.connected;
             state.connected = false;
-            state.socket = null;
-            updateConnectionStatus(false, "Disconnected from server");
+            
+            // 清理心跳和健康检查
+            clearHeartbeatTimer();
+            clearHealthCheckTimer();
+            
+            // 只有在非手动断开且之前已连接的情况下才自动重连
+            if (!state.manualDisconnect && wasConnected) {
+              updateConnectionStatus(false, "连接已断开，准备重连...");
+              scheduleReconnect();
+            } else if (state.manualDisconnect) {
+              updateConnectionStatus(false, "已断开连接");
+              state.socket = null;
+            } else {
+              // 首次连接失败
+              updateConnectionStatus(false, "连接失败");
+              if (!state.reconnecting) {
+                scheduleReconnect();
+              }
+            }
           };
 
           state.socket.onerror = (error) => {
-            console.error("WebSocket error:", error);
-            updateConnectionStatus(false, "Connection error");
-            state.connected = false;
-            state.socket = null;
+            console.error("❌ WebSocket error:", error);
+            
+            // 不立即更新状态，让 onclose 处理
+            // 因为 onerror 后总是会触发 onclose
           };
         } catch (error) {
           console.error("Connection error:", error);
@@ -1097,17 +1348,40 @@
             false,
             `Connection error: ${error.message || "Unknown error"}`
           );
+          
+          // 连接创建失败，尝试重连
+          if (!state.manualDisconnect) {
+            scheduleReconnect();
+          }
         }
       }
 
       // Disconnect from websocket server
       function disconnectFromServer() {
+        console.log("🔌 手动断开连接");
+        
+        // 标记为手动断开，阻止自动重连
+        state.manualDisconnect = true;
+        
+        // 清理重连、心跳和健康检查定时器
+        clearReconnectTimer();
+        clearHeartbeatTimer();
+        clearHealthCheckTimer();
+        
+        // 重置重连状态
+        resetReconnectState();
+        
         if (state.socket) {
-          state.socket.close();
+          try {
+            state.socket.close(1000, "User disconnect"); // 1000 = 正常关闭
+          } catch (error) {
+            console.warn("关闭连接时出错:", error);
+          }
           state.socket = null;
-          state.connected = false;
-          updateConnectionStatus(false, "Disconnected from server");
         }
+        
+        state.connected = false;
+        updateConnectionStatus(false, "已手动断开连接");
       }
 
       // Handle messages from the WebSocket
@@ -1474,6 +1748,9 @@
           return;
         }
         
+        // 清除手动断开标记，允许自动重连
+        state.manualDisconnect = false;
+        
         updateConnectionStatus(false, "Connecting...");
         connectionStatus.className = "status info";
         connectToServer(host, port, connectionId);
@@ -1485,6 +1762,37 @@
         connectionStatus.className = "status info";
         disconnectFromServer();
       });
+      
+      // Cancel reconnect
+      if (cancelReconnectButton) {
+        cancelReconnectButton.addEventListener("click", () => {
+          console.log("🚫 用户取消自动重连");
+          
+          // 设置手动断开标记
+          state.manualDisconnect = true;
+          
+          // 清理定时器
+          clearReconnectTimer();
+          clearHeartbeatTimer();
+          clearHealthCheckTimer();
+          
+          // 重置状态
+          resetReconnectState();
+          
+          // 关闭 socket
+          if (state.socket) {
+            try {
+              state.socket.close();
+            } catch (error) {
+              console.warn("关闭socket失败:", error);
+            }
+            state.socket = null;
+          }
+          
+          state.connected = false;
+          updateConnectionStatus(false, "已取消自动重连");
+        });
+      }
 
       // Function to update progress UI
       function updateProgressUI(progressData) {
@@ -1608,18 +1916,50 @@
             break;
           case "current-selection":
             // Update node ID input with current selection
+            console.log("[current-selection] Received:", message);
+            
+            // 重新启用刷新按钮
+            if (refreshSelectionBtn) {
+              refreshSelectionBtn.disabled = false;
+              refreshSelectionBtn.textContent = "刷新";
+            }
+            
             if (message.nodeId) {
-              nodeIdInput.value = message.nodeId;
-              nodeNameDiv.textContent = `节点名称: ${message.nodeName || '未知'}`;
-              nodeTypeDiv.textContent = `节点类型: ${message.nodeType || '未知'}`;
-              updateDownloadStatus("connected", `已获取选中节点: ${message.nodeName || message.nodeId}`);
+              // 强制更新 DOM
+              if (nodeIdInput) {
+                nodeIdInput.value = message.nodeId;
+                console.log("[current-selection] Updated nodeId:", message.nodeId);
+              }
+              
+              if (nodeNameDiv) {
+                const nodeName = message.nodeName || '未知';
+                nodeNameDiv.textContent = `节点名称: ${nodeName}`;
+                // 强制重绘
+                nodeNameDiv.style.display = 'none';
+                nodeNameDiv.offsetHeight; // 触发重排
+                nodeNameDiv.style.display = '';
+                console.log("[current-selection] Updated nodeName:", nodeName);
+              }
+              
+              if (nodeTypeDiv) {
+                const nodeType = message.nodeType || '未知';
+                nodeTypeDiv.textContent = `节点类型: ${nodeType}`;
+                // 强制重绘
+                nodeTypeDiv.style.display = 'none';
+                nodeTypeDiv.offsetHeight; // 触发重排
+                nodeTypeDiv.style.display = '';
+                console.log("[current-selection] Updated nodeType:", nodeType);
+              }
+              
+              updateDownloadStatus("connected", `✅ 已刷新节点信息: ${message.nodeName || message.nodeId}`);
               
               // Auto-generate preview for selected node
               generateNodePreview(message.nodeId);
             } else {
-              nodeIdInput.value = "";
-              nodeNameDiv.textContent = "节点名称: 未选择";
-              nodeTypeDiv.textContent = "节点类型: 未知";
+              if (nodeIdInput) nodeIdInput.value = "";
+              if (nodeNameDiv) nodeNameDiv.textContent = "节点名称: 未选择";
+              if (nodeTypeDiv) nodeTypeDiv.textContent = "节点类型: 未知";
+              
               updateDownloadStatus("error", "未选中任何节点，请在 Figma 中选择一个节点");
               
               // Show placeholder when no node selected
@@ -1691,10 +2031,75 @@
       // Clear history button
       clearHistoryBtn.addEventListener("click", clearCallHistory);
       
+      // ===== 网络状态监听 =====
+      // 监听网络在线/离线事件
+      window.addEventListener('online', () => {
+        console.log("🌐 网络已恢复在线");
+        
+        // 如果当前未连接且不是手动断开，立即尝试重连
+        if (!state.connected && !state.manualDisconnect) {
+          console.log("网络恢复，立即尝试重连...");
+          updateConnectionStatus(false, "🌐 网络已恢复，正在重连...");
+          
+          // 清除之前的重连定时器
+          clearReconnectTimer();
+          
+          // 立即重连（不等待）
+          attemptReconnect();
+        }
+      });
+      
+      window.addEventListener('offline', () => {
+        console.log("🌐 网络已离线");
+        updateConnectionStatus(false, "🌐 网络离线，等待网络恢复...");
+      });
+      
+      // 监听页面可见性变化（从后台切回前台）
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          console.log("👁️ 页面变为可见");
+          
+          // 检查 WebSocket 真实连接状态
+          const socketActuallyConnected = state.socket && state.socket.readyState === WebSocket.OPEN;
+          
+          console.log(`连接状态检查: state.connected=${state.connected}, socket.readyState=${state.socket ? state.socket.readyState : 'null'}`);
+          
+          // 如果状态不一致或未连接，立即尝试重连
+          if (!state.manualDisconnect) {
+            if (!socketActuallyConnected) {
+              console.log("检测到连接已断开，立即重连...");
+              state.connected = false;
+              clearReconnectTimer();
+              clearHeartbeatTimer();
+              resetReconnectState();
+              attemptReconnect();
+            } else if (state.connected && socketActuallyConnected) {
+              // 连接正常，重启心跳确保持续监控
+              console.log("连接正常，重启心跳...");
+              startHeartbeat();
+            }
+          }
+        } else {
+          console.log("👁️ 页面变为不可见（后台）");
+          // 清理心跳，避免后台耗电
+          clearHeartbeatTimer();
+        }
+      });
+      
       // Download functionality
       
       // Refresh current selection
       refreshSelectionBtn.addEventListener("click", () => {
+        console.log("[refreshSelection] Requesting current selection...");
+        
+        // 显示加载状态
+        updateDownloadStatus("info", "正在刷新节点信息...");
+        
+        // 禁用按钮防止重复点击
+        refreshSelectionBtn.disabled = true;
+        refreshSelectionBtn.textContent = "刷新中...";
+        
+        // 发送请求
         parent.postMessage(
           {
             pluginMessage: {
@@ -1703,6 +2108,12 @@
           },
           "*"
         );
+        
+        // 3秒后重新启用按钮
+        setTimeout(() => {
+          refreshSelectionBtn.disabled = false;
+          refreshSelectionBtn.textContent = "刷新";
+        }, 3000);
       });
       
       // Refresh preview

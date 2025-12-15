@@ -795,7 +795,7 @@ func DeleteNodeSettings(c *gin.Context) {
 
 		if user.FigmaToken == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "用户未设置Figma Token",
+				"error": "请先在个人资料页面配置 Figma Token",
 			})
 			return
 		}
@@ -896,7 +896,7 @@ func DeleteProjectNodeSettings(c *gin.Context) {
 
 	if user.FigmaToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "用户未设置Figma Token",
+			"error": "请先在个人资料页面配置 Figma Token",
 		})
 		return
 	}
@@ -2832,7 +2832,7 @@ func GetRefNodeDetails(c *gin.Context) {
 	// 如果没有Figma Token，返回错误
 	if user.FigmaToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "用户未设置Figma Token",
+			"error": "请先在个人资料页面配置 Figma Token",
 		})
 		return
 	}
@@ -2899,8 +2899,10 @@ func GetRefNodeDetails(c *gin.Context) {
 	})
 }
 
-// ExportSwiftCode 导出Swift代码
-func ExportSwiftCode(c *gin.Context) {
+// ==================== 自定义代码导出功能 ====================
+
+// GenerateCustomCodePreview 生成自定义代码预览
+func GenerateCustomCodePreview(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
 	if err != nil {
@@ -2910,15 +2912,13 @@ func ExportSwiftCode(c *gin.Context) {
 		return
 	}
 
-	// 解析请求体中的Swift导出配置
-	var config services.SwiftExportConfig
+	// 解析请求体中的导出配置
+	var config services.CustomCodeExportConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		// 使用默认配置
-		config = services.SwiftExportConfig{
+		config = services.CustomCodeExportConfig{
 			ImageFormat: "png",
 			ImageScale:  2.0,
-			CodeStyle:   "uikit-autolayout",
-			Options:     []string{"generateExtensions", "generateResourceManager"},
 		}
 	}
 
@@ -2939,144 +2939,11 @@ func ExportSwiftCode(c *gin.Context) {
 		return
 	}
 
-	// 先取消该项目的所有进行中的导出任务
-	err = models.CancelExportJobsByProject(uint(projectID))
+	// 生成自定义代码预览
+	files, err := services.GenerateCustomCodePreview(project, config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "取消之前的导出任务失败: " + err.Error(),
-		})
-		return
-	}
-
-	// 创建Swift导出任务
-	job := &models.ExportJob{
-		UserID:    userID,
-		ProjectID: uint(projectID),
-		Status:    "pending",
-		Progress:  0,
-		Format:    config.ImageFormat,
-		Scale:     config.ImageScale,
-	}
-
-	result := models.DB.Create(job)
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "创建导出任务失败: " + result.Error.Error(),
-		})
-		return
-	}
-
-	// 异步处理Swift导出任务
-	go services.ProcessSwiftExportJob(job.ID, config)
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"job_id":  job.ID,
-		"message": "Swift代码导出任务已创建",
-	})
-}
-
-// GenerateSwiftPreview 生成Swift代码预览
-func GenerateSwiftPreview(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "项目ID无效",
-		})
-		return
-	}
-
-	// 解析请求体中的Swift导出配置
-	var config services.SwiftExportConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
-		// 使用默认配置
-		config = services.SwiftExportConfig{
-			ImageFormat: "png",
-			ImageScale:  2.0,
-			CodeStyle:   "uikit-autolayout",
-			Options:     []string{"generateExtensions", "generateResourceManager"},
-		}
-	}
-
-	// 验证项目权限
-	project, err := models.GetProjectByID(uint(projectID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "项目不存在",
-		})
-		return
-	}
-
-	// 检查项目是否属于当前用户
-	if project.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "无权限访问此项目",
-		})
-		return
-	}
-
-	// 生成Swift代码预览
-	preview, err := services.GenerateSwiftPreview(project, config)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "生成Swift代码预览失败: " + err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"preview": preview,
-		"message": "Swift代码预览生成成功",
-	})
-}
-
-// GenerateSwiftFullPreview 生成完整的Swift代码预览（所有文件）
-func GenerateSwiftFullPreview(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "项目ID无效",
-		})
-		return
-	}
-
-	// 解析请求体中的Swift导出配置
-	var config services.SwiftExportConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
-		// 使用默认配置
-		config = services.SwiftExportConfig{
-			ImageFormat: "png",
-			ImageScale:  2.0,
-			CodeStyle:   "uikit-autolayout",
-			Options:     []string{"generateExtensions", "generateResourceManager"},
-		}
-	}
-
-	// 验证项目权限
-	project, err := models.GetProjectByID(uint(projectID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "项目不存在",
-		})
-		return
-	}
-
-	// 检查项目是否属于当前用户
-	if project.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "无权限访问此项目",
-		})
-		return
-	}
-
-	// 生成完整的Swift代码文件
-	files, err := services.GenerateSwiftFullPreview(project, config)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "生成Swift代码预览失败: " + err.Error(),
+			"error": "生成代码预览失败: " + err.Error(),
 		})
 		return
 	}
@@ -3084,12 +2951,12 @@ func GenerateSwiftFullPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"files":   files,
-		"message": "Swift代码预览生成成功",
+		"message": "代码预览生成成功",
 	})
 }
 
-// ShowSwiftCodePreview 显示Swift代码预览页面
-func ShowSwiftCodePreview(c *gin.Context) {
+// ShowCustomCodePreview 显示自定义代码预览页面
+func ShowCustomCodePreview(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
 	if err != nil {
@@ -3119,12 +2986,10 @@ func ShowSwiftCodePreview(c *gin.Context) {
 		return
 	}
 
-	// 获取导出配置（从查询参数或使用默认值）
-	exportConfig := services.SwiftExportConfig{
+	// 获取导出配置
+	exportConfig := services.CustomCodeExportConfig{
 		ImageFormat: c.DefaultQuery("imageFormat", "png"),
 		ImageScale:  2.0,
-		CodeStyle:   c.DefaultQuery("codeStyle", "uikit-autolayout"),
-		Options:     []string{"generateExtensions", "generateResourceManager"},
 	}
 
 	// 解析缩放比例
@@ -3134,29 +2999,21 @@ func ShowSwiftCodePreview(c *gin.Context) {
 		}
 	}
 
-	// 解析选项
-	if optionsStr := c.Query("options"); optionsStr != "" {
-		exportConfig.Options = strings.Split(optionsStr, ",")
-	}
-
-	// 尝试生成代码文件
-	var codeFiles map[string]string
-	files, err := services.GenerateSwiftFullPreview(project, exportConfig)
+	// 生成自定义代码预览
+	files, err := services.GenerateCustomCodePreview(project, exportConfig)
 	if err != nil {
-		// 如果生成失败，使用空的文件映射，让前端处理
-		codeFiles = make(map[string]string)
-	} else {
-		codeFiles = files
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+			"title":   "生成失败",
+			"message": "生成代码预览失败: " + err.Error(),
+		})
+		return
 	}
 
-	// 序列化数据为JSON
-	codeFilesJSON, _ := json.Marshal(codeFiles)
-	exportConfigJSON, _ := json.Marshal(exportConfig)
-
-	// 确保CSRF令牌存在
+	// 从session获取CSRF令牌（而不是生成新的）
 	session := sessions.Default(c)
 	csrfToken := session.Get("csrf_token")
 	if csrfToken == nil {
+		// 如果session中没有，生成一个新的
 		token, err := middleware.GenerateRandomString(32)
 		if err != nil {
 			c.HTML(http.StatusInternalServerError, "error.html", gin.H{
@@ -3170,21 +3027,19 @@ func ShowSwiftCodePreview(c *gin.Context) {
 		csrfToken = token
 	}
 
-	// 渲染代码预览页面
-	c.HTML(http.StatusOK, "code-preview.html", gin.H{
-		"title":         "Swift 代码预览",
+	c.HTML(http.StatusOK, "custom-code-preview.html", gin.H{
+		"title":         "代码预览",
 		"project_id":    project.ID,
 		"project_name":  project.Name,
-		"code_files":    string(codeFilesJSON),
-		"export_config": string(exportConfigJSON),
+		"code_files":    files,
+		"export_config": exportConfig,
 		"csrf_token":    csrfToken,
 		"timestamp":     time.Now().Unix(),
-		"file_count":    len(codeFiles),
 	})
 }
 
-// ExportAndroidCode 导出Android代码
-func ExportAndroidCode(c *gin.Context) {
+// ExportCustomCode 导出自定义代码
+func ExportCustomCode(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
 	if err != nil {
@@ -3194,15 +3049,13 @@ func ExportAndroidCode(c *gin.Context) {
 		return
 	}
 
-	// 解析请求体中的Android导出配置
-	var config services.AndroidExportConfig
+	// 解析请求体中的导出配置
+	var config services.CustomCodeExportConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		// 使用默认配置
-		config = services.AndroidExportConfig{
+		config = services.CustomCodeExportConfig{
 			ImageFormat: "png",
 			ImageScale:  2.0,
-			CodeStyle:   "kotlin-constraintlayout",
-			Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
 		}
 	}
 
@@ -3223,253 +3076,21 @@ func ExportAndroidCode(c *gin.Context) {
 		return
 	}
 
-	// 先取消该项目的所有进行中的导出任务
-	err = models.CancelExportJobsByProject(uint(projectID))
+	// 创建导出任务
+	job, err := models.CreateExportJob(userID, uint(projectID), "", config.ImageFormat)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "取消之前的导出任务失败: " + err.Error(),
+			"error": "创建导出任务失败: " + err.Error(),
 		})
 		return
 	}
 
-	// 创建Android导出任务
-	job := &models.ExportJob{
-		UserID:    userID,
-		ProjectID: uint(projectID),
-		Status:    "pending",
-		Progress:  0,
-		Format:    config.ImageFormat,
-		Scale:     config.ImageScale,
-	}
-
-	result := models.DB.Create(job)
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "创建导出任务失败: " + result.Error.Error(),
-		})
-		return
-	}
-
-	// 异步处理Android导出任务
-	go services.ProcessAndroidExportJob(job.ID, config)
+	// 异步执行导出任务，参考图文导出的实现
+	go services.ProcessCustomCodeExportJob(job.ID, config)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"job_id":  job.ID,
-		"message": "Android代码导出任务已创建",
-	})
-}
-
-// GenerateAndroidPreview 生成Android代码预览
-func GenerateAndroidPreview(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "项目ID无效",
-		})
-		return
-	}
-
-	// 解析请求体中的Android导出配置
-	var config services.AndroidExportConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
-		// 使用默认配置
-		config = services.AndroidExportConfig{
-			ImageFormat: "png",
-			ImageScale:  2.0,
-			CodeStyle:   "kotlin-constraintlayout",
-			Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
-		}
-	}
-
-	// 验证项目权限
-	project, err := models.GetProjectByID(uint(projectID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "项目不存在",
-		})
-		return
-	}
-
-	// 检查项目是否属于当前用户
-	if project.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "无权限访问此项目",
-		})
-		return
-	}
-
-	// 生成Android代码预览
-	preview, err := services.GenerateAndroidPreview(project, config)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "生成Android代码预览失败: " + err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"preview": preview,
-		"message": "Android代码预览生成成功",
-	})
-}
-
-// GenerateAndroidFullPreview 生成完整的Android代码预览（所有文件）
-func GenerateAndroidFullPreview(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "项目ID无效",
-		})
-		return
-	}
-
-	// 解析请求体中的Android导出配置
-	var config services.AndroidExportConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
-		// 使用默认配置
-		config = services.AndroidExportConfig{
-			ImageFormat: "png",
-			ImageScale:  2.0,
-			CodeStyle:   "kotlin-constraintlayout",
-			Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
-		}
-	}
-
-	// 验证项目权限
-	project, err := models.GetProjectByID(uint(projectID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "项目不存在",
-		})
-		return
-	}
-
-	// 检查项目是否属于当前用户
-	if project.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "无权限访问此项目",
-		})
-		return
-	}
-
-	// 生成完整的Android代码文件
-	files, err := services.GenerateAndroidFullPreview(project, config)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "生成Android代码预览失败: " + err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"files":   files,
-		"message": "Android代码预览生成成功",
-	})
-}
-
-// ShowAndroidCodePreview 显示Android代码预览页面
-func ShowAndroidCodePreview(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	projectID, err := strconv.ParseUint(c.Param("project_id"), 10, 64)
-	if err != nil {
-		c.HTML(http.StatusBadRequest, "error.html", gin.H{
-			"title":   "错误",
-			"message": "项目ID无效",
-		})
-		return
-	}
-
-	// 验证项目权限
-	project, err := models.GetProjectByID(uint(projectID))
-	if err != nil {
-		c.HTML(http.StatusNotFound, "error.html", gin.H{
-			"title":   "项目不存在",
-			"message": "找不到指定的项目",
-		})
-		return
-	}
-
-	// 检查项目是否属于当前用户
-	if project.UserID != userID {
-		c.HTML(http.StatusForbidden, "error.html", gin.H{
-			"title":   "无权限",
-			"message": "您无权限访问此项目",
-		})
-		return
-	}
-
-	// 获取导出配置（从查询参数或使用默认值）
-	exportConfig := services.AndroidExportConfig{
-		ImageFormat: c.DefaultQuery("imageFormat", "png"),
-		ImageScale:  2.0,
-		CodeStyle:   c.DefaultQuery("codeStyle", "kotlin-constraintlayout"),
-		Options:     []string{"generateExtensions", "generateResourceManager", "generateStyles", "generateColors"},
-	}
-
-	// 解析缩放比例
-	if scaleStr := c.Query("imageScale"); scaleStr != "" {
-		if scale, err := strconv.ParseFloat(scaleStr, 64); err == nil && scale > 0 && scale <= 4.0 {
-			exportConfig.ImageScale = scale
-		}
-	}
-
-	// 解析选项
-	if optionsStr := c.Query("options"); optionsStr != "" {
-		exportConfig.Options = strings.Split(optionsStr, ",")
-	}
-
-	// 生成完整的Android代码文件
-	files, err := services.GenerateAndroidFullPreview(project, exportConfig)
-	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
-			"title":   "生成失败",
-			"message": "生成Android代码预览失败: " + err.Error(),
-		})
-		return
-	}
-
-	// 将文件数据转换为JSON字符串
-	codeFilesJSON, err := json.Marshal(files)
-	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
-			"title":   "数据处理失败",
-			"message": "处理代码文件数据失败: " + err.Error(),
-		})
-		return
-	}
-
-	// 将导出配置转换为JSON字符串
-	exportConfigJSON, err := json.Marshal(exportConfig)
-	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
-			"title":   "配置处理失败",
-			"message": "处理导出配置失败: " + err.Error(),
-		})
-		return
-	}
-
-	// 生成CSRF令牌
-	csrfToken, err := middleware.GenerateRandomString(32)
-	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
-			"title":   "系统错误",
-			"message": "生成CSRF令牌失败",
-		})
-		return
-	}
-
-	c.HTML(http.StatusOK, "android-code-preview.html", gin.H{
-		"title":         "Android 代码预览",
-		"project_id":    project.ID,
-		"project_name":  project.Name,
-		"code_files":    string(codeFilesJSON),
-		"export_config": string(exportConfigJSON),
-		"csrf_token":    csrfToken,
-		"timestamp":     time.Now().Unix(),
+		"message": "导出任务已创建，正在处理中...",
 	})
 }

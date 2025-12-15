@@ -1111,3 +1111,239 @@ func downloadImageForExport(token, fileKey, nodeID, format string, scale float64
 
 	return imagePath, err
 }
+
+// CreateExportArchive 从文件内容映射创建导出压缩包
+func CreateExportArchive(files map[string]string, baseName string) (string, error) {
+	// 创建临时目录
+	tempDir := filepath.Join("temp", "exports")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", fmt.Errorf("创建临时目录失败: %v", err)
+	}
+
+	// 生成唯一的文件名
+	timestamp := time.Now().Format("20060102_150405")
+	zipFileName := fmt.Sprintf("%s_%s.zip", baseName, timestamp)
+	zipFilePath := filepath.Join(tempDir, zipFileName)
+
+	// 创建zip文件
+	zipFile, err := os.Create(zipFilePath)
+	if err != nil {
+		return "", fmt.Errorf("创建zip文件失败: %v", err)
+	}
+	defer zipFile.Close()
+
+	// 创建zip writer
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	// 将所有文件写入zip
+	for filename, content := range files {
+		fileWriter, err := zipWriter.Create(filename)
+		if err != nil {
+			return "", fmt.Errorf("创建zip文件条目失败: %v", err)
+		}
+
+		_, err = io.WriteString(fileWriter, content)
+		if err != nil {
+			return "", fmt.Errorf("写入文件内容失败: %v", err)
+		}
+	}
+
+	fmt.Printf("成功创建导出文件: %s，包含%d个文件\n", zipFilePath, len(files))
+	return zipFilePath, nil
+}
+
+// GetOptimizedDocument 获取优化后的文档数据（不下载图片，仅返回JSON结构）
+func GetOptimizedDocument(userID, projectID uint, format string, scale float64) (map[string]interface{}, error) {
+	// 获取项目信息
+	project, err := models.GetProjectByID(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("获取项目信息失败: %v", err)
+	}
+
+	// 验证项目是否属于当前用户
+	if project.UserID != userID {
+		return nil, fmt.Errorf("无权访问该项目")
+	}
+
+	// 获取用户信息
+	var user models.User
+	result := models.DB.First(&user, userID)
+	if result.Error != nil {
+		return nil, fmt.Errorf("获取用户信息失败: %v", result.Error)
+	}
+
+	// 获取项目节点
+	var nodes []models.FigmaNode
+	models.DB.Where("project_id = ?", project.ID).Find(&nodes)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("项目没有节点数据")
+	}
+
+	// 解析所有节点的修改信息
+	nodeSettings := make(map[string]map[string]interface{})
+	for _, node := range nodes {
+		var settings map[string]interface{}
+		if err := json.Unmarshal([]byte(node.Modifys), &settings); err == nil {
+			nodeSettings[node.NodeID] = settings
+		}
+	}
+
+	// 获取完整的Figma节点树数据（支持 WebSocket 兜底）
+	figmaNodes, err := GetFigmaNodesWithUser(user.FigmaToken, project.FileKey, project.RootNodeID, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("获取节点树数据失败: %v", err)
+	}
+
+	// 构建树结构（参考 ProcessExportJob 的逻辑）
+	// 首先过滤掉需要移除的节点
+	filteredNodes := filterVisibleAndNonIgnoredNodesForExport(figmaNodes, nodeSettings)
+
+	// 构建优化后的节点数据
+	optimizedNodes := make([]gin.H, 0)
+	nodeImages := make(map[string]string) // 节点ID -> 图片文件名
+
+	for _, node := range filteredNodes {
+		nodeID := node["id"].(string)
+
+		// 创建优化节点，包含所有Figma原始数据
+		optimizedNode := gin.H{}
+
+		// 复制所有Figma原始属性（跳过children字段，稍后重新构建）
+		for key, value := range node {
+			if key == "children" {
+				continue
+			}
+			optimizedNode[key] = value
+		}
+
+		// 应用修改信息（如果存在）
+		if modifys, exists := nodeSettings[nodeID]; exists {
+			applyModificationsToNodeForExport(optimizedNode, modifys)
+
+			// 如果节点有 res_mode 且需要图片，则生成图片名称
+			if resMode, ok := modifys["res_mode"].(string); ok {
+				if resMode == "sprite" || resMode == "texture" || resMode == "slice" {
+					// 确定图片格式
+					imgFormat := format
+					if imgExt, hasImgExt := modifys["img_ext"].(string); hasImgExt && imgExt != "" {
+						imgFormat = imgExt
+					}
+
+					// 生成图片文件名（使用img_name或img_id，否则使用节点ID）
+					imgBaseName := nodeID
+					if imgID, hasImgID := modifys["img_id"].(string); hasImgID && imgID != "" {
+						imgBaseName = imgID
+					}
+					if imgName, hasImgName := modifys["img_name"].(string); hasImgName && imgName != "" {
+						imgBaseName = imgName
+					}
+
+					// 移除特殊字符
+					safeBaseName := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(imgBaseName)
+
+					// 生成完整的图片文件名
+					scaleStr := formatScaleForFilename(scale)
+					imgFileName := fmt.Sprintf("%s-%s.%s", safeBaseName, scaleStr, imgFormat)
+
+					// 记录图片名称
+					nodeImages[nodeID] = imgFileName
+					optimizedNode["img_path"] = imgFileName
+				}
+			}
+		}
+
+		optimizedNodes = append(optimizedNodes, optimizedNode)
+	}
+
+	// 根据res_mode处理节点结构
+	optimizedNodes = processNodesByResModeForExport(optimizedNodes, nodeSettings)
+
+	// 构建节点映射和子节点映射
+	nodeMap := make(map[string]gin.H)
+	childrenMap := make(map[string][]gin.H)
+
+	// 先建立所有节点的映射
+	for _, node := range optimizedNodes {
+		nodeID := node["id"].(string)
+		nodeMap[nodeID] = node
+	}
+
+	// 构建父子关系
+	for _, node := range optimizedNodes {
+		parentID := node["parent_id"]
+		if parentID != nil && parentID != project.RootNodeID {
+			if parentIDStr, ok := parentID.(string); ok {
+				childrenMap[parentIDStr] = append(childrenMap[parentIDStr], node)
+			}
+		}
+	}
+
+	// 创建处理后节点的ID集合，用于快速查找
+	validNodeIDs := make(map[string]bool)
+	for _, node := range optimizedNodes {
+		nodeID := node["id"].(string)
+		validNodeIDs[nodeID] = true
+	}
+
+	// 为每个节点添加子节点信息
+	for i := range optimizedNodes {
+		nodeID := optimizedNodes[i]["id"].(string)
+
+		// 清除节点原有的children字段，使用我们重新构建的children
+		delete(optimizedNodes[i], "children")
+
+		if children, hasChildren := childrenMap[nodeID]; hasChildren && len(children) > 0 {
+			// 只保留仍然存在的子节点
+			validChildren := make([]gin.H, 0)
+			for _, child := range children {
+				childID := child["id"].(string)
+				if validNodeIDs[childID] {
+					validChildren = append(validChildren, child)
+				}
+			}
+
+			if len(validChildren) > 0 {
+				// 添加有效的子节点
+				optimizedNodes[i]["children"] = validChildren
+			}
+		}
+	}
+
+	// 找到根节点
+	var rootNode gin.H
+	for i, node := range optimizedNodes {
+		parentID := node["parent_id"]
+		if parentID == nil || parentID == project.RootNodeID {
+			rootNode = optimizedNodes[i]
+			break
+		}
+	}
+
+	// 递归删除所有节点中的parent_id字段
+	if rootNode != nil {
+		removeParentIDFromTree(rootNode)
+	}
+
+	if rootNode == nil {
+		return nil, fmt.Errorf("未找到根节点")
+	}
+
+	// 创建元数据（使用树结构）
+	metadata := map[string]interface{}{
+		"project": map[string]interface{}{
+			"id":           project.ID,
+			"name":         project.Name,
+			"file_key":     project.FileKey,
+			"root_node_id": project.RootNodeID,
+		},
+		"node": rootNode, // 单个根节点，包含完整的子树
+		"export_config": map[string]interface{}{
+			"format": format,
+			"scale":  scale,
+		},
+		"generated_at": time.Now(),
+	}
+
+	return metadata, nil
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -239,6 +240,14 @@ func main() {
 			default:
 				return 0
 			}
+		},
+		"toJSON": func(v interface{}) template.JS {
+			// 将值转换为JSON字符串，保留原始换行符
+			b, err := json.Marshal(v)
+			if err != nil {
+				return template.JS("{}")
+			}
+			return template.JS(b)
 		},
 	})
 
@@ -516,17 +525,10 @@ func main() {
 	figmaGroup.GET("/export/status/:job_id", controllers.GetExportStatus)
 	figmaGroup.GET("/export/:job_id/download", controllers.DownloadExport)
 
-	// Swift代码导出功能
-	figmaGroup.POST("/project/:project_id/export/swift", controllers.ExportSwiftCode)
-	figmaGroup.POST("/project/:project_id/swift/preview", controllers.GenerateSwiftPreview)
-	figmaGroup.POST("/project/:project_id/swift/preview-full", controllers.GenerateSwiftFullPreview)
-	figmaGroup.GET("/project/:project_id/swift/code-preview", controllers.ShowSwiftCodePreview)
-
-	// Android代码导出功能
-	figmaGroup.POST("/project/:project_id/export/android", controllers.ExportAndroidCode)
-	figmaGroup.POST("/project/:project_id/android/preview", controllers.GenerateAndroidPreview)
-	figmaGroup.POST("/project/:project_id/android/preview-full", controllers.GenerateAndroidFullPreview)
-	figmaGroup.GET("/project/:project_id/android/code-preview", controllers.ShowAndroidCodePreview)
+	// 自定义代码导出功能（替代旧的平台特定导出）
+	figmaGroup.POST("/project/:project_id/export/custom", controllers.ExportCustomCode)
+	figmaGroup.POST("/project/:project_id/custom/preview", controllers.GenerateCustomCodePreview)
+	figmaGroup.GET("/project/:project_id/custom/code-preview", controllers.ShowCustomCodePreview)
 
 	// Cursor MCP HTTP接口 - 无需认证，通过connection_id验证
 	// 支持 /mcp/connection_id 格式的URL访问

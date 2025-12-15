@@ -154,7 +154,7 @@ func (cs *CacheService) GetFileFetchQueue(fileKey, rootNodeID string) (*models.F
 // 参数 token: 必须指定用于请求 Figma API 的 token，不允许使用其他 token
 func (cs *CacheService) CreateFileFetchQueue(fileKey, rootNodeID, token string, nodeIDs []string) (*models.FigmaFileFetchQueue, error) {
 	if token == "" {
-		return nil, fmt.Errorf("figma_token 不能为空")
+		return nil, fmt.Errorf("请先在个人资料页面配置 Figma Token")
 	}
 
 	now := uint32(time.Now().Unix())

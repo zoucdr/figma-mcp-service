@@ -165,21 +165,28 @@ figma.ui.onmessage = async (msg) => {
       // Get current selection and send to UI
       try {
         const selection = figma.currentPage.selection;
+        console.log("[get-current-selection] Selection length:", selection.length);
+        
         if (selection.length > 0) {
           const node = selection[0];
-          figma.ui.postMessage({
+          const responseData = {
             type: "current-selection",
             nodeId: node.id,
             nodeName: node.name,
             nodeType: node.type,
-          });
+          };
+          
+          console.log("[get-current-selection] Sending node data:", responseData);
+          figma.ui.postMessage(responseData);
         } else {
+          console.log("[get-current-selection] No node selected");
           figma.ui.postMessage({
             type: "current-selection",
             nodeId: null,
           });
         }
       } catch (error) {
+        console.error("[get-current-selection] Error:", error.message);
         figma.ui.postMessage({
           type: "current-selection",
           nodeId: null,

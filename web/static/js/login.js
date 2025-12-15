@@ -25,8 +25,7 @@ new Vue({
             registerForm: {
                 username: '',
                 password: '',
-                confirmPassword: '',
-                figmaToken: ''
+                confirmPassword: ''
             },
             loginRules: {
                 username: [
@@ -48,9 +47,6 @@ new Vue({
                 confirmPassword: [
                     { required: true, message: '请确认密码', trigger: 'blur' },
                     { validator: validateConfirmPassword, trigger: 'blur' }
-                ],
-                figmaToken: [
-                    { required: true, message: '请输入Figma Private Token', trigger: 'blur' }
                 ]
             }
         };
@@ -89,7 +85,6 @@ new Vue({
                     const formData = new FormData();
                     formData.append('username', this.registerForm.username);
                     formData.append('password', this.registerForm.password);
-                    formData.append('figma_token', this.registerForm.figmaToken);
                     
                     // CSRF令牌已由main.js中的axios拦截器自动添加
                     // 无需在此手动添加

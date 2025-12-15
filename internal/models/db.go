@@ -113,6 +113,7 @@ func InitDB() {
 	}
 
 	// 自动迁移数据库表结构
+	log.Printf("开始数据库表结构迁移...")
 	err = DB.AutoMigrate(
 		&User{},
 		&FigmaProject{},
@@ -133,7 +134,11 @@ func InitDB() {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 
-	log.Printf("数据库连接和迁移成功（包含缓存表）")
+	// 检查并添加UI代码生成脚本字段的注释
+	addUICreaterColumnComment()
+
+	log.Printf("✅ 数据库连接和迁移成功（包含缓存表）")
+	log.Printf("   - User表已包含ui_creater字段（用于自定义代码生成）")
 
 	// 重置所有处理中的队列任务
 	resetProcessingQueues()
@@ -186,4 +191,40 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// addUICreaterColumnComment 为ui_creater字段添加注释
+func addUICreaterColumnComment() {
+	// 检查字段是否存在
+	var columnExists bool
+	err := DB.Raw(`
+		SELECT COUNT(*) > 0 
+		FROM information_schema.columns 
+		WHERE table_schema = DATABASE() 
+		AND table_name = 'users' 
+		AND column_name = 'ui_creater'
+	`).Scan(&columnExists).Error
+
+	if err != nil {
+		log.Printf("⚠️ 检查ui_creater字段失败: %v", err)
+		return
+	}
+
+	if !columnExists {
+		log.Printf("⚠️ ui_creater字段不存在，将由AutoMigrate自动创建")
+		return
+	}
+
+	// 添加字段注释
+	err = DB.Exec(`
+		ALTER TABLE users 
+		MODIFY COLUMN ui_creater TEXT 
+		COMMENT '用户自定义的UI代码生成JS脚本，最大1024KB'
+	`).Error
+
+	if err != nil {
+		log.Printf("⚠️ 添加ui_creater字段注释失败: %v", err)
+	} else {
+		log.Printf("✅ ui_creater字段注释已更新")
+	}
 }

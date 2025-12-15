@@ -1716,6 +1716,133 @@ func handleToolCall(userID uint, connectionID, toolName string, arguments map[st
 			},
 		}
 
+	case "get_code_prompts":
+		// 获取用户信息
+		user, err := models.FindUserByID(userID)
+		if err != nil {
+			return gin.H{
+				"jsonrpc": "2.0",
+				"id":      requestID,
+				"error": gin.H{
+					"code":    -32603,
+					"message": fmt.Sprintf("获取用户信息失败: %v", err),
+				},
+			}
+		}
+
+		// 构建返回信息
+		resultData := gin.H{
+			"code_prompts": user.CodePrompts,
+			"comp_types":   user.CompTypes,
+		}
+
+		// 将结果转换为JSON字符串
+		resultJSON, err := json.Marshal(resultData)
+		if err != nil {
+			return gin.H{
+				"jsonrpc": "2.0",
+				"id":      requestID,
+				"error": gin.H{
+					"code":    -32603,
+					"message": fmt.Sprintf("序列化用户配置信息失败: %v", err),
+				},
+			}
+		}
+
+		return gin.H{
+			"jsonrpc": "2.0",
+			"id":      requestID,
+			"result": gin.H{
+				"content": []gin.H{
+					{
+						"type": "text",
+						"text": fmt.Sprintf("用户代码生成配置信息获取成功\n\n配置信息:\n%s",
+							string(resultJSON)),
+					},
+				},
+			},
+		}
+
+	case "get_optimaze_document":
+		// 处理项目ID参数
+		var projectIDInt uint
+		if projectIDFloat, ok := arguments["project_id"].(float64); ok {
+			projectIDInt = uint(projectIDFloat)
+		} else if projectIDStr, ok := arguments["project_id"].(string); ok {
+			if parsed, err := strconv.ParseUint(projectIDStr, 10, 32); err == nil {
+				projectIDInt = uint(parsed)
+			}
+		}
+
+		if projectIDInt == 0 {
+			return gin.H{
+				"jsonrpc": "2.0",
+				"id":      requestID,
+				"error": gin.H{
+					"code":    -32602,
+					"message": "Missing or invalid required parameter: project_id",
+				},
+			}
+		}
+
+		// 获取可选参数：format 和 scale
+		format := "png"
+		if formatStr, ok := arguments["format"].(string); ok && formatStr != "" {
+			format = formatStr
+		}
+
+		scale := 1.0
+		if scaleInterface := arguments["scale"]; scaleInterface != nil {
+			if scaleFloat, ok := scaleInterface.(float64); ok {
+				scale = scaleFloat
+			} else if scaleStr, ok := scaleInterface.(string); ok {
+				if parsedScale, err := strconv.ParseFloat(scaleStr, 64); err == nil {
+					scale = parsedScale
+				}
+			}
+		}
+
+		// 获取优化后的文档数据
+		metadata, err := services.GetOptimizedDocument(userID, projectIDInt, format, scale)
+		if err != nil {
+			return gin.H{
+				"jsonrpc": "2.0",
+				"id":      requestID,
+				"error": gin.H{
+					"code":    -32603,
+					"message": fmt.Sprintf("获取优化文档失败: %v", err),
+				},
+			}
+		}
+
+		// 将结果转换为JSON字符串
+		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+		if err != nil {
+			return gin.H{
+				"jsonrpc": "2.0",
+				"id":      requestID,
+				"error": gin.H{
+					"code":    -32603,
+					"message": fmt.Sprintf("序列化文档数据失败: %v", err),
+				},
+			}
+		}
+
+		projectID := strconv.FormatUint(uint64(projectIDInt), 10)
+		return gin.H{
+			"jsonrpc": "2.0",
+			"id":      requestID,
+			"result": gin.H{
+				"content": []gin.H{
+					{
+						"type": "text",
+						"text": fmt.Sprintf("优化文档获取成功 - 项目ID: %s, 格式: %s, 缩放: %.1f\n\n文档数据:\n%s",
+							projectID, format, scale, string(metadataJSON)),
+					},
+				},
+			},
+		}
+
 	default:
 		return gin.H{
 			"jsonrpc": "2.0",

@@ -72,7 +72,7 @@ func Login(c *gin.Context) {
 func Register(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
-	figmaToken := c.PostForm("figma_token")
+	figmaToken := c.PostForm("figma_token") // 可选字段
 
 	// 验证必要字段
 	if username == "" {
@@ -89,14 +89,6 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// 验证figmaToken不能为空
-	if figmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Figma Token不能为空",
-		})
-		return
-	}
-
 	// 检查用户名是否已存在
 	_, err := models.FindUserByUsername(username)
 	if err == nil {
@@ -107,7 +99,7 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// 创建新用户
+	// 创建新用户（figmaToken 可以为空）
 	var user *models.User
 	user, err = models.CreateUser(username, password, figmaToken)
 	if err != nil {
@@ -160,6 +152,7 @@ func Profile(c *gin.Context) {
 		"compTypes":    user.CompTypes,
 		"prompts":      user.Prompts,
 		"codePrompts":  user.CodePrompts,
+		"uiCreater":    user.UICreater,
 		"mcpToken":     mcpToken,
 		"proxyEnabled": user.ProxyEnabled,
 		"proxyUrl":     user.ProxyURL,
@@ -178,6 +171,7 @@ func UpdateProfile(c *gin.Context) {
 	compTypes := c.PostForm("comp_types")
 	prompts := c.PostForm("prompts")
 	codePrompts := c.PostForm("code_prompts")
+	uiCreater := c.PostForm("ui_creater")
 	proxyEnabled := c.PostForm("proxy_enabled") == "true"
 	proxyURL := c.PostForm("proxy_url")
 
@@ -203,14 +197,6 @@ func UpdateProfile(c *gin.Context) {
 
 	// 如果是新用户（从登录页空用户名跳转过来）
 	if userID == nil {
-		// 验证figmaToken不能为空
-		if figmaToken == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Figma Token不能为空",
-			})
-			return
-		}
-
 		// 验证用户名不能为空
 		if username == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -219,7 +205,7 @@ func UpdateProfile(c *gin.Context) {
 			return
 		}
 
-		// 创建新用户，使用随机密码
+		// 创建新用户，使用随机密码（figmaToken 可以为空）
 		password := generateRandomPassword()
 		user, err := models.CreateUser(username, password, figmaToken)
 		if err != nil {
@@ -233,6 +219,7 @@ func UpdateProfile(c *gin.Context) {
 		user.CompTypes = compTypes
 		user.Prompts = prompts
 		user.CodePrompts = codePrompts
+		user.UICreater = uiCreater
 		user.ProxyEnabled = proxyEnabled
 		user.ProxyURL = proxyURL
 		models.DB.Save(&user)
@@ -263,7 +250,7 @@ func UpdateProfile(c *gin.Context) {
 	}
 
 	// 更新用户资料
-	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts, proxyEnabled, proxyURL)
+	err := user.UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts, uiCreater, proxyEnabled, proxyURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -591,7 +578,7 @@ func ResetTokenCooldown(c *gin.Context) {
 	}
 
 	if user.FigmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未设置Figma Token"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 		return
 	}
 

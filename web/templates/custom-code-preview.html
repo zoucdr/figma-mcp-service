@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.title}} - {{.project_name}}</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background-color: #f5f7fa;
+        }
+
+        #app {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background-color: #ffffff;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e4e7ed;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .project-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: #303133;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .file-list {
+            width: 250px;
+            background-color: #ffffff;
+            border-right: 1px solid #e4e7ed;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s;
+        }
+
+        .file-item:hover {
+            background-color: #f5f7fa;
+        }
+
+        .file-item.active {
+            background-color: #ecf5ff;
+            color: #409EFF;
+            font-weight: 500;
+        }
+
+        .code-viewer {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* code-viewer 的直接子 div 需要占满空间 */
+        .code-viewer > div {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .code-header {
+            padding: 12px 20px;
+            background-color: #ffffff;
+            border-bottom: 1px solid #e4e7ed;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .code-filename {
+            font-size: 16px;
+            font-weight: 500;
+            color: #303133;
+        }
+
+        .code-content {
+            flex: 1;
+            overflow: auto;
+            background-color: #282c34;
+            position: relative;
+        }
+
+        pre {
+            margin: 0;
+            padding: 20px;
+            color: #abb2bf;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre;
+            word-wrap: normal;
+            overflow-x: auto;
+            min-height: 100%;
+        }
+
+        .loading-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            gap: 20px;
+        }
+
+        .no-files {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #909399;
+        }
+
+        .no-files i {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .export-config {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        /* 滚动条样式美化 */
+        .file-list::-webkit-scrollbar,
+        .code-content::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        .file-list::-webkit-scrollbar-track,
+        .code-content::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        .file-list::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+
+        .file-list::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        .code-content::-webkit-scrollbar-thumb {
+            background: #4a4a4a;
+            border-radius: 4px;
+        }
+
+        .code-content::-webkit-scrollbar-thumb:hover {
+            background: #5a5a5a;
+        }
+
+        /* pre标签也需要滚动条样式 */
+        pre::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        pre::-webkit-scrollbar-track {
+            background: #1e2127;
+            border-radius: 4px;
+        }
+
+        pre::-webkit-scrollbar-thumb {
+            background: #4a4a4a;
+            border-radius: 4px;
+        }
+
+        pre::-webkit-scrollbar-thumb:hover {
+            background: #5a5a5a;
+        }
+
+        /* 导出进度条样式 */
+        .export-progress-overlay {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 16px;
+            z-index: 9999;
+            border: 1px solid #e4e7ed;
+        }
+
+        .export-progress-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #303133;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .export-progress-text {
+            font-size: 12px;
+            color: #909399;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="header">
+            <div class="header-left">
+                <h2 class="project-name">{{.project_name}} - 代码预览</h2>
+            </div>
+            <div class="header-actions">
+                <div class="export-config">
+                    <el-select v-model="exportConfig.imageFormat" placeholder="图片格式" size="small" style="width: 100px;">
+                        <el-option label="PNG" value="png"></el-option>
+                        <el-option label="JPG" value="jpg"></el-option>
+                        <el-option label="SVG" value="svg"></el-option>
+                    </el-select>
+                    <el-select v-model="exportConfig.imageScale" placeholder="缩放比例" size="small" style="width: 100px;">
+                        <el-option label="1x" :value="1.0"></el-option>
+                        <el-option label="2x" :value="2.0"></el-option>
+                        <el-option label="3x" :value="3.0"></el-option>
+                        <el-option label="4x" :value="4.0"></el-option>
+                    </el-select>
+                    <el-button 
+                        type="primary" 
+                        size="small" 
+                        icon="el-icon-refresh"
+                        @click="refreshPreview"
+                        :loading="generatingPreview">
+                        刷新预览
+                    </el-button>
+                </div>
+                <el-button 
+                    type="success" 
+                    size="small" 
+                    icon="el-icon-download"
+                    @click="exportCode"
+                    :loading="exporting">
+                    导出代码
+                </el-button>
+                <el-button 
+                    size="small" 
+                    icon="el-icon-close"
+                    @click="closeWindow">
+                    关闭
+                </el-button>
+            </div>
+        </div>
+
+        <div class="content" v-loading="generatingPreview" element-loading-text="正在生成代码预览...">
+            <div class="file-list" v-if="!generatingPreview && Object.keys(codeFiles).length > 0">
+                <div 
+                    class="file-item"
+                    :class="{ active: activeFile === filename }"
+                    v-for="(content, filename) in codeFiles"
+                    :key="filename"
+                    @click="selectFile(filename)">
+                    <i class="el-icon-document"></i> <span v-text="filename"></span>
+                </div>
+            </div>
+
+            <div class="code-viewer" v-if="!generatingPreview">
+                <div v-if="Object.keys(codeFiles).length > 0">
+                    <div class="code-header">
+                        <div class="code-filename" v-text="activeFile"></div>
+                        <el-button 
+                            size="mini" 
+                            icon="el-icon-copy-document"
+                            @click="copyCode">
+                            复制代码
+                        </el-button>
+                    </div>
+                    <div class="code-content">
+                        <pre v-text="formattedCode"></pre>
+                    </div>
+                </div>
+                <div v-else class="no-files">
+                    <i class="el-icon-warning"></i>
+                    <p>暂无代码文件</p>
+                    <p style="font-size: 14px; color: #c0c4cc;">请在用户设置页面配置代码生成脚本</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导出进度条 -->
+        <div class="export-progress-overlay" v-if="exportStatus === 'processing' || exportStatus === 'completed'">
+            <div class="export-progress-title">
+                <span>
+                    <i class="el-icon-loading" v-if="exportStatus === 'processing'"></i>
+                    <i class="el-icon-success" v-if="exportStatus === 'completed'" style="color: #67C23A;"></i>
+                    导出进度
+                </span>
+                <span style="font-size: 14px; color: #409EFF;">[[exportProgress]]%</span>
+            </div>
+            <div class="export-progress-text" v-text="exportStatusText"></div>
+            <el-progress 
+                :percentage="exportProgress" 
+                :status="exportStatus === 'completed' ? 'success' : undefined"
+                :stroke-width="12">
+            </el-progress>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script>
+        // 从后端传递的数据
+        const codeFilesData = {{.code_files | toJSON}};
+        const exportConfigData = {{.export_config | toJSON}};
+        
+        new Vue({
+            el: '#app',
+            delimiters: ['[[', ']]'],
+            data() {
+                return {
+                    projectId: {{.project_id}},
+                    projectName: '{{.project_name}}',
+                    codeFiles: codeFilesData,
+                    exportConfig: exportConfigData,
+                    csrfToken: '{{.csrf_token}}',
+                    activeFile: '',
+                    generatingPreview: false,
+                    exporting: false,
+                    exportJobId: null,
+                    exportProgress: 0,
+                    exportStatus: '',
+                    exportStatusText: '',
+                    exportPollingInterval: null
+                };
+            },
+            computed: {
+                // 格式化后的代码内容
+                formattedCode() {
+                    if (!this.activeFile || !this.codeFiles[this.activeFile]) {
+                        return '';
+                    }
+                    
+                    const content = this.codeFiles[this.activeFile];
+                    
+                    // 检查是否是JSON文件（通过文件扩展名或内容判断）
+                    const isJsonFile = this.activeFile.toLowerCase().endsWith('.json');
+                    
+                    if (isJsonFile) {
+                        try {
+                            // 尝试解析并格式化JSON
+                            const jsonObj = JSON.parse(content);
+                            return JSON.stringify(jsonObj, null, 2);
+                        } catch (e) {
+                            // 如果解析失败，返回原始内容
+                            console.warn('JSON格式化失败:', e);
+                            return content;
+                        }
+                    }
+                    
+                    // 非JSON文件，返回原始内容
+                    return content;
+                }
+            },
+            mounted() {
+                // 选择第一个文件
+                const fileNames = Object.keys(this.codeFiles);
+                if (fileNames.length > 0) {
+                    this.activeFile = fileNames[0];
+                }
+            },
+            beforeDestroy() {
+                // 清理定时器
+                if (this.exportPollingInterval) {
+                    clearInterval(this.exportPollingInterval);
+                }
+            },
+            methods: {
+                // 刷新预览
+                async refreshPreview() {
+                    this.generatingPreview = true;
+                    try {
+                        const response = await fetch(`/figma/project/${this.projectId}/custom/preview`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': this.csrfToken
+                            },
+                            body: JSON.stringify(this.exportConfig)
+                        });
+
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            this.codeFiles = data.files || {};
+                            
+                            // 选择第一个文件
+                            const fileNames = Object.keys(this.codeFiles);
+                            if (fileNames.length > 0) {
+                                this.activeFile = fileNames[0];
+                            }
+                            
+                            this.$message.success('代码预览已更新');
+                        } else {
+                            this.$message.error(data.error || '生成代码预览失败');
+                        }
+                    } catch (error) {
+                        console.error('生成代码预览失败:', error);
+                        this.$message.error('网络错误，请重试');
+                    } finally {
+                        this.generatingPreview = false;
+                    }
+                },
+
+                // 导出代码
+                async exportCode() {
+                    this.exporting = true;
+                    this.exportProgress = 0;
+                    this.exportStatus = 'processing';
+                    this.exportStatusText = '正在创建导出任务...';
+                    
+                    try {
+                        const response = await fetch(`/figma/project/${this.projectId}/export/custom`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': this.csrfToken
+                            },
+                            body: JSON.stringify(this.exportConfig)
+                        });
+
+                        const data = await response.json();
+                        
+                        if (data.success && data.job_id) {
+                            this.exportJobId = data.job_id;
+                            this.$message.success('导出任务已创建，正在处理...');
+                            
+                            // 开始轮询任务状态
+                            this.startExportPolling();
+                        } else {
+                            this.$message.error(data.error || '导出代码失败');
+                            this.exporting = false;
+                            this.exportStatus = 'failed';
+                        }
+                    } catch (error) {
+                        console.error('导出代码失败:', error);
+                        this.$message.error('网络错误，请重试');
+                        this.exporting = false;
+                        this.exportStatus = 'failed';
+                    }
+                },
+
+                // 开始轮询导出任务状态
+                startExportPolling() {
+                    if (this.exportPollingInterval) {
+                        clearInterval(this.exportPollingInterval);
+                    }
+                    
+                    this.exportPollingInterval = setInterval(async () => {
+                        try {
+                            const response = await fetch(`/figma/export/status/${this.exportJobId}`);
+                            const data = await response.json();
+                            
+                            this.exportProgress = data.progress || 0;
+                            this.exportStatus = data.status;
+                            
+                            // 更新状态文本
+                            if (data.status === 'processing') {
+                                if (data.progress < 20) {
+                                    this.exportStatusText = '正在初始化...';
+                                } else if (data.progress < 40) {
+                                    this.exportStatusText = '正在生成代码...';
+                                } else if (data.progress < 80) {
+                                    this.exportStatusText = '正在下载图片资源...';
+                                } else {
+                                    this.exportStatusText = '正在创建压缩包...';
+                                }
+                            }
+                            
+                            if (data.status === 'completed') {
+                                clearInterval(this.exportPollingInterval);
+                                this.exportPollingInterval = null;
+                                this.exporting = false;
+                                this.exportProgress = 100;
+                                this.exportStatusText = '导出完成！';
+                                
+                                this.$message.success('导出完成，开始下载...');
+                                
+                                // 自动下载文件
+                                setTimeout(() => {
+                                    window.location.href = `/figma/export/${this.exportJobId}/download`;
+                                    
+                                    // 3秒后重置状态
+                                    setTimeout(() => {
+                                        this.exportStatus = '';
+                                        this.exportProgress = 0;
+                                        this.exportStatusText = '';
+                                    }, 3000);
+                                }, 500);
+                            } else if (data.status === 'failed') {
+                                clearInterval(this.exportPollingInterval);
+                                this.exportPollingInterval = null;
+                                this.exporting = false;
+                                this.exportStatus = 'failed';
+                                this.exportStatusText = '导出失败';
+                                
+                                this.$message.error('导出失败: ' + (data.error || '未知错误'));
+                            }
+                        } catch (error) {
+                            console.error('获取导出状态失败:', error);
+                        }
+                    }, 1000); // 每秒轮询一次
+                },
+
+                // 选择文件
+                selectFile(filename) {
+                    this.activeFile = filename;
+                },
+
+                // 复制代码
+                copyCode() {
+                    const code = this.formattedCode;
+                    if (!code) {
+                        this.$message.warning('没有可复制的代码');
+                        return;
+                    }
+
+                    const textarea = document.createElement('textarea');
+                    textarea.value = code;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    
+                    this.$message.success('代码已复制到剪贴板');
+                },
+
+                // 关闭窗口
+                closeWindow() {
+                    window.close();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+

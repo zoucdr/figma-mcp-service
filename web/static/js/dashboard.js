@@ -1932,7 +1932,11 @@ const ProjectEditorApp = {
     // 选择根节点
     selectRootNode() {
         // 找到根节点（最顶层的节点）
-        const rootNodes = this.nodes.filter(node => !node.parent_id);
+        // 考虑parent_id修改
+        const rootNodes = this.nodes.filter(node => {
+            const effectiveParentId = node.modifys?.parent_id || node.parent_id;
+            return !effectiveParentId;
+        });
         if (rootNodes.length > 0) {
             const rootNode = rootNodes[0];
             console.log('自动选择根节点:', rootNode.id);
@@ -2111,7 +2115,10 @@ const ProjectEditorApp = {
                     }
                     
                     // 确保根节点始终被展开
-                    const rootNodes = this.nodes.filter(node => !node.parent_id);
+                    const rootNodes = this.nodes.filter(node => {
+                        const effectiveParentId = node.modifys?.parent_id || node.parent_id;
+                        return !effectiveParentId;
+                    });
                     if (rootNodes.length > 0) {
                         const rootNodeId = rootNodes[0].id;
                         if (!this.expandedKeys.includes(rootNodeId)) {
@@ -2291,8 +2298,15 @@ const ProjectEditorApp = {
     initTreeData() {
         if (!this.nodes.length) return;
         
-        // 找到根节点
-        const rootNodes = this.nodes.filter(node => !node.parent_id);
+        // 找到根节点（考虑parent_id修改）
+        // 根节点是那些没有有效parent_id的节点
+        const rootNodes = this.nodes.filter(node => {
+            // 获取节点的有效parent_id（如果有修改则使用修改后的，否则使用原始的）
+            const effectiveParentId = node.modifys?.parent_id || node.parent_id;
+            // 如果有效parent_id为空或者指向的父节点不存在，则认为是根节点
+            return !effectiveParentId;
+        });
+        
         const mainTree = this.buildTree(rootNodes);
         
         // 构建依赖节点树
@@ -2661,7 +2675,24 @@ const ProjectEditorApp = {
                 return node.visible !== false;
             })
             .map(node => {
-                const children = this.nodes.filter(n => n.parent_id === node.id);
+                // 检查是否有parent_id修改
+                const modifiedParentId = node.modifys?.parent_id;
+                
+                // 判断parent_id是否真的被修改了（与原始parent_id不同）
+                const isParentIdChanged = modifiedParentId && modifiedParentId !== node.parent_id;
+                
+                // 如果设置了parent_id修改，使用修改后的parent_id来查找子节点
+                // 否则使用原始的parent_id
+                const effectiveParentId = modifiedParentId || node.id;
+                
+                // 查找子节点时，需要考虑两种情况：
+                // 1. 原始parent_id等于当前节点id的子节点
+                // 2. 修改后的parent_id等于当前节点id的子节点（这些节点被重新指定为当前节点的子节点）
+                const children = this.nodes.filter(n => {
+                    // 获取子节点的有效parent_id（如果有修改则使用修改后的，否则使用原始的）
+                    const childEffectiveParentId = n.modifys?.parent_id || n.parent_id;
+                    return childEffectiveParentId === node.id;
+                });
                 
                 // 使用自定义名称（如果存在）
                 const nodeName = node.modifys?.rename || node.modifys?.customName || node.name || node.id;
@@ -2688,6 +2719,7 @@ const ProjectEditorApp = {
                     // 添加节点类型和修改信息，用于在树中显示不同的图标或样式
                     type: node.type,
                     modifys: node.modifys,
+                    isParentIdChanged: isParentIdChanged, // 标记parent_id是否真的被修改了
                     visible: node.visible,
                     absoluteRenderBounds: node.absoluteRenderBounds
                 };
@@ -4564,6 +4596,169 @@ const ProjectEditorApp = {
         return null;
     },
     
+    // 处理拖拽时是否允许拖动
+    handleAllowDrag(draggingNode) {
+        // 不允许拖动依赖节点分组
+        if (draggingNode.data.type === 'REF_GROUP') {
+            return false;
+        }
+        // 不允许拖动依赖节点
+        if (draggingNode.data.isRefNode) {
+            return false;
+        }
+        return true;
+    },
+    
+    // 处理拖拽时是否允许放置
+    handleAllowDrop(draggingNode, dropNode, type) {
+        // 不允许放置到依赖节点分组
+        if (dropNode.data.type === 'REF_GROUP') {
+            return false;
+        }
+        // 不允许放置到依赖节点
+        if (dropNode.data.isRefNode) {
+            return false;
+        }
+        // 只允许 'inner' 类型的放置（放入目标节点内部作为子节点）
+        // 不允许 'before' 和 'after'（作为兄弟节点）
+        return type === 'inner';
+    },
+    
+    // 处理节点拖拽完成
+    handleNodeDrop(draggingNode, dropNode, dropType, event) {
+        console.log('节点拖拽完成:', {
+            dragging: draggingNode.data.id,
+            drop: dropNode.data.id,
+            type: dropType
+        });
+        
+        // 只处理 'inner' 类型的拖拽（将节点放入另一个节点内部）
+        if (dropType !== 'inner') {
+            return;
+        }
+        
+        const dragNodeId = draggingNode.data.id;
+        const newParentId = dropNode.data.id;
+        
+        // 获取被拖拽节点的数据
+        const draggedNode = this.nodes.find(n => n.id === dragNodeId);
+        if (!draggedNode) {
+            this.$message.error('找不到被拖拽的节点');
+            return;
+        }
+        
+        // 检查是否会造成循环引用（将父节点拖到子节点下）
+        if (this.isNodeAncestor(dragNodeId, newParentId)) {
+            this.$message.error('不能将节点拖拽到其子节点下，会造成循环引用');
+            // 恢复树结构
+            this.initTreeData();
+            return;
+        }
+        
+        // 获取当前有效的parent_id（考虑已有的修改）
+        const currentEffectiveParentId = draggedNode.modifys?.parent_id || draggedNode.parent_id;
+        
+        // 检查是否真的需要修改
+        if (currentEffectiveParentId === newParentId) {
+            this.$message.info('节点已经在该父节点下，无需修改');
+            // 恢复树结构
+            this.initTreeData();
+            return;
+        }
+        
+        // 判断是将节点拖回原始父节点（撤销修改），还是设置新的父节点
+        const isResetToOriginal = draggedNode.parent_id === newParentId;
+        
+        // 准备要保存的数据
+        let dataToSave;
+        if (isResetToOriginal && draggedNode.modifys && draggedNode.modifys.parent_id) {
+            // 拖回原始父节点，需要保留其他修改，只清除parent_id
+            // 创建一个不包含parent_id的修改对象
+            dataToSave = { ...draggedNode.modifys };
+            delete dataToSave.parent_id;
+        } else {
+            // 设置新的parent_id或更新现有的修改
+            dataToSave = {
+                ...(draggedNode.modifys || {}),
+                parent_id: newParentId
+            };
+        }
+        
+        // 保存到服务器
+        axios.post(`/figma/project/${this.project.id}/node/${dragNodeId}/settings`, dataToSave)
+        .then(() => {
+            if (isResetToOriginal) {
+                this.$message.success('已恢复节点到原始父节点');
+                
+                // 清除本地的parent_id修改
+                if (this.nodeModifys[dragNodeId]) {
+                    delete this.nodeModifys[dragNodeId].parent_id;
+                }
+                
+                // 更新节点数据
+                const node = this.nodes.find(n => n.id === dragNodeId);
+                if (node && node.modifys) {
+                    delete node.modifys.parent_id;
+                }
+            } else {
+                this.$message.success('已将节点移动到新的父节点下');
+                
+                // 更新本地修改信息
+                if (!this.nodeModifys[dragNodeId]) {
+                    this.nodeModifys[dragNodeId] = {};
+                }
+                this.nodeModifys[dragNodeId].parent_id = newParentId;
+                
+                // 更新本地节点数据
+                const node = this.nodes.find(n => n.id === dragNodeId);
+                if (node) {
+                    if (!node.modifys) {
+                        node.modifys = {};
+                    }
+                    node.modifys.parent_id = newParentId;
+                }
+            }
+            
+            // 重建树结构
+            this.initTreeData();
+            
+            // 展开父节点
+            if (!this.expandedKeys.includes(newParentId)) {
+                this.expandedKeys.push(newParentId);
+            }
+            
+            // 选中被拖拽的节点
+            this.$nextTick(() => {
+                if (this.$refs.nodeTree) {
+                    this.$refs.nodeTree.setCurrentKey(dragNodeId);
+                }
+            });
+        })
+        .catch(error => {
+            console.error('保存parent_id失败:', error);
+            this.$message.error('保存失败: ' + (error.response?.data?.error || '未知错误'));
+            // 恢复树结构
+            this.initTreeData();
+        });
+    },
+    
+    // 检查nodeId是否是targetId的祖先节点（避免循环引用）
+    isNodeAncestor(nodeId, targetId) {
+        let current = this.nodes.find(n => n.id === targetId);
+        while (current) {
+            // 获取当前节点的有效parent_id
+            const effectiveParentId = current.modifys?.parent_id || current.parent_id;
+            if (!effectiveParentId) {
+                return false;
+            }
+            if (effectiveParentId === nodeId) {
+                return true;
+            }
+            current = this.nodes.find(n => n.id === effectiveParentId);
+        }
+        return false;
+    },
+    
     // 加载依赖节点预览
     async loadRefNodePreview() {
         if (!this.currentNode || !this.currentNode.isRefNodeSelected) {
@@ -5009,7 +5204,11 @@ const ProjectEditorApp = {
             console.log('预加载节点数量:', visibleNodes.length, '(已过滤不可见、被忽略的节点及其子树)');
             
             // 找出根节点（最顶层的节点）
-            const rootNodes = visibleNodes.filter(node => !node.parent_id);
+            // 考虑parent_id修改
+            const rootNodes = visibleNodes.filter(node => {
+                const effectiveParentId = node.modifys?.parent_id || node.parent_id;
+                return !effectiveParentId;
+            });
             if (rootNodes.length > 0) {
                 const rootNode = rootNodes[0];
                 this.rootNodeBounds = JSON.parse(JSON.stringify(rootNode.absoluteRenderBounds)); // 深拷贝
@@ -5960,11 +6159,14 @@ const ProjectEditorApp = {
             // 将当前节点添加到路径
             path.unshift(nodeId);
             
+            // 获取节点的有效parent_id（考虑修改）
+            const effectiveParentId = node.modifys?.parent_id || node.parent_id;
+            
             // 如果没有父节点，返回路径
-            if (!node.parent_id) return path;
+            if (!effectiveParentId) return path;
             
             // 递归查找父节点
-            return this.findNodePath(node.parent_id, currentNodes, path, isRefNode);
+            return this.findNodePath(effectiveParentId, currentNodes, path, isRefNode);
         },
         
     // 删除节点修改信息
@@ -7354,8 +7556,21 @@ const ProjectEditorApp = {
             }
         },
 
-        // ==================== 模板代码导出功能 ====================
+        // ==================== 自定义代码导出功能 ====================
 
+        // 显示自定义代码预览
+        showCustomCodePreview() {
+            if (!this.project || !this.project.id) {
+                this.$message.error('请先选择一个项目');
+                return;
+            }
+
+            // 打开代码预览页面（在新窗口中）
+            const url = `/figma/project/${this.project.id}/custom/code-preview?imageFormat=${this.defaultImageFormat}&imageScale=${this.defaultImageScale}`;
+            window.open(url, '_blank', 'width=1200,height=800');
+        },
+
+        // 旧版本的模板导出函数（保留用于向后兼容，但已废弃）
         // 处理模板导出命令
         handleTemplateExport(command) {
             if (!this.project || !this.project.id) {
@@ -7363,26 +7578,12 @@ const ProjectEditorApp = {
                 return;
             }
 
-            switch (command) {
-                case 'unity-appui':
-                    this.showUnityExportDialog();
-                    break;
-                case 'android-kt':
-                    this.showAndroidExportDialog();
-                    break;
-                case 'ios-swift':
-                    this.showSwiftExportDialog();
-                    break;
-                case 'web-vue':
-                    this.showVueExportDialog();
-                    break;
-                default:
-                    this.$message.info(`${command} 导出功能即将推出`);
-            }
+            this.$message.info('平台特定的代码导出功能已移除，请使用自定义代码导出功能，并在设置页面配置您的代码生成脚本');
         },
 
-        // 显示Swift导出弹窗
+        // 显示Swift导出弹窗（废弃）
         showSwiftExportDialog() {
+            this.$message.info('平台特定的Swift导出功能已移除，请使用自定义代码导出功能');
             // 重置配置为默认值
             this.swiftExportConfig = {
                 imageFormat: 'png',

@@ -581,7 +581,7 @@ func APIDownloadFigmaImage(c *gin.Context) {
 	// 检查用户是否有Figma token
 	if user.FigmaToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "用户未绑定Figma token",
+			"error": "请先在个人资料页面配置 Figma Token",
 		})
 		return
 	}

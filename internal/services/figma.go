@@ -349,7 +349,7 @@ func GetFigmaProjectNodes(userID, projectID uint, fileKey, nodeID string) ([]mod
 
 	// 如果没有Figma Token，返回错误
 	if user.FigmaToken == "" {
-		return nil, errors.New("用户未设置Figma Token")
+		return nil, errors.New("请先在个人资料页面配置 Figma Token")
 	}
 
 	// 获取节点信息（支持 WebSocket 兜底）
@@ -1007,6 +1007,15 @@ func parseNodeRecursive(node map[string]interface{}, parentID string) []map[stri
 
 // CreateFigmaNode 创建Figma节点
 func CreateFigmaNode(projectID uint, nodeID, name, nodeType string, parentID interface{}) (*models.FigmaNode, error) {
+	// 先检查节点是否已存在
+	existingNode, err := models.FindNodeByProjectAndNodeID(projectID, nodeID)
+	if err == nil && existingNode != nil {
+		// 节点已存在，保留现有的 modifys，不覆盖用户的修改信息
+		// 只更新基本的节点信息（如果需要的话，这里可以选择性更新）
+		return existingNode, nil
+	}
+
+	// 节点不存在，创建新节点
 	// 创建节点记录，将节点信息存储在modifys字段中
 	nodeInfo := map[string]interface{}{
 		"name":      name,

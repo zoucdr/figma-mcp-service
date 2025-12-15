@@ -19,6 +19,7 @@ type User struct {
 	CompTypes    string         `gorm:"size:1000" json:"comp_types"`        // 控件类型列表，逗号分隔
 	Prompts      string         `gorm:"type:text" json:"prompts"`           // 修饰提示词，用于MCP节点修饰
 	CodePrompts  string         `gorm:"type:text" json:"code_prompts"`      // 代码生成提示词，用于Swift等代码生成
+	UICreater    string         `gorm:"type:text" json:"ui_creater"`        // UI代码生成脚本（JS），最大1024KB
 	ProxyEnabled bool           `gorm:"default:false" json:"proxy_enabled"` // 是否启用代理
 	ProxyURL     string         `gorm:"size:500" json:"proxy_url"`          // 代理地址，如 http://127.0.0.1:7890
 	CreatedAt    time.Time      `json:"created_at"`
@@ -141,7 +142,7 @@ func (u *User) UpdateProfile(username, figmaToken, compTypes string) error {
 }
 
 // UpdateProfileWithPrompts 更新用户资料（包含提示词）
-func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts string, proxyEnabled bool, proxyURL string) error {
+func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts, codePrompts, uiCreater string, proxyEnabled bool, proxyURL string) error {
 	// 更新用户名
 	if err := u.UpdateUsername(username); err != nil {
 		return err
@@ -161,11 +162,29 @@ func (u *User) UpdateProfileWithPrompts(username, figmaToken, compTypes, prompts
 	// 更新代码生成提示词
 	u.CodePrompts = codePrompts
 
+	// 更新UI代码生成脚本
+	if len(uiCreater) > 1024*1024 {
+		return errors.New("UI脚本大小超过1024KB限制")
+	}
+	u.UICreater = uiCreater
+
 	// 更新代理配置
 	u.ProxyEnabled = proxyEnabled
 	u.ProxyURL = proxyURL
 
 	// 保存所有更新
+	result := DB.Save(u)
+	return result.Error
+}
+
+// UpdateUICreater 更新UI代码生成脚本
+func (u *User) UpdateUICreater(uiCreater string) error {
+	// 检查脚本大小（最大1024KB）
+	if len(uiCreater) > 1024*1024 {
+		return errors.New("UI脚本大小超过1024KB限制")
+	}
+
+	u.UICreater = uiCreater
 	result := DB.Save(u)
 	return result.Error
 }

@@ -164,7 +164,7 @@ func (cc *CacheController) RefreshFile(c *gin.Context) {
 	}
 
 	if user.FigmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 Figma Token"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 		return
 	}
 
@@ -239,8 +239,12 @@ func (cc *CacheController) RefreshFile(c *gin.Context) {
 
 		var user models.User
 		err = models.DB.First(&user, project.UserID).Error
-		if err != nil || user.FigmaToken == "" {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户 Token 失败"})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户信息失败"})
+			return
+		}
+		if user.FigmaToken == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 			return
 		}
 
@@ -378,7 +382,7 @@ func (cc *CacheController) RenderProject(c *gin.Context) {
 	}
 
 	if user.FigmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 Figma Token"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 		return
 	}
 
@@ -554,7 +558,7 @@ func (cc *CacheController) GetRenderQueue(c *gin.Context) {
 	}
 
 	if user.FigmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 Figma Token"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 		return
 	}
 
@@ -699,7 +703,7 @@ func (cc *CacheController) GetQueueStatistics(c *gin.Context) {
 	}
 
 	if user.FigmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 Figma Token"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 		return
 	}
 
@@ -873,7 +877,7 @@ func (cc *CacheController) ManualRender(c *gin.Context) {
 	}
 
 	if user.FigmaToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 Figma Token"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在个人资料页面配置 Figma Token"})
 		return
 	}
 
@@ -965,7 +969,7 @@ func (cc *CacheController) RefreshProjectNodeTree(c *gin.Context) {
 
 	if user.FigmaToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "用户未设置Figma Token",
+			"error": "请先在个人资料页面配置 Figma Token",
 		})
 		return
 	}
@@ -1213,7 +1217,7 @@ func (cc *CacheController) BatchRefreshNodeTree(c *gin.Context) {
 
 	if user.FigmaToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "用户未设置Figma Token",
+			"error": "请先在个人资料页面配置 Figma Token",
 		})
 		return
 	}
