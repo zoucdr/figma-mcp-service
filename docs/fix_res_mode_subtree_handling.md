@@ -28,24 +28,51 @@ tree1 (sprite)
 
 当父节点设置了图片资源模式（sprite/texture/slice）时：
 
-1. **保留设置了res_mode的直接/间接子节点**
+1. **装饰性节点类型的条件剔除**
+   - 装饰性节点类型包括：
+     - BOOLEAN_OPERATION（布尔运算节点）
+     - VECTOR（矢量图形）
+     - RECTANGLE（矩形）
+     - ELLIPSE（椭圆）
+     - LINE（线条）
+     - POLYGON（多边形）
+     - STAR（星形）
+   - **如果未设置res_mode**：强制剔除，包含在父节点的图片中
+   - **如果显式设置了res_mode（sprite/texture/slice）**：保留并单独导出
+
+2. **保留设置了res_mode的直接/间接子节点**
    - 这些节点会单独渲染，从父节点图片中自动剔除
 
-2. **保留TEXT类型的直接/间接子节点**
+3. **保留TEXT类型的直接/间接子节点**
    - 文本节点需要动态渲染，不应包含在静态图片中
 
-3. **保留包含res_mode或TEXT的子节点的祖先链**
+4. **保留包含res_mode或TEXT的子节点的祖先链**
    - 为了维持正确的层级结构，必须保留这些节点的父容器
+   - 但祖先链中不能只包含装饰性节点
 
-4. **剔除纯装饰性的子节点**
+5. **剔除其他装饰性的子节点**
    - 没有res_mode、不是TEXT、后代中也没有res_mode或TEXT的节点
    - 这些节点会被统一渲染到父节点的图片中
 
-## 代码修复
+## 代码修复（更新版）
+
+### 新增函数
+
+#### 1. `isAlwaysRemovableNodeType` - 判断装饰性节点类型
+```go
+// 装饰性节点类型列表（在父节点为图片资源时始终剔除）
+- BOOLEAN_OPERATION: 布尔运算节点（Union、Subtract等）
+- VECTOR: 矢量图形节点
+- RECTANGLE: 矩形节点
+- ELLIPSE: 椭圆节点
+- LINE: 线条节点
+- POLYGON: 多边形节点
+- STAR: 星形节点
+```
 
 ### 修改的函数
 
-#### 1. `processNodeResMode` - 第1738-1777行
+#### 1. `processNodeResMode` - 第1738-1783行
 ```go
 case "sprite", "slice", "texture":
     // 当父节点设置了图片资源模式时，只保留以下**直接子节点**：
@@ -56,23 +83,27 @@ case "sprite", "slice", "texture":
 
 **关键改动**：
 - 明确只检查**直接子节点**
+- 添加**装饰性节点类型强制剔除**逻辑
+- 使用 `isAlwaysRemovableNodeType` 判断是否为装饰性节点
 - 使用 `hasResNodeOrTextInDescendants` 检查后代中是否有需要保留的节点
 
-#### 2. `processNodeResModeSingle` - 第1851-1890行
+#### 2. `processNodeResModeSingle` - 第1867-1906行
 同样的逻辑修复，确保两个处理函数的行为一致。
 
-#### 3. `hasResNodeOrTextInDescendants` - 新函数（原 `hasImageNodeInSubtree`）
+#### 3. `hasResNodeOrTextInDescendants` - 优化函数（原 `hasImageNodeInSubtree`）
 ```go
 // hasResNodeOrTextInDescendants 检查节点的后代中是否包含设置了res_mode的节点或TEXT类型节点
 // 用于判断子节点是否需要保留（父子res_mode共存机制）
 // 注意：只检查后代节点，不检查节点本身
+// 注意：装饰性节点类型（BOOLEAN_OPERATION、VECTOR等）不算作需要保留的节点
 func hasResNodeOrTextInDescendants(nodeID string, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}) bool
 ```
 
 **关键改动**：
 - 重命名为更准确的名称
 - 只递归检查后代节点
-- 清晰的逻辑：先检查TEXT类型，再检查res_mode，最后递归
+- **跳过装饰性节点类型**（BOOLEAN_OPERATION、VECTOR等）
+- 清晰的逻辑：先过滤装饰性节点，再检查TEXT类型，再检查res_mode，最后递归
 
 ## 测试场景
 
@@ -93,11 +124,11 @@ container (sprite)          # 设置为sprite
 ```
 panel (texture)             # 设置为texture
 ├─ header                   # 应该保留（包含子节点titleText）
-│  ├─ bgShape               # 应该被剔除（装饰性）
+│  ├─ bgShape (RECTANGLE)   # 应该被剔除（装饰性节点，未设置res_mode）
 │  └─ titleText (TEXT)      # 应该保留（TEXT类型）
 ├─ content                  # 应该被剔除（纯装饰性容器）
-│  ├─ shape1                # 应该被剔除（装饰性）
-│  └─ shape2                # 应该被剔除（装饰性）
+│  ├─ shape1 (VECTOR)       # 应该被剔除（装饰性节点，未设置res_mode）
+│  └─ shape2 (ELLIPSE)      # 应该被剔除（装饰性节点，未设置res_mode）
 └─ closeBtn (sprite)        # 应该保留（设置了sprite）
 ```
 
@@ -106,6 +137,19 @@ panel (texture)             # 设置为texture
 - 剔除：bgShape, content, shape1, shape2
 - 渲染：panel.png（背景，不包含closeBtn）, closeBtn.png
 - titleText 作为动态文本在运行时渲染
+
+### 场景2.1：装饰性节点显式设置res_mode
+```
+panel (texture)             # 设置为texture
+├─ background (RECTANGLE, sprite)  # 应该保留（虽然是装饰性类型，但设置了sprite）
+├─ icon (VECTOR, sprite)    # 应该保留（虽然是装饰性类型，但设置了sprite）
+└─ decoration (VECTOR)      # 应该被剔除（装饰性节点，未设置res_mode）
+```
+
+**预期结果**：
+- 保留：panel, background, icon
+- 剔除：decoration
+- 渲染：panel.png（不包含background和icon）, background.png, icon.png
 
 ### 场景3：深层嵌套的图片
 ```
@@ -183,8 +227,30 @@ card (sprite)               # 设置为sprite
 
 这次修复确保了父子res_mode共存机制的正确实现：
 - ✅ 父节点设置图片资源模式时，只包含装饰性子节点
+- ✅ **强制剔除装饰性节点类型**（BOOLEAN_OPERATION、VECTOR等）
 - ✅ 设置了res_mode的子节点会单独渲染
 - ✅ TEXT节点被保留用于动态渲染
 - ✅ 维持正确的层级结构
+- ✅ **更激进的剔除策略**，确保装饰性节点不会因为层级关系被意外保留
 - ✅ 优化最终输出的JSON大小
+
+## 修复版本
+
+### v1.0.0 (2025-12-16)
+- 初始修复：实现父子res_mode共存机制
+- 修复祖先链保留逻辑
+
+### v1.1.0 (2025-12-16)
+- **新增装饰性节点类型强制剔除**
+- 添加 `isAlwaysRemovableNodeType` 函数
+- 优化 `hasResNodeOrTextInDescendants` 函数，跳过装饰性节点
+- 更激进的剔除策略，确保 BOOLEAN_OPERATION、VECTOR 等装饰性节点被剔除
+- 添加详细的调试日志，便于排查问题
+
+### v1.2.0 (2025-12-16) ⭐ 当前版本
+- **重要修复**：装饰性节点如果显式设置了res_mode，则不会被强制剔除
+- 优化逻辑顺序：先检查res_mode，再判断是否为装饰性节点
+- 更新 `hasResNodeOrTextInDescendants` 函数，正确识别设置了res_mode的装饰性节点
+- 支持场景：用户想要单独导出某个VECTOR或BOOLEAN_OPERATION节点作为图片资源
+
 

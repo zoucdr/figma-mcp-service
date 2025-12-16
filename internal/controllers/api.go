@@ -1735,7 +1735,7 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 					// 1. 子节点设置了res_mode（会单独渲染）
 					// 2. 子节点为TEXT类型（保留为动态文本）
 					// 3. 子节点的后代中包含设置了res_mode或TEXT类型的节点
-					// 清除其他装饰性子节点
+					// 清除其他所有装饰性子节点（包括BOOLEAN_OPERATION等）
 					if children, hasChildren := childrenMap[nodeID]; hasChildren {
 						for _, child := range children {
 							childID := (*child)["id"].(string)
@@ -1747,16 +1747,28 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 							// 检查子节点是否应该保留
 							shouldKeep := false
 
-							// 1. 子节点本身设置了res_mode - 保留（会单独渲染）
+							// 1. 优先检查：子节点本身是否设置了res_mode
+							hasResMode := false
+							childResMode := ""
 							if childModifys, exists := nodeModifys[childID]; exists {
-								if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
+								if resMode, ok := childModifys["res_mode"].(string); ok && resMode != "" {
+									hasResMode = true
+									childResMode = resMode
 									shouldKeep = true
-									fmt.Printf("保留子节点 %s (设置了res_mode=%s)\n", childID, childResMode)
+									fmt.Printf("保留子节点 %s (设置了res_mode=%s)\n", childID, resMode)
 								}
 							}
 
+							// 特殊规则：装饰性节点类型（BOOLEAN_OPERATION、VECTOR、RECTANGLE等）
+							// 如果没有显式设置res_mode，则强制剔除
+							if !hasResMode && isAlwaysRemovableNodeType(childType) {
+								fmt.Printf("删除装饰性节点 %s (type=%s, 未设置res_mode, 父节点=%s为图片资源)\n", childID, childType, nodeID)
+								markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
+								continue
+							}
+
 							// 2. 子节点为TEXT类型 - 保留（动态文本）
-							if childType == "TEXT" {
+							if !shouldKeep && childType == "TEXT" {
 								shouldKeep = true
 								fmt.Printf("保留子节点 %s (TEXT类型)\n", childID)
 							}
@@ -1770,8 +1782,22 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 
 							// 如果不需要保留，则标记删除
 							if !shouldKeep {
-								fmt.Printf("删除装饰性子节点 %s (父节点=%s为图片资源)\n", childID, nodeID)
+								fmt.Printf("删除装饰性子节点 %s (type=%s, 父节点=%s为图片资源)\n", childID, childType, nodeID)
 								markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
+							} else {
+								// 子节点被保留，需要继续递归处理其子树
+								if hasResMode && (childResMode == "sprite" || childResMode == "slice" || childResMode == "texture") {
+									// 情况1：子节点自己也设置了图片资源模式
+									fmt.Printf("子节点 %s 设置了图片资源模式=%s，继续处理其子树\n", childID, childResMode)
+									processNodeResModeSingleAsImageParent(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+								} else if childType != "TEXT" {
+									// 情况2：子节点是非TEXT节点（被保留是因为后代有TEXT或res_mode）
+									// 如果有子节点，继续深入剔除其装饰性子节点
+									if _, hasGrandChildren := childrenMap[childID]; hasGrandChildren {
+										fmt.Printf("继续深入容器节点 %s (type=%s) 的子树\n", childID, childType)
+										processNodeResModeSingleAsImageParent(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+									}
+								}
 							}
 						}
 					}
@@ -1800,40 +1826,21 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 			}
 		}
 
-		// 递归处理子节点（只处理未被删除的子节点）
-		if children, hasChildren := childrenMap[nodeID]; hasChildren {
-			for _, child := range children {
-				childID := (*child)["id"].(string)
-				if !nodesToRemove[childID] {
-					// 递归处理单个子节点
-					processNodeResModeSingle(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+		// 注意：对于设置了图片资源模式的节点，已经在上面的switch中处理了其子节点
+		// 对于未设置res_mode的节点，需要继续递归处理其子节点
+		if modifys, exists := nodeModifys[nodeID]; !exists || modifys["res_mode"] == nil || modifys["res_mode"] == "" {
+			// 节点未设置res_mode，递归处理子节点
+			if children, hasChildren := childrenMap[nodeID]; hasChildren {
+				for _, child := range children {
+					childID := (*child)["id"].(string)
+					if !nodesToRemove[childID] {
+						// 递归处理单个子节点
+						processNodeResModeSingle(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+					}
 				}
 			}
 		}
 	}
-}
-
-// shouldKeepChildNode 检查子节点是否应该被保留
-func shouldKeepChildNode(nodeID string, nodeModifys map[string]map[string]interface{}) bool {
-	// 检查节点是否有修改信息
-	modifys, exists := nodeModifys[nodeID]
-	if !exists {
-		// 没有修改信息，不保留
-		return false
-	}
-
-	// 检查res_mode
-	if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
-		// 如果res_mode是attach或cutout，不保留
-		if resMode == "attach" || resMode == "cutout" {
-			return false
-		}
-		// 其他res_mode（sprite, slice, texture等）都保留
-		return true
-	}
-
-	// 有修改信息但没有res_mode，也不保留
-	return false
 }
 
 // processNodeResModeSingle 递归处理单个节点的资源模式
@@ -1855,6 +1862,8 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 				// 1. 子节点设置了res_mode（会单独渲染）
 				// 2. 子节点为TEXT类型（保留为动态文本）
 				// 3. 子节点的后代中包含设置了res_mode或TEXT类型的节点
+				// 清除其他所有装饰性子节点（包括BOOLEAN_OPERATION等）
+				fmt.Printf("[递归] 处理图片资源节点 %s (res_mode=%s)\n", nodeID, resMode)
 				if children, hasChildren := childrenMap[nodeID]; hasChildren {
 					for _, child := range children {
 						childID := (*child)["id"].(string)
@@ -1866,31 +1875,53 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 						// 检查子节点是否应该保留
 						shouldKeep := false
 
-						// 1. 子节点本身设置了res_mode - 保留
+						// 1. 优先检查：子节点本身是否设置了res_mode
+						hasResMode := false
+						childResMode := ""
 						if childModifys, exists := nodeModifys[childID]; exists {
-							if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
+							if resMode, ok := childModifys["res_mode"].(string); ok && resMode != "" {
+								hasResMode = true
+								childResMode = resMode
 								shouldKeep = true
+								fmt.Printf("[递归] 保留子节点 %s (设置了res_mode=%s)\n", childID, resMode)
 							}
 						}
 
+						// 特殊规则：装饰性节点类型（BOOLEAN_OPERATION、VECTOR、RECTANGLE等）
+						// 如果没有显式设置res_mode，则强制剔除
+						if !hasResMode && isAlwaysRemovableNodeType(childType) {
+							fmt.Printf("[递归] 删除装饰性节点 %s (type=%s, 未设置res_mode, 父节点=%s为图片资源)\n", childID, childType, nodeID)
+							markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
+							continue
+						}
+
 						// 2. 子节点为TEXT类型 - 保留
-						if childType == "TEXT" {
+						if !shouldKeep && childType == "TEXT" {
 							shouldKeep = true
+							fmt.Printf("[递归] 保留子节点 %s (TEXT类型)\n", childID)
 						}
 
 						// 3. 子节点的后代中包含图片或文字节点 - 保留此子节点
 						if !shouldKeep && hasResNodeOrTextInDescendants(childID, childrenMap, nodeModifys) {
 							shouldKeep = true
+							fmt.Printf("[递归] 保留子节点 %s (后代中包含图片或文字节点)\n", childID)
 						}
 
 						// 如果不需要保留，则标记删除
 						if !shouldKeep {
+							fmt.Printf("[递归] 删除装饰性子节点 %s (type=%s, 父节点=%s为图片资源)\n", childID, childType, nodeID)
 							markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
+						} else if hasResMode && (childResMode == "sprite" || childResMode == "slice" || childResMode == "texture") {
+							// 重要：如果子节点被保留且自己也设置了图片资源模式，
+							// 需要继续递归处理它的子树（剔除它的装饰性子节点）
+							fmt.Printf("[递归] 子节点 %s 设置了图片资源模式，继续处理其子树\n", childID)
+							processNodeResModeSingle(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
 						}
 					}
 				}
 			case "cutout":
 				// 层级剔除模式：移除当前节点，子节点上移
+				fmt.Printf("[递归] 处理cutout节点 %s\n", nodeID)
 				nodesToRemove[nodeID] = true
 				if children, hasChildren := childrenMap[nodeID]; hasChildren {
 					currentParentID := node["parent_id"]
@@ -1914,21 +1945,101 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 		}
 	}
 
-	// 递归处理子节点（只处理未被删除的子节点）
+	// 注意：processNodeResModeSingle只处理设置了res_mode的节点
+	// 未设置res_mode的节点应该由父节点的处理逻辑来决定是否保留/剔除
+	// 不需要在这里继续递归，避免重复处理
+}
+
+// processNodeResModeSingleAsImageParent 将容器节点的子节点当作"图片资源节点的子节点"来处理
+// 用于递归剔除被保留容器节点中的装饰性节点
+func processNodeResModeSingleAsImageParent(node gin.H, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}, nodesToRemove map[string]bool, nodesToPromote map[string][]*gin.H) {
+	nodeID := node["id"].(string)
+
+	// 如果节点已经被标记为删除，跳过处理
+	if nodesToRemove[nodeID] {
+		return
+	}
+
+	// 对此节点的所有子节点应用"图片资源父节点"的剔除规则
 	if children, hasChildren := childrenMap[nodeID]; hasChildren {
 		for _, child := range children {
 			childID := (*child)["id"].(string)
-			if !nodesToRemove[childID] {
-				// 递归处理单个子节点
-				processNodeResModeSingle(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+			childType := ""
+			if t, ok := (*child)["type"].(string); ok {
+				childType = t
+			}
+
+			// 检查子节点是否应该保留
+			shouldKeep := false
+
+			// 1. 优先检查：子节点本身是否设置了res_mode
+			hasResMode := false
+			childResMode := ""
+			if childModifys, exists := nodeModifys[childID]; exists {
+				if resMode, ok := childModifys["res_mode"].(string); ok && resMode != "" {
+					hasResMode = true
+					childResMode = resMode
+					shouldKeep = true
+					fmt.Printf("[深度剔除] 保留子节点 %s (设置了res_mode=%s)\n", childID, resMode)
+				}
+			}
+
+			// 特殊规则：装饰性节点类型
+			// 如果没有显式设置res_mode，则强制剔除
+			if !hasResMode && isAlwaysRemovableNodeType(childType) {
+				fmt.Printf("[深度剔除] 删除装饰性节点 %s (type=%s, 未设置res_mode, 父容器=%s)\n", childID, childType, nodeID)
+				markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
+				continue
+			}
+
+			// 2. 子节点为TEXT类型 - 保留
+			if !shouldKeep && childType == "TEXT" {
+				shouldKeep = true
+				fmt.Printf("[深度剔除] 保留子节点 %s (TEXT类型)\n", childID)
+			}
+
+			// 3. 子节点的后代中包含图片或文字节点 - 保留此子节点
+			if !shouldKeep && hasResNodeOrTextInDescendants(childID, childrenMap, nodeModifys) {
+				shouldKeep = true
+				fmt.Printf("[深度剔除] 保留子节点 %s (后代中包含图片或文字节点)\n", childID)
+			}
+
+			// 如果不需要保留，则标记删除
+			if !shouldKeep {
+				fmt.Printf("[深度剔除] 删除装饰性子节点 %s (type=%s, 父容器=%s)\n", childID, childType, nodeID)
+				markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
+			} else {
+				// 子节点被保留，需要继续递归处理其子树
+				if hasResMode && (childResMode == "sprite" || childResMode == "slice" || childResMode == "texture") {
+					// 子节点自己设置了图片资源模式
+					fmt.Printf("[深度剔除] 子节点 %s 设置了图片资源模式=%s，继续处理其子树\n", childID, childResMode)
+					processNodeResModeSingleAsImageParent(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+				} else if childType != "TEXT" {
+					// 非TEXT节点且被保留（因为后代有TEXT或res_mode）
+					// 如果有子节点，继续深入剔除其装饰性子节点
+					if _, hasGrandChildren := childrenMap[childID]; hasGrandChildren {
+						fmt.Printf("[深度剔除] 继续深入容器节点 %s (type=%s)\n", childID, childType)
+						processNodeResModeSingleAsImageParent(*child, childrenMap, nodeModifys, nodesToRemove, nodesToPromote)
+					}
+				}
 			}
 		}
 	}
 }
 
+// isAlwaysRemovableNodeType 判断节点类型是否应该在父节点为图片资源时始终被剔除
+// 这些类型的节点都是装饰性的，应该被包含在父节点的图片渲染中
+func isAlwaysRemovableNodeType(nodeType string) bool {
+	removableTypes := map[string]bool{
+		"BOOLEAN_OPERATION": true,
+	}
+	return removableTypes[nodeType]
+}
+
 // hasResNodeOrTextInDescendants 检查节点的后代中是否包含设置了res_mode的节点或TEXT类型节点
 // 用于判断子节点是否需要保留（父子res_mode共存机制）
 // 注意：只检查后代节点，不检查节点本身
+// 注意：装饰性节点类型（BOOLEAN_OPERATION、VECTOR等）不算作需要保留的节点
 func hasResNodeOrTextInDescendants(nodeID string, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}) bool {
 	// 递归检查所有后代节点
 	if children, hasChildren := childrenMap[nodeID]; hasChildren {
@@ -1945,13 +2056,24 @@ func hasResNodeOrTextInDescendants(nodeID string, childrenMap map[string][]*gin.
 			}
 
 			// 检查子节点是否设置了有效的res_mode
+			hasValidResMode := false
 			if modifys, exists := nodeModifys[childID]; exists {
 				if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
 					// 如果res_mode是attach或cutout，不算作有效的资源节点
 					if resMode != "attach" && resMode != "cutout" {
-						return true
+						hasValidResMode = true
 					}
 				}
+			}
+
+			// 如果节点设置了有效的res_mode，则需要保留（即使是装饰性节点类型）
+			if hasValidResMode {
+				return true
+			}
+
+			// 装饰性节点类型且未设置res_mode，不算作需要保留的节点，直接跳过
+			if isAlwaysRemovableNodeType(childType) {
+				continue
 			}
 
 			// 递归检查孙子节点
