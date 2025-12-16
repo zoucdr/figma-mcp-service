@@ -1731,10 +1731,10 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 				switch resMode {
 				case "sprite", "slice", "texture":
 					// 图片相关模式：实现父子res_mode共存机制
-					// 保留以下子节点：
+					// 当父节点设置了图片资源模式时，只保留以下**直接子节点**：
 					// 1. 子节点设置了res_mode（会单独渲染）
 					// 2. 子节点为TEXT类型（保留为动态文本）
-					// 3. 子节点子树中包含设置了res_mode的节点或TEXT节点
+					// 3. 子节点的后代中包含设置了res_mode或TEXT类型的节点
 					// 清除其他装饰性子节点
 					if children, hasChildren := childrenMap[nodeID]; hasChildren {
 						for _, child := range children {
@@ -1747,7 +1747,7 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 							// 检查子节点是否应该保留
 							shouldKeep := false
 
-							// 1. 子节点设置了res_mode - 保留（会单独渲染）
+							// 1. 子节点本身设置了res_mode - 保留（会单独渲染）
 							if childModifys, exists := nodeModifys[childID]; exists {
 								if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
 									shouldKeep = true
@@ -1761,15 +1761,16 @@ func processNodeResMode(nodes []gin.H, childrenMap map[string][]*gin.H, nodeModi
 								fmt.Printf("保留子节点 %s (TEXT类型)\n", childID)
 							}
 
-							// 3. 子节点子树中包含图片或文字节点 - 保留
-							if !shouldKeep && hasImageNodeInSubtree(childID, childrenMap, nodeModifys) {
+							// 3. 子节点的后代中包含图片或文字节点 - 保留此子节点
+							// 这样可以保持层级结构，让后代的图片/文字节点能够正确渲染
+							if !shouldKeep && hasResNodeOrTextInDescendants(childID, childrenMap, nodeModifys) {
 								shouldKeep = true
-								fmt.Printf("保留子节点 %s (子树包含图片或文字节点)\n", childID)
+								fmt.Printf("保留子节点 %s (后代中包含图片或文字节点)\n", childID)
 							}
 
 							// 如果不需要保留，则标记删除
 							if !shouldKeep {
-								fmt.Printf("删除装饰性子节点 %s\n", childID)
+								fmt.Printf("删除装饰性子节点 %s (父节点=%s为图片资源)\n", childID, nodeID)
 								markNodeAndDescendantsForRemoval(childID, childrenMap, nodesToRemove)
 							}
 						}
@@ -1850,10 +1851,10 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 			switch resMode {
 			case "sprite", "slice", "texture":
 				// 图片相关模式：实现父子res_mode共存机制
-				// 保留以下子节点：
+				// 当父节点设置了图片资源模式时，只保留以下**直接子节点**：
 				// 1. 子节点设置了res_mode（会单独渲染）
 				// 2. 子节点为TEXT类型（保留为动态文本）
-				// 3. 子节点子树中包含设置了res_mode的节点或TEXT节点
+				// 3. 子节点的后代中包含设置了res_mode或TEXT类型的节点
 				if children, hasChildren := childrenMap[nodeID]; hasChildren {
 					for _, child := range children {
 						childID := (*child)["id"].(string)
@@ -1865,7 +1866,7 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 						// 检查子节点是否应该保留
 						shouldKeep := false
 
-						// 1. 子节点设置了res_mode - 保留
+						// 1. 子节点本身设置了res_mode - 保留
 						if childModifys, exists := nodeModifys[childID]; exists {
 							if childResMode, ok := childModifys["res_mode"].(string); ok && childResMode != "" {
 								shouldKeep = true
@@ -1877,8 +1878,8 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 							shouldKeep = true
 						}
 
-						// 3. 子节点子树中包含图片或文字节点 - 保留
-						if !shouldKeep && hasImageNodeInSubtree(childID, childrenMap, nodeModifys) {
+						// 3. 子节点的后代中包含图片或文字节点 - 保留此子节点
+						if !shouldKeep && hasResNodeOrTextInDescendants(childID, childrenMap, nodeModifys) {
 							shouldKeep = true
 						}
 
@@ -1925,35 +1926,36 @@ func processNodeResModeSingle(node gin.H, childrenMap map[string][]*gin.H, nodeM
 	}
 }
 
-// hasImageNodeInSubtree 检查子树中是否包含符合保留条件的节点
+// hasResNodeOrTextInDescendants 检查节点的后代中是否包含设置了res_mode的节点或TEXT类型节点
 // 用于判断子节点是否需要保留（父子res_mode共存机制）
-func hasImageNodeInSubtree(nodeID string, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}) bool {
-	// 检查当前节点是否符合保留条件
-	if modifys, exists := nodeModifys[nodeID]; exists {
-		if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
-			// 如果res_mode是attach或cutout，不保留
-			if resMode == "attach" || resMode == "cutout" {
-				return false
-			}
-			// 其他res_mode（sprite, slice, texture等）都保留
-			return true
-		}
-	}
-
-	// 检查当前节点是否为TEXT类型（需要保留）
-	if children, hasChildren := childrenMap[nodeID]; hasChildren {
-		for _, child := range children {
-			if childType, ok := (*child)["type"].(string); ok && childType == "TEXT" {
-				return true
-			}
-		}
-	}
-
-	// 递归检查所有子节点
+// 注意：只检查后代节点，不检查节点本身
+func hasResNodeOrTextInDescendants(nodeID string, childrenMap map[string][]*gin.H, nodeModifys map[string]map[string]interface{}) bool {
+	// 递归检查所有后代节点
 	if children, hasChildren := childrenMap[nodeID]; hasChildren {
 		for _, child := range children {
 			childID := (*child)["id"].(string)
-			if hasImageNodeInSubtree(childID, childrenMap, nodeModifys) {
+			childType := ""
+			if t, ok := (*child)["type"].(string); ok {
+				childType = t
+			}
+
+			// 检查子节点是否为TEXT类型
+			if childType == "TEXT" {
+				return true
+			}
+
+			// 检查子节点是否设置了有效的res_mode
+			if modifys, exists := nodeModifys[childID]; exists {
+				if resMode, ok := modifys["res_mode"].(string); ok && resMode != "" {
+					// 如果res_mode是attach或cutout，不算作有效的资源节点
+					if resMode != "attach" && resMode != "cutout" {
+						return true
+					}
+				}
+			}
+
+			// 递归检查孙子节点
+			if hasResNodeOrTextInDescendants(childID, childrenMap, nodeModifys) {
 				return true
 			}
 		}

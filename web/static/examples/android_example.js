@@ -176,3 +176,4 @@ function generateReadme(context) {
            "3. 将图片文件复制到 `res/drawable/` 目录\n";
 }
 
+
