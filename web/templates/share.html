@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>提示词分享 - Figma Deliver</title>
-    <link rel="stylesheet" href="https://unpkg.com/element-ui@2.15.14/lib/theme-chalk/index.css">
+    <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+    <link rel="stylesheet" href="/static/lib/element-ui/theme-chalk/index.css">
     <link rel="stylesheet" href="/static/css/share.css?v={{ if .timestamp }}{{ .timestamp }}{{ else }}1{{ end }}">
 </head>
 <body>
@@ -211,9 +212,10 @@
         </el-dialog>
     </div>
 
-    <script src="https://unpkg.com/vue@2.6.14/dist/vue.min.js"></script>
-    <script src="https://unpkg.com/element-ui@2.15.14/lib/index.js"></script>
-    <script src="https://unpkg.com/axios@1.6.0/dist/axios.min.js"></script>
+    <!-- JavaScript -->
+    <script src="/static/lib/vue/vue.min.js"></script>
+    <script src="/static/lib/element-ui/index.js"></script>
+    <script src="/static/lib/axios/axios.min.js"></script>
     <script>
         // 初始化数据 - 必须在 share.js 之前加载
         window.initialData = {

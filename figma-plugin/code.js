@@ -1069,12 +1069,13 @@ function getNodeByPath(rootNode, path) {
 function customBase64Encode(bytes) {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let base64 = "";
-
+  
   const byteLength = bytes.byteLength;
   const byteRemainder = byteLength % 3;
   const mainLength = byteLength - byteRemainder;
 
+  // 使用数组收集字符，避免字符串拼接的性能问题
+  const parts = [];
   let a, b, c, d;
   let chunk;
 
@@ -1090,7 +1091,7 @@ function customBase64Encode(bytes) {
     d = chunk & 63; // 63 = 2^6 - 1
 
     // Convert the raw binary segments to the appropriate ASCII encoding
-    base64 += chars[a] + chars[b] + chars[c] + chars[d];
+    parts.push(chars[a] + chars[b] + chars[c] + chars[d]);
   }
 
   // Deal with the remaining bytes and padding
@@ -1102,7 +1103,7 @@ function customBase64Encode(bytes) {
     // Set the 4 least significant bits to zero
     b = (chunk & 3) << 4; // 3 = 2^2 - 1
 
-    base64 += chars[a] + chars[b] + "==";
+    parts.push(chars[a] + chars[b] + "==");
   } else if (byteRemainder === 2) {
     chunk = (bytes[mainLength] << 8) | bytes[mainLength + 1];
 
@@ -1112,10 +1113,11 @@ function customBase64Encode(bytes) {
     // Set the 2 least significant bits to zero
     c = (chunk & 15) << 2; // 15 = 2^4 - 1
 
-    base64 += chars[a] + chars[b] + chars[c] + "=";
+    parts.push(chars[a] + chars[b] + chars[c] + "=");
   }
 
-  return base64;
+  // 一次性拼接所有字符，比逐个拼接快得多
+  return parts.join('');
 }
 
 async function exportNodesAsImages(params) {
@@ -1512,14 +1514,36 @@ async function generateNodePreview(nodeId, ignore_text = false, ignore_nodes = [
       throw new Error(`Node does not support exporting: ${nodeId}`);
     }
 
-    // 如果需要忽略文本或节点，设置透明度为 0
-    let modifiedNodes = [];
+    // 检查是否需要修改节点（忽略文本或节点）
     const needsModifying = ignore_text || (ignore_nodes && ignore_nodes.length > 0);
 
-    if (needsModifying) {
-      const nodesToProcess = await collectNodesToHide(node, ignore_text, ignore_nodes);
-      modifiedNodes = hideNodesByOpacity(nodesToProcess);
+    // 如果不需要修改，直接导出原图（快速路径）
+    if (!needsModifying) {
+      console.log(`[generateNodePreview] Fast path: direct export without modifications`);
+      
+      const settings = {
+        format: "PNG",
+        constraint: { type: "SCALE", value: 1 },
+      };
+
+      const bytes = await node.exportAsync(settings);
+      const base64 = customBase64Encode(bytes);
+      const imageUrl = `data:image/png;base64,${base64}`;
+
+      return {
+        nodeId: node.id,
+        nodeName: node.name,
+        imageUrl: imageUrl,
+        timestamp: new Date().toISOString(),
+      };
     }
+
+    // 需要修改节点：设置透明度为 0
+    console.log(`[generateNodePreview] Slow path: modifying nodes (ignore_text=${ignore_text}, ignore_nodes=${ignore_nodes.length})`);
+    let modifiedNodes = [];
+
+    const nodesToProcess = await collectNodesToHide(node, ignore_text, ignore_nodes);
+    modifiedNodes = hideNodesByOpacity(nodesToProcess);
 
     try {
       // Generate small preview image (PNG, 1x scale)
@@ -1593,14 +1617,59 @@ async function downloadNodeImage(params) {
       throw new Error(`Node does not support exporting: ${nodeId}`);
     }
 
-    // 如果需要忽略文本或节点，设置透明度为 0
-    let modifiedNodes = [];
+    // 检查是否需要修改节点（忽略文本或节点）
     const needsModifying = ignore_text || (ignore_nodes && ignore_nodes.length > 0);
 
-    if (needsModifying) {
-      const nodesToProcess = await collectNodesToHide(node, ignore_text, ignore_nodes);
-      modifiedNodes = hideNodesByOpacity(nodesToProcess);
+    // 如果不需要修改，直接导出原图（快速路径）
+    if (!needsModifying) {
+      console.log(`[downloadNodeImage] Fast path: direct export without modifications`);
+      
+      const settings = {
+        format: format,
+        constraint: { type: "SCALE", value: scale },
+      };
+
+      const bytes = await node.exportAsync(settings);
+      const base64 = customBase64Encode(bytes);
+      
+      // Determine MIME type
+      let mimeType;
+      switch (format) {
+        case "PNG":
+          mimeType = "image/png";
+          break;
+        case "JPG":
+          mimeType = "image/jpeg";
+          break;
+        case "SVG":
+          mimeType = "image/svg+xml";
+          break;
+        case "PDF":
+          mimeType = "application/pdf";
+          break;
+        default:
+          mimeType = "application/octet-stream";
+      }
+
+      const imageUrl = `data:${mimeType};base64,${base64}`;
+
+      return {
+        nodeId: node.id,
+        nodeName: node.name,
+        format: format,
+        scale: scale,
+        mimeType: mimeType,
+        imageUrl: imageUrl,
+        timestamp: new Date().toISOString(),
+      };
     }
+
+    // 需要修改节点：设置透明度为 0
+    console.log(`[downloadNodeImage] Slow path: modifying nodes (ignore_text=${ignore_text}, ignore_nodes=${ignore_nodes.length})`);
+    let modifiedNodes = [];
+
+    const nodesToProcess = await collectNodesToHide(node, ignore_text, ignore_nodes);
+    modifiedNodes = hideNodesByOpacity(nodesToProcess);
 
     try {
       // Prepare export settings
@@ -1609,8 +1678,9 @@ async function downloadNodeImage(params) {
         constraint: { type: "SCALE", value: scale },
       };
 
-      // Export the node
+      console.log(`[downloadNodeImage] Starting export with ${modifiedNodes.length} modified nodes`);
       const bytes = await node.exportAsync(settings);
+      console.log(`[downloadNodeImage] Export completed`);
 
       // Convert to base64
       const base64 = customBase64Encode(bytes);
