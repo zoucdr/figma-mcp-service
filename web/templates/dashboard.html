@@ -1002,6 +1002,19 @@
                 <el-option label="3.0x" :value="3.0"></el-option>
                 <el-option label="4.0x" :value="4.0"></el-option>
             </el-select>
+            
+            <!-- 清除本地缓存按钮 -->
+            <el-tooltip content="清除本地图片缓存（不包括OBS和数据库）" placement="top">
+                <el-button 
+                    icon="el-icon-delete" 
+                    size="small"
+                    @click="clearLocalImageCache"
+                    :loading="clearingCache"
+                    title="清除本地缓存">
+                    清除缓存
+                </el-button>
+            </el-tooltip>
+            
             <el-button 
                 class="export-project-btn" 
                 type="success" 

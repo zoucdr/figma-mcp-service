@@ -419,6 +419,7 @@ func main() {
 	profileGroup.POST("/revoke-mcp-token", controllers.RevokeMCPToken)
 	profileGroup.POST("/change-password", controllers.ChangePassword)
 	profileGroup.GET("/api/mcp-token", controllers.GetMCPToken) // 获取当前用户的 MCP Token
+	profileGroup.GET("/api/info", controllers.GetCurrentUser)   // 获取当前用户的详细信息
 	profileGroup.GET("", func(c *gin.Context) {
 		// 确保CSRF令牌存在
 		session := sessions.Default(c)

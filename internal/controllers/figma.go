@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1277,15 +1279,64 @@ func GetFigmaImage(c *gin.Context) {
 		}
 
 		var imagePath string
-		var imgErr error
 
-		// 1. 优先尝试通过 WebSocket 请求 Figma 插件获取最新的实时图片
+		// 1. 优先检查本地文件缓存
+		if useCache {
+			safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+			tempDir := filepath.Join("temp", project.FileKey, "previews")
+
+			// 根据ignoreTexts决定文件名后缀：x表示带文字，p表示不带文字
+			suffix := "x"
+			if ignoreTexts {
+				suffix = "p"
+			}
+
+			// 如果有忽略节点，添加到后缀中
+			if len(ignoreNodes) > 0 {
+				// 对忽略节点列表进行排序以确保一致性
+				sortedIgnoreNodes := make([]string, len(ignoreNodes))
+				copy(sortedIgnoreNodes, ignoreNodes)
+				sort.Strings(sortedIgnoreNodes)
+
+				// 生成忽略节点的哈希值作为文件名的一部分
+				ignoreNodesStr := strings.Join(sortedIgnoreNodes, ",")
+				hash := md5.Sum([]byte(ignoreNodesStr))
+				ignoreNodesHash := fmt.Sprintf("%x", hash)[:8]
+				suffix = suffix + "i" + ignoreNodesHash
+			}
+
+			scaleStr := fmt.Sprintf("%.1fx", scale)
+			ext := format
+
+			// 尝试新格式的文件名: nodeID-scale[x|p]-hash.format
+			if files, err := ioutil.ReadDir(tempDir); err == nil {
+				for _, file := range files {
+					fileName := file.Name()
+					// 匹配格式: nodeID-scale[x|p][i-hash]*.format
+					if strings.HasPrefix(fileName, safeNodeID+"-"+scaleStr+suffix) && strings.HasSuffix(fileName, "."+format) {
+						localFilePath := filepath.Join(tempDir, fileName)
+						log.Printf("✅ [GetFigmaImage] 从本地缓存返回图片(新格式): %s", localFilePath)
+						return localFilePath, nil
+					}
+				}
+			}
+
+			// 回退到旧格式的文件名: nodeID_scalex.format
+			localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
+			if _, err := os.Stat(localFilePath); err == nil {
+				log.Printf("✅ [GetFigmaImage] 从本地缓存返回图片(旧格式): %s", localFilePath)
+				return localFilePath, nil
+			}
+			log.Printf("⚠️ [GetFigmaImage] 本地缓存未找到: %s", localFilePath)
+		}
+
+		// 2. 本地缓存未找到，尝试通过 WebSocket 请求 Figma 插件获取实时图片
 		mcpService := services.GetMCPService()
 		if mcpService != nil {
 			connection, exists := mcpService.GetUserConnection(user.ID)
 
 			if exists && connection != nil && mcpService.HasActiveWebSocketConnection(connection.ConnectionID) {
-				log.Printf("🔌 [GetFigmaImage] 发现活跃 WebSocket 连接，优先请求插件获取实时图片")
+				log.Printf("🔌 [GetFigmaImage] 本地缓存未找到，通过 WebSocket 请求插件获取实时图片")
 
 				// 构造请求ID和消息
 				requestID := fmt.Sprintf("req_image_%d", time.Now().UnixNano())
@@ -1326,7 +1377,7 @@ func GetFigmaImage(c *gin.Context) {
 
 				// 广播消息到频道
 				if err := mcpService.BroadcastToChannel(connection.ConnectionID, channel, message); err != nil {
-					log.Printf("❌ [GetFigmaImage] 发送插件请求失败: %v，回退到缓存", err)
+					log.Printf("❌ [GetFigmaImage] 发送插件请求失败: %v", err)
 				} else {
 					log.Printf("✅ [GetFigmaImage] 已发送请求到频道 %s，等待响应...", channel)
 
@@ -1340,43 +1391,26 @@ func GetFigmaImage(c *gin.Context) {
 							// 提取图片数据
 							if imageDataB64, hasImage := responseData["imageData"].(string); hasImage {
 								// 处理图片：保存本地并上传到 OBS
-								savedPath, handleErr := handleImageFromPlugin(project.FileKey, nodeID, format, scale, imageDataB64, responseData)
+								savedPath, handleErr := handleImageFromPlugin(project.FileKey, nodeID, format, scale, imageDataB64, responseData, ignoreTexts, ignoreNodes)
 								if handleErr == nil && savedPath != "" {
 									log.Printf("✅ [GetFigmaImage] 插件图片处理成功: %s", savedPath)
 									return savedPath, nil
 								}
-								log.Printf("⚠️ [GetFigmaImage] 插件图片处理失败: %v，回退到缓存", handleErr)
+								log.Printf("⚠️ [GetFigmaImage] 插件图片处理失败: %v", handleErr)
 							}
 						}
 
 					case respErr := <-errorChan:
-						log.Printf("❌ [GetFigmaImage] 收到错误响应: %v，回退到缓存", respErr)
+						log.Printf("❌ [GetFigmaImage] 收到错误响应: %v", respErr)
 
 					case <-time.After(30 * time.Second):
-						log.Printf("⏰ [GetFigmaImage] 请求超时，回退到缓存")
+						log.Printf("⏰ [GetFigmaImage] 请求超时")
 					}
 				}
 			}
 		}
 
-		// 2. WebSocket 不可用或失败，检查本地缓存文件
-		if useCache {
-			safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
-			tempDir := filepath.Join("temp", project.FileKey, "previews")
-			ext := format
-			if ext == "jpg" {
-				ext = "png" // 文件名统一使用 png
-			}
-			localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
-
-			if _, err := os.Stat(localFilePath); err == nil {
-				log.Printf("✅ [GetFigmaImage] 从本地缓存返回图片: %s", localFilePath)
-				return localFilePath, nil
-			}
-			log.Printf("⚠️ [GetFigmaImage] 本地缓存未找到: %s", localFilePath)
-		}
-
-		// 3. 检查数据库缓存（OBS URL 或 Figma CDN URL）
+		// 3. WebSocket不可用或失败，检查数据库缓存（OBS URL 或 Figma CDN URL）
 		if useCache {
 			nodeImage, err := models.GetNodeImage(project.FileKey, nodeID, format, scale, ignoreTexts)
 			if err == nil && nodeImage != nil {
@@ -1387,32 +1421,57 @@ func GetFigmaImage(c *gin.Context) {
 					// 准备本地保存路径
 					safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
 					tempDir := filepath.Join("temp", project.FileKey, "previews")
-					os.MkdirAll(tempDir, 0755)
-					ext := format
-					if ext == "jpg" {
-						ext = "png"
-					}
-					localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
+					os.MkdirAll(tempDir, os.ModePerm)
 
-					// 从 OBS 下载（返回字节数组）
-					imageBytes, _, downloadErr := globalOBSService.DownloadFile(nodeImage.OBSKey)
-					if downloadErr == nil && len(imageBytes) > 0 {
-						// 保存到本地
-						if saveErr := os.WriteFile(localFilePath, imageBytes, 0644); saveErr == nil {
-							log.Printf("✅ [GetFigmaImage] 从 OBS 下载成功: %s → %s", nodeImage.OBSKey, localFilePath)
-							return localFilePath, nil
-						} else {
-							log.Printf("⚠️ [GetFigmaImage] 保存OBS文件失败: %v", saveErr)
-						}
-					} else {
-						log.Printf("⚠️ [GetFigmaImage] 从 OBS 下载失败: %v", downloadErr)
+					scaleStr := fmt.Sprintf("%.1fx", scale)
+					suffix := "x"
+					if ignoreTexts {
+						suffix = "p"
 					}
+
+					localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s-%s%s.%s", safeNodeID, scaleStr, suffix, format))
+
+					// 从 OBS 下载到本地
+					imageData, _, err := globalOBSService.DownloadImage(nodeImage.OBSKey)
+					if err == nil {
+						// 保存到本地
+						if saveErr := ioutil.WriteFile(localFilePath, imageData, 0644); saveErr == nil {
+							log.Printf("✅ [GetFigmaImage] 从 OBS 下载并缓存到本地: %s", localFilePath)
+							return localFilePath, nil
+						}
+					}
+					log.Printf("⚠️ [GetFigmaImage] 从 OBS 下载失败: %v", err)
 				}
-			}
-			if err != nil {
-				log.Printf("⚠️ [GetFigmaImage] 数据库缓存查询失败: %v", err)
-			} else if nodeImage == nil {
-				log.Printf("⚠️ [GetFigmaImage] 数据库缓存中未找到图片记录")
+
+				// 3.2 从 Figma CDN 下载
+				if nodeImage.FigmaCDNURL != "" {
+					log.Printf("🔍 [GetFigmaImage] 尝试从 Figma CDN 下载: %s", nodeImage.FigmaCDNURL)
+
+					resp, err := http.Get(nodeImage.FigmaCDNURL)
+					if err == nil && resp.StatusCode == http.StatusOK {
+						defer resp.Body.Close()
+						imageData, err := ioutil.ReadAll(resp.Body)
+						if err == nil {
+							// 保存到本地
+							safeNodeID := strings.NewReplacer(":", "_", ";", "_", "/", "_", "\\", "_", "?", "_", "*", "_", "\"", "_", "<", "_", ">", "_", "|", "_").Replace(nodeID)
+							tempDir := filepath.Join("temp", project.FileKey, "previews")
+							os.MkdirAll(tempDir, os.ModePerm)
+
+							scaleStr := fmt.Sprintf("%.1fx", scale)
+							suffix := "x"
+							if ignoreTexts {
+								suffix = "p"
+							}
+
+							localFilePath := filepath.Join(tempDir, fmt.Sprintf("%s-%s%s.%s", safeNodeID, scaleStr, suffix, format))
+							if saveErr := ioutil.WriteFile(localFilePath, imageData, 0644); saveErr == nil {
+								log.Printf("✅ [GetFigmaImage] 从 Figma CDN 下载并缓存到本地: %s", localFilePath)
+								return localFilePath, nil
+							}
+						}
+					}
+					log.Printf("⚠️ [GetFigmaImage] 从 Figma CDN 下载失败: %v", err)
+				}
 			}
 		}
 
@@ -1427,7 +1486,7 @@ func GetFigmaImage(c *gin.Context) {
 		// 普通预览：保存到previews文件夹
 		fmt.Printf("Controller: 开始获取普通Figma图片（支持 WebSocket 兜底）, project_id=%d, node_id=%s, format=%s, scale=%.1f, useCache=%v\n",
 			projectID, nodeID, format, scale, useCache)
-		imagePath, imgErr = services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, useCache, user.ID, ignoreTexts)
+		imagePath, imgErr := services.DownloadPreviewFigmaImageWithOptions(user.FigmaToken, project.FileKey, nodeID, format, scale, useCache, user.ID, ignoreTexts)
 		// }
 
 		return imagePath, imgErr
@@ -1456,8 +1515,8 @@ func GetFigmaImage(c *gin.Context) {
 // handleImageFromPlugin 处理从 Figma 插件接收到的图片数据
 // 参数：fileKey, nodeID, format, scale, imageDataB64(base64编码的图片), responseData(插件响应)
 // 返回：本地保存路径, 错误
-func handleImageFromPlugin(fileKey, nodeID, format string, scale float64, imageDataB64 string, responseData map[string]interface{}) (string, error) {
-	log.Printf("🎨 [handleImageFromPlugin] 开始处理插件图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f", fileKey, nodeID, format, scale)
+func handleImageFromPlugin(fileKey, nodeID, format string, scale float64, imageDataB64 string, responseData map[string]interface{}, ignoreTexts bool, ignoreNodes []string) (string, error) {
+	log.Printf("🎨 [handleImageFromPlugin] 开始处理插件图片: fileKey=%s, nodeID=%s, format=%s, scale=%.1f, ignoreTexts=%v, ignoreNodes=%v", fileKey, nodeID, format, scale, ignoreTexts, ignoreNodes)
 
 	// 1. 解码 base64 图片数据
 	imageBytes, err := base64.StdEncoding.DecodeString(imageDataB64)
@@ -1486,7 +1545,29 @@ func handleImageFromPlugin(fileKey, nodeID, format string, scale float64, imageD
 		ext = "jpeg"
 	}
 
-	localFilePath := filepath.Join(previewsDir, fmt.Sprintf("%s_%.1fx.%s", safeNodeID, scale, ext))
+	// 根据ignoreTexts决定文件名后缀：x表示带文字，p表示不带文字
+	scaleStr := fmt.Sprintf("%.1fx", scale)
+	suffix := "x"
+	if ignoreTexts {
+		suffix = "p"
+	}
+
+	// 如果有忽略节点，添加到后缀中
+	if len(ignoreNodes) > 0 {
+		// 对忽略节点列表进行排序以确保一致性
+		sortedIgnoreNodes := make([]string, len(ignoreNodes))
+		copy(sortedIgnoreNodes, ignoreNodes)
+		sort.Strings(sortedIgnoreNodes)
+
+		// 生成忽略节点的哈希值作为文件名的一部分
+		ignoreNodesStr := strings.Join(sortedIgnoreNodes, ",")
+		hash := md5.Sum([]byte(ignoreNodesStr))
+		ignoreNodesHash := fmt.Sprintf("%x", hash)[:8]
+		suffix = suffix + "i" + ignoreNodesHash
+	}
+
+	// 使用新的文件名格式：nodeID-scale[x|p][i-hash].format
+	localFilePath := filepath.Join(previewsDir, fmt.Sprintf("%s-%s%s.%s", safeNodeID, scaleStr, suffix, ext))
 
 	// 保存文件
 	if err := os.WriteFile(localFilePath, imageBytes, 0644); err != nil {
@@ -1521,7 +1602,7 @@ func handleImageFromPlugin(fileKey, nodeID, format string, scale float64, imageD
 			expiresAt := now + (7 * 24 * 3600) // 7天过期
 
 			// 检查是否已存在缓存记录
-			existingImage, err := models.GetNodeImage(fileKey, nodeID, format, scale, false) // 默认不忽略文本
+			existingImage, err := models.GetNodeImage(fileKey, nodeID, format, scale, ignoreTexts)
 			if err == nil && existingImage != nil {
 				// 更新现有记录
 				existingImage.OBSKey = obsKey
@@ -1542,6 +1623,7 @@ func handleImageFromPlugin(fileKey, nodeID, format string, scale float64, imageD
 					NodeID:       nodeID,
 					Format:       format,
 					Scale:        scale,
+					IgnoreTexts:  ignoreTexts,
 					FigmaCDNURL:  obsURL, // 使用 OBS URL 作为备用
 					OBSKey:       obsKey,
 					OBSExpiresAt: expiresAt,

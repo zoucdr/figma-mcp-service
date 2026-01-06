@@ -67,6 +67,7 @@ const ProjectEditorApp = {
             exportStatus: '', // pending, processing, completed, failed
             exportProgress: 0, // 导出进度 0-100
             exportJobId: null,
+            clearingCache: false, // 是否正在清除缓存
             defaultImageFormat: 'png', // 默认图片格式
             defaultImageScale: 1.0, // 默认图片缩放比例
             isRendering: false, // 是否正在渲染
@@ -543,6 +544,50 @@ const ProjectEditorApp = {
                 this.isShiftPressed = false;
             } else if (event.key === 'Control' || event.key === 'Meta') {
                 this.isCtrlPressed = false;
+            }
+        },
+        
+        // 清除本地图片缓存（不包括OBS和数据库）
+        async clearLocalImageCache() {
+            try {
+                const result = await this.$confirm(
+                    '确定要清除本地图片缓存吗？这将删除所有本地缓存的预览图片，但不会影响OBS和数据库中的缓存。',
+                    '清除本地缓存',
+                    {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }
+                );
+                
+                if (!result) return;
+                
+                this.clearingCache = true;
+                
+                const response = await axios.post(`/figma/project/${this.project.id}/clear-cache`);
+                
+                if (response.data.message) {
+                    this.$message.success(response.data.message);
+                    
+                    // 清除前端缓存的图片URL
+                    this.previewImages = [];
+                    this.filteredPreviewImages = [];
+                    this.refPreviewImages = [];
+                    
+                    // 重新加载当前节点的预览
+                    if (this.currentNode) {
+                        await this.selectNode(this.currentNode.id);
+                    }
+                } else {
+                    this.$message.error('清除缓存失败');
+                }
+            } catch (error) {
+                if (error !== 'cancel') {
+                    console.error('清除缓存失败:', error);
+                    this.$message.error(error.response?.data?.error || '清除缓存失败');
+                }
+            } finally {
+                this.clearingCache = false;
             }
         },
         
@@ -8261,19 +8306,19 @@ Generated on: ${new Date().toLocaleString()}
         // 初始化 MCP WebSocket 连接
         async initMcpWebSocket() {
             try {
-                // 获取用户的 MCP Token
-                const response = await axios.get('/profile/api/mcp-token');
-                const mcpToken = response.data.mcp_token;
+                // 获取用户的 Figma Private Token
+                const response = await axios.get('/profile/api/info');
+                const figmaToken = response.data.user?.figma_token;
                 
-                if (!mcpToken) {
-                    console.log('用户未生成 MCP Token，跳过 WebSocket 连接');
+                if (!figmaToken) {
+                    console.log('用户未配置 Figma Token，跳过 WebSocket 连接');
                     this.mcpWsStatus = 'disconnected';
                     return;
                 }
                 
-                this.connectMcpWebSocket(mcpToken);
+                this.connectMcpWebSocket(figmaToken);
             } catch (error) {
-                console.error('获取 MCP Token 失败:', error);
+                console.error('获取 Figma Token 失败:', error);
                 this.mcpWsStatus = 'error';
             }
         },
@@ -8291,7 +8336,7 @@ Generated on: ${new Date().toLocaleString()}
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = wsProtocol + '//' + window.location.host + '/mcp-ws?connection_id=' + encodeURIComponent(token);
             
-            console.log('正在连接 MCP WebSocket:', wsUrl);
+            console.log('正在连接 MCP WebSocket (使用 Figma Token):', wsUrl);
             
             this.mcpWebSocket = new WebSocket(wsUrl);
             

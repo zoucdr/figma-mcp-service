@@ -27,11 +27,11 @@ var upgrader = websocket.Upgrader{
 
 // MCPWebSocketHandler 处理MCP WebSocket连接
 func MCPWebSocketHandler(c *gin.Context) {
-	// 获取 connection_id (MCP Token)
+	// 获取 connection_id (Figma Private Token)
 	privateToken := c.Query("connection_id")
 	if privateToken == "" {
 		// 也尝试从 Header 中获取
-		privateToken = c.GetHeader("X-MCP-Token")
+		privateToken = c.GetHeader("X-Figma-Token")
 	}
 
 	if privateToken == "" {
@@ -39,15 +39,15 @@ func MCPWebSocketHandler(c *gin.Context) {
 		return
 	}
 
-	// 通过 connection_id 查找用户
-	user, err := models.GetUserByMCPToken(privateToken)
+	// 通过 Figma Private Token 查找用户
+	user, err := models.GetUserByFigmaToken(privateToken)
 	if err != nil {
-		log.Printf("无效的 connection_id: %s, 错误: %v", privateToken, err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的 connection_id"})
+		log.Printf("无效的 Figma Token: %s, 错误: %v", privateToken, err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的 Figma Token"})
 		return
 	}
 
-	// 使用 MCP Token 作为连接 ID，确保每个用户只有一个连接
+	// 使用 Figma Token 作为连接 ID，确保每个用户只有一个连接
 	connectionID := privateToken
 
 	log.Printf("WebSocket连接请求: 用户=%s (ID=%d), 连接ID=%s", user.Username, user.ID, connectionID)

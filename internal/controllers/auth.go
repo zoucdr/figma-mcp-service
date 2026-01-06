@@ -398,8 +398,13 @@ func GetCurrentUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":       user.ID,
-		"username": user.Username,
+		"user": gin.H{
+			"id":            user.ID,
+			"username":      user.Username,
+			"figma_token":   user.FigmaToken,
+			"mcp_token":     user.MCPToken,
+			"proxy_enabled": user.ProxyEnabled,
+		},
 	})
 }
 
